@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- MainActivity registers the native OnBackInvokedCallback on API 33+.
+         onBackPressed is a compatibility bridge used only on API 26–32.
+         GestureBackNavigation does not distinguish that guarded native migration
+         from an un-migrated implementation (as documented by the lint finding).
+         Keep this exception local; all other lint errors remain fatal.
+         Fullscreen/back integration is exercised on API 35 and API 36. -->
+    <issue id="GestureBackNavigation">
+        <ignore path="src/main/java/fr/soustitresvoix/player/MainActivity.kt" />
+    </issue>
+</lint>
