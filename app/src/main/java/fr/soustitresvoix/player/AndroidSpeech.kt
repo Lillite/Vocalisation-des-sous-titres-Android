@@ -85,7 +85,7 @@ class AndroidSpeech(private val context: Context, private val preferences: Playe
         engine = null
         val intent = android.content.Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE)
         @Suppress("DEPRECATION")
-        val services = context.packageManager.queryIntentServices(intent, 0)
+        val services = context.packageManager.queryIntentServices(intent, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
         engines = services.map { EngineChoice(it.serviceInfo.packageName, it.loadLabel(context.packageManager).toString()) }.distinctBy { it.name }
         if (requested.isNotEmpty() && engines.none { it.name == requested }) {
             onAvailability(false, "Le moteur choisi n’est plus installé. Choisis un autre moteur vocal."); return
@@ -223,7 +223,7 @@ class AndroidSpeech(private val context: Context, private val preferences: Playe
                 if (size in 44..8L * 1024 * 1024) {
                     val metadata = MediaMetadataRetriever()
                     try { metadata.setDataSource(p.file.absolutePath); duration = metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0 }
-                    catch (_: RuntimeException) { } finally { metadata.release() }
+                    catch (_: RuntimeException) { } finally { try { metadata.release() } catch (_: RuntimeException) { } }
                 }
                 val valid = duration in 1..180_000
                 val target = File(directory, "${p.key}-${p.id}.wav")

@@ -26,7 +26,10 @@ class SpeechCacheInstrumentationTest {
         }
         try {
             assertTrue("Synthetic Android TTS engine did not initialize", ready.await(15, TimeUnit.SECONDS))
-            instrumentation.runOnMainSync { speech.prefetch(listOf("Bonjour. Voici la seconde phrase.")) }
+            instrumentation.runOnMainSync {
+                assertEquals("Android silently substituted a different TTS engine", listOf("test-fr"), speech.choices.map { it.name })
+                speech.prefetch(listOf("Bonjour. Voici la seconde phrase."))
+            }
             var entries = 0
             val until = SystemClock.elapsedRealtime() + 15_000
             while (SystemClock.elapsedRealtime() < until && entries < 2) {
@@ -40,6 +43,7 @@ class SpeechCacheInstrumentationTest {
                 assertEquals(2, speech.cacheHits)
                 assertTrue(speech.cacheBytes <= 64L * 1024 * 1024)
                 assertEquals(2, speech.synthCount)
+                assertEquals("Synthetic PCM duration proves the requested engine ran", 1000L, speech.generatedAudioMs)
             }
         } finally { instrumentation.runOnMainSync { speech.close() } }
     }
