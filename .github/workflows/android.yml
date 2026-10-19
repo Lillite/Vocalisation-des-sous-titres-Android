@@ -11,6 +11,7 @@ on:
       - 'examples/**'
       - '*.kts'
       - 'gradle.properties'
+      - '.github/workflows/android.yml'
   pull_request:
 
 permissions:
@@ -65,6 +66,15 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$APK" > build/verification/manifest.xml
           python3 tools/check-apk-manifest.py build/verification/manifest.xml
           sha256sum "$APK" | tee build/verification/apk-sha256.txt
+      - name: Liberer de la place pour l'emulateur
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h /
+          # Only unused preinstalled toolchains on this disposable CI runner.
+          # The project uses no NDK, .NET or CodeQL; Java and Android SDK stay intact.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk /opt/hostedtoolcache/CodeQL
+          df -h /
       - name: Activer KVM pour l'emulateur
         shell: bash
         run: |
@@ -78,6 +88,7 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_2
+          disk-size: 2048M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: gradle --no-daemon --stacktrace :app:connectedDebugAndroidTest
