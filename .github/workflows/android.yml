@@ -1,0 +1,105 @@
+name: Verifier et compiler Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'core/**'
+      - 'tools/**'
+      - 'examples/**'
+      - '*.kts'
+      - 'gradle.properties'
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Installer Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Installer Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Verifier les outils de demonstration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y ffmpeg
+          fi
+          ffmpeg -version
+      - name: Installer les composants Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_HOME:-}"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses < <(yes) > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+      - name: Controles structurels sans reseau
+        run: python3 tools/check-project.py
+      - name: Tests du moteur, lint Android et compilation APK
+        run: gradle --no-daemon --stacktrace :core:test :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Verifier la signature et l'identite de l'APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/verification
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee build/verification/signature.txt
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$APK" > build/verification/manifest.xml
+          python3 tools/check-apk-manifest.py build/verification/manifest.xml
+          sha256sum "$APK" | tee build/verification/apk-sha256.txt
+      - name: Activer KVM pour l'emulateur
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Executer les tests sur Android 35
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: gradle --no-daemon --stacktrace :app:connectedDebugAndroidTest
+      - name: Conserver les rapports de verification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapports-verification
+          path: |
+            core/build/reports/tests/
+            core/build/test-results/
+            app/build/reports/
+            app/build/outputs/androidTest-results/
+            build/verification/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Publier l'APK de test seulement apres succes
+        uses: actions/upload-artifact@v4
+        with:
+          name: SousTitresVoix-APK-test
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            build/verification/apk-sha256.txt
+          if-no-files-found: error
+          retention-days: 14
