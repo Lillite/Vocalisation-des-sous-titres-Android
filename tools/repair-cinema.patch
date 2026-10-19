@@ -1,0 +1,140 @@
+diff --git a/app/src/androidTest/java/fr/soustitresvoix/player/FixtureSpeechService.java b/app/src/androidTest/java/fr/soustitresvoix/player/FixtureSpeechService.java
+new file mode 100644
+index 0000000..dba56fd
+--- /dev/null
++++ b/app/src/androidTest/java/fr/soustitresvoix/player/FixtureSpeechService.java
+@@ -0,0 +1,49 @@
++package fr.soustitresvoix.player;
++
++import android.media.AudioFormat;
++import android.speech.tts.SynthesisCallback;
++import android.speech.tts.SynthesisRequest;
++import android.speech.tts.TextToSpeech;
++import android.speech.tts.TextToSpeechService;
++import android.speech.tts.Voice;
++import java.util.Collections;
++import java.util.List;
++import java.util.Locale;
++
++/** Instrumentation APK only: deterministic PCM, never a production voice.
++ * Plain Java is intentional: this service runs in the test APK process, whose
++ * class path does not include the target APK's deduplicated Kotlin runtime.
++ */
++public final class FixtureSpeechService extends TextToSpeechService {
++    private volatile boolean cancelled;
++    @Override protected int onIsLanguageAvailable(String lang, String country, String variant) {
++        return "fr".equals(lang) || "fra".equals(lang)
++            ? TextToSpeech.LANG_COUNTRY_AVAILABLE : TextToSpeech.LANG_NOT_SUPPORTED;
++    }
++    @Override protected String[] onGetLanguage() { return new String[]{"fra", "FRA", ""}; }
++    @Override protected int onLoadLanguage(String lang, String country, String variant) {
++        return onIsLanguageAvailable(lang, country, variant);
++    }
++    @Override protected void onStop() { cancelled = true; }
++    @Override public List<Voice> onGetVoices() {
++        return Collections.singletonList(new Voice("fixture-fr", Locale.FRANCE,
++            Voice.QUALITY_NORMAL, Voice.LATENCY_NORMAL, false, Collections.emptySet()));
++    }
++    @Override public String onGetDefaultVoiceNameFor(String lang, String country, String variant) { return "fixture-fr"; }
++    @Override public int onIsValidVoiceName(String name) {
++        return "fixture-fr".equals(name) ? TextToSpeech.SUCCESS : TextToSpeech.ERROR;
++    }
++    @Override public int onLoadVoice(String name) { return onIsValidVoiceName(name); }
++    @Override protected void onSynthesizeText(SynthesisRequest request, SynthesisCallback callback) {
++        cancelled = false;
++        if (callback.start(16000, AudioFormat.ENCODING_PCM_16BIT, 1) != TextToSpeech.SUCCESS) return;
++        byte[] silence = new byte[Math.max(2, callback.getMaxBufferSize())];
++        int remaining = 32000;
++        while (remaining > 0 && !cancelled) {
++            int n = Math.min(remaining, silence.length);
++            if (callback.audioAvailable(silence, 0, n) != TextToSpeech.SUCCESS) return;
++            remaining -= n;
++        }
++        if (!cancelled) callback.done();
++    }
++}
+diff --git a/app/src/androidTest/java/fr/soustitresvoix/player/FixtureSpeechService.kt b/app/src/androidTest/java/fr/soustitresvoix/player/FixtureSpeechService.kt
+deleted file mode 100644
+index 4cc4b31..0000000
+--- a/app/src/androidTest/java/fr/soustitresvoix/player/FixtureSpeechService.kt
++++ /dev/null
+@@ -1,30 +0,0 @@
+-package fr.soustitresvoix.player
+-
+-import android.media.AudioFormat
+-import android.speech.tts.*
+-import java.util.Locale
+-
+-/** Instrumentation APK only. Deterministic silent PCM, not a production voice. */
+-class FixtureSpeechService : TextToSpeechService() {
+-    @Volatile private var cancelled = false
+-    override fun onIsLanguageAvailable(lang: String, country: String, variant: String) = TextToSpeech.LANG_COUNTRY_AVAILABLE
+-    override fun onGetLanguage() = arrayOf("fra", "FRA", "")
+-    override fun onLoadLanguage(lang: String, country: String, variant: String) = TextToSpeech.LANG_COUNTRY_AVAILABLE
+-    override fun onStop() { cancelled = true }
+-    override fun onGetVoices(): MutableList<Voice> = mutableListOf(Voice("fixture-fr", Locale.FRANCE, Voice.QUALITY_NORMAL, Voice.LATENCY_NORMAL, false, emptySet()))
+-    override fun onGetDefaultVoiceNameFor(lang: String, country: String, variant: String) = "fixture-fr"
+-    override fun onIsValidVoiceName(voiceName: String) = if (voiceName == "fixture-fr") TextToSpeech.SUCCESS else TextToSpeech.ERROR
+-    override fun onLoadVoice(voiceName: String) = onIsValidVoiceName(voiceName)
+-    override fun onSynthesizeText(request: SynthesisRequest, callback: SynthesisCallback) {
+-        cancelled = false
+-        if (callback.start(16000, AudioFormat.ENCODING_PCM_16BIT, 1) != TextToSpeech.SUCCESS) return
+-        val silence = ByteArray(callback.maxBufferSize.coerceAtLeast(2))
+-        var remaining = 32_000
+-        while (remaining > 0 && !cancelled) {
+-            val n = remaining.coerceAtMost(silence.size)
+-            if (callback.audioAvailable(silence, 0, n) != TextToSpeech.SUCCESS) return
+-            remaining -= n
+-        }
+-        if (!cancelled) callback.done()
+-    }
+-}
+diff --git a/app/src/main/java/fr/soustitresvoix/player/AndroidSpeech.kt b/app/src/main/java/fr/soustitresvoix/player/AndroidSpeech.kt
+index 4d879a0..f9f9113 100644
+--- a/app/src/main/java/fr/soustitresvoix/player/AndroidSpeech.kt
++++ b/app/src/main/java/fr/soustitresvoix/player/AndroidSpeech.kt
+@@ -236,7 +236,7 @@ class AndroidSpeech(
+                     val result = runCatching { cache.put(key, file) }.getOrNull(); cacheSize = cache.size()
+                     main.post { if (!closed && ticket == generation) {
+                         if (result != null) { preparedCount++; lastAudioMs = result.durationMs
+-                            preparationStatus = "$preparedCount segments préparés localementlement" }
++                            preparationStatus = "$preparedCount segments préparés localement" }
+                         else { preparationDisabled = true; preparationStatus = "Format audio du moteur non exploitable ; voix directe conservée" }
+                         pump()
+                     } }
+@@ -245,6 +245,11 @@ class AndroidSpeech(
+         } else if (id == activeId) finish(id, error)
+     } }
+     private fun finish(id: String, error: String?) {
++        // Engine errors can be synchronous while playback effects are applied.
++        // Deliver completion on a later loop turn to avoid state-machine reentry.
++        main.post { finishOnMain(id, error) }
++    }
++    private fun finishOnMain(id: String, error: String?) {
+         if (closed || activeId != id) return
+         activeId = null; live = false; releaseAudio()
+         watchdog?.let { main.removeCallbacks(it) }; watchdog = null
+diff --git a/app/src/main/java/fr/soustitresvoix/player/MainActivity.kt b/app/src/main/java/fr/soustitresvoix/player/MainActivity.kt
+index 4142e23..76931c7 100644
+--- a/app/src/main/java/fr/soustitresvoix/player/MainActivity.kt
++++ b/app/src/main/java/fr/soustitresvoix/player/MainActivity.kt
+@@ -130,6 +130,10 @@ class MainActivity : ComponentActivity() {
+         buildUi()
+     }
+     private fun applyWindowMode() {
++        // getDecorView initializes PhoneWindow's decor before requesting insets.
++        // On Android 16 getInsetsController() otherwise dereferences a null decor
++        // during onCreate; onWindowFocusChanged reapplies this after attachment.
++        val decor = window.decorView
+         if (Build.VERSION.SDK_INT >= 28) window.attributes = window.attributes.apply {
+             layoutInDisplayCutoutMode = if (fullscreen) {
+                 if (Build.VERSION.SDK_INT >= 30) WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+@@ -138,7 +142,7 @@ class MainActivity : ComponentActivity() {
+         }
+         if (Build.VERSION.SDK_INT >= 30) {
+             window.setDecorFitsSystemWindows(false)
+-            window.insetsController?.apply {
++            decor.windowInsetsController?.apply {
+                 systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                 if (fullscreen) hide(WindowInsets.Type.systemBars()) else show(WindowInsets.Type.systemBars())
+             }
