@@ -39,7 +39,7 @@ object SubtitleImport {
         val lower = filename.lowercase(Locale.ROOT)
         val kind = when {
             text.trimStart().startsWith("WEBVTT") -> Kind.VTT
-            Regex("(?im)^\\s*\\[Events]\\s*$").containsMatchIn(text) -> Kind.ASS
+            Regex("(?im)^\\s*\\[Events\\]\\s*$").containsMatchIn(text) -> Kind.ASS
             lower.endsWith(".vtt") -> Kind.VTT
             lower.endsWith(".ass") || lower.endsWith(".ssa") -> Kind.ASS
             else -> Kind.SRT
