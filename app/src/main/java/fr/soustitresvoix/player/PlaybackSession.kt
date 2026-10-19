@@ -10,6 +10,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -20,8 +22,10 @@ import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import fr.soustitresvoix.core.NarrationMachine
-import fr.soustitresvoix.core.SubtitleText
+import fr.soustitresvoix.core.SpeechTools
 import java.io.File
 
 @UnstableApi
@@ -34,6 +38,14 @@ class PlaybackSession(
 ) {
     private val handler = Handler(Looper.getMainLooper())
     val machine = NarrationMachine()
+    val ahead = CueAheadIndex()
+    private var mediaEpoch = 0L
+    var lastRawCaption = ""; private set
+    var droppedFrames = 0; private set
+    var videoDecoder = "Non initialisé"; private set
+    private val startedAt = SystemClock.elapsedRealtime()
+    private val startedCpu = android.os.Process.getElapsedCpuTime()
+    private var lastPreparationTick = 0L
     val player: ExoPlayer = ExoPlayer.Builder(context,
         DefaultRenderersFactory(context).setEnableDecoderFallback(true)).build()
     private val audioManager = requireNotNull(context.getSystemService(AudioManager::class.java))
@@ -47,7 +59,7 @@ class PlaybackSession(
     private var focusHeld = false
     val speech = AndroidSpeech(context, prefs,
         onAvailability = { ready, msg ->
-            if (!closed) { apply(machine.setSpeechReady(ready)); onMessage(msg, !ready); onChanged() }
+            if (!closed) { apply(machine.setSpeechReady(ready)); onMessage(msg, !ready && prefs.narration); onChanged() }
         },
         onDone = { if (!closed) {
             apply(machine.speechFinished(it))
@@ -72,6 +84,10 @@ class PlaybackSession(
         }
     }
     init {
+        player.addAnalyticsListener(object : AnalyticsListener {
+            override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, dropped: Int, elapsedMs: Long) { droppedFrames += dropped }
+            override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, name: String, timestampMs: Long, durationMs: Long) { videoDecoder = name }
+        })
         player.setAudioAttributes(androidx.media3.common.AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), false)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
@@ -84,7 +100,6 @@ class PlaybackSession(
             override fun onPlaybackStateChanged(state: Int) {
                 apply(machine.setMediaReady(state == Player.STATE_READY || state == Player.STATE_ENDED))
                 if (state == Player.STATE_ENDED) {
-                    // Expire the final caption so comfort mode can finish it.
                     apply(machine.cues(Long.MAX_VALUE, emptyList()))
                     onMessage("Fin de la vidéo.", false)
                     if (machine.snapshot().speakingId == null && machine.snapshot().pendingCount == 0) pause()
@@ -113,21 +128,21 @@ class PlaybackSession(
                 apply(machine.fail("Lecture impossible (${error.errorCodeName}). Le fichier, son accès ou son codec n’est peut-être pas pris en charge. Aucun fichier n’a été modifié."))
             }
             override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
-                // Our own seeks reset before player.seekTo(). A discontinuity from
-                // the engine itself must also invalidate old subtitle callbacks.
                 if (reason != Player.DISCONTINUITY_REASON_SEEK) {
                     apply(machine.reset(keepPlaybackIntent = true))
                     apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
                 }
             }
         })
-        apply(machine.setEnabled(prefs.narration)); apply(machine.setMode(prefs.mode)); setDucked(false)
+        apply(machine.setEnabled(prefs.narration)); apply(machine.setMode(prefs.mode))
+        apply(machine.setResumePolicy(prefs.resumePolicy)); setDucked(false)
         if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(noisy,
             IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), Context.RECEIVER_NOT_EXPORTED)
         else @Suppress("DEPRECATION") context.registerReceiver(noisy, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
     }
     fun open(saved: SavedMedia) {
         savePosition()
+        val epoch = ++mediaEpoch; lastRawCaption = ""; ahead.clear(); speech.cancelPreparation()
         apply(machine.reset(false)); lastCue = null; onCaption("")
         media = saved
         val item = MediaItem.Builder().setUri(Uri.parse(saved.uri))
@@ -143,10 +158,12 @@ class PlaybackSession(
             .clearOverridesOfType(C.TRACK_TYPE_TEXT).clearOverridesOfType(C.TRACK_TYPE_AUDIO)
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             .setPreferredTextLanguages("fr", "fra").setSelectUndeterminedTextLanguage(true).build()
-        player.setMediaItem(item.build(), saved.positionMs)
-        player.prepare()
-        prefs.save(saved)
-        onChanged()
+        val tap = CueAheadFactory { track, cues -> handler.post {
+            if (!closed && epoch == mediaEpoch) ahead.add(track, cues)
+        } }
+        val factory = DefaultMediaSourceFactory(context, tap).setSubtitleParserFactory(tap.sidecarParsers())
+        player.setMediaSource(factory.createMediaSource(item.build()), saved.positionMs)
+        player.prepare(); prefs.save(saved); onChanged()
     }
     fun play() {
         if (media == null) { onMessage("Ouvre d’abord une vidéo, ou lance l’essai intégré.", false); return }
@@ -162,36 +179,70 @@ class PlaybackSession(
             onMessage("L’accès au son est refusé pour le moment. Termine l’appel ou la lecture dans l’autre application.", true)
             return false
         }
-        focusHeld = true
-        return true
+        focusHeld = true; return true
     }
     fun pause() {
-        apply(machine.pause())
+        apply(machine.pause()); speech.cancelPreparation()
         if (focusHeld) { audioManager.abandonAudioFocusRequest(focus); focusHeld = false }
         savePosition()
     }
     fun seek(positionMs: Long) {
+        speech.cancelPreparation()
         apply(machine.reset(keepPlaybackIntent = true)); lastCue = null; onCaption("")
         val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 }
         val position = if (duration != null) positionMs.coerceIn(0, duration) else positionMs.coerceAtLeast(0)
         player.seekTo(position)
         apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
     }
+    fun resumeVoice() { if (media != null && requestFocus()) apply(machine.resumeVoice()) }
+    internal fun selectedTextId(): String? {
+        for (group in player.currentTracks.groups) if (group.type == C.TRACK_TYPE_TEXT)
+            for (i in 0 until group.length) if (group.isTrackSelected(i)) return group.getTrackFormat(i).id
+        return null
+    }
+    fun prepareTick() {
+        if (closed || SystemClock.elapsedRealtime() - lastPreparationTick < 1000) return
+        lastPreparationTick = SystemClock.elapsedRealtime()
+        val power = context.getSystemService(PowerManager::class.java)
+        val hot = Build.VERSION.SDK_INT >= 29 && power.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE
+        if (!machine.snapshot().wantsPlayback || !prefs.narration || hot) { speech.cancelPreparation(); return }
+        val texts = machine.pendingTexts() + ahead.future(selectedTextId(), player.currentPosition, prefs.filters, prefs.lookAheadCount)
+        speech.prepareAhead(texts.take(prefs.lookAheadCount))
+    }
+    fun diagnostics(): String {
+        val elapsed = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(1)
+        val cpu = (android.os.Process.getElapsedCpuTime() - startedCpu) * 100.0 / elapsed
+        val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val temp = battery?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
+        val heat = if (Build.VERSION.SDK_INT >= 29) context.getSystemService(PowerManager::class.java).currentThermalStatus.toString() else "indisponible"
+        val pss = context.getSystemService(android.app.ActivityManager::class.java).getProcessMemoryInfo(intArrayOf(android.os.Process.myPid())).firstOrNull()?.totalPss ?: 0
+        return "Appareil : ${Build.MANUFACTURER} ${Build.MODEL} ; Android ${Build.VERSION.RELEASE}\n" +
+            "Décodeur vidéo : $videoDecoder\nImages vidéo abandonnées : $droppedFrames\n" +
+            "CPU du lecteur (hors moteur vocal externe) : ${"%.1f".format(cpu)} % d’un cœur, moyenne de session\n" +
+            "Mémoire PSS du lecteur : ${pss / 1024} Mio (moteur vocal externe non inclus)\n" +
+            "Température BATTERIE : ${if (temp != null && temp != Int.MIN_VALUE) "${temp / 10f} °C" else "indisponible"} ; pas la température CPU/GPU\n" +
+            "État thermique Android : $heat (0 normal ; 3 sévère)\n" +
+            "Prélecture : ${ahead.count} entrées temporelles en mémoire\n${speech.preparationStatus}\n" +
+            "Cache : ${speech.cacheSize / 1048576} Mio ; lectures depuis le cache : ${speech.hits} ; replis directs : ${speech.misses}\n" +
+            "Dernière synthèse mesurée : ${speech.lastSynthesisMs} ms pour ${speech.lastAudioMs} ms d’audio\n" +
+            "Dernier facteur adaptatif : ${"%.2f".format(speech.lastFactor)}\n" +
+            "GPU/NPU du moteur vocal : non exposés par l’API TTS Android. Aucun benchmark OnePlus n’est simulé."
+    }
     fun repeatLast() { if (requestFocus()) apply(machine.preview()) }
     fun previewVoice() { if (requestFocus()) apply(machine.preview("Bonjour. Cette voix lira les sous-titres de votre vidéo. Vous pouvez régler sa vitesse et le volume du film.")) }
     fun refreshSettings() {
         pause(); speech.applyPreferences()
-        apply(machine.setMode(prefs.mode)); apply(machine.setEnabled(prefs.narration)); setDucked(ducked)
-        onChanged()
+        apply(machine.setMode(prefs.mode)); apply(machine.setEnabled(prefs.narration))
+        apply(machine.setResumePolicy(prefs.resumePolicy)); setDucked(ducked); onChanged()
     }
     private fun forwardCues(group: CueGroup) {
         val captions = group.cues.mapNotNull { it.text?.toString() }
-        onCaption(captions.joinToString("\n"))
-        apply(machine.cues(group.presentationTimeUs,
-            captions.map { SubtitleText.clean(it, prefs.skipDescriptions) }, group.cues.any { it.bitmap != null }))
+        lastRawCaption = captions.joinToString("\n"); onCaption(lastRawCaption)
+        val clean = captions.map { SpeechTools.filter(it, prefs.filters) }.filter { it.isNotBlank() }
+        apply(machine.cues(group.presentationTimeUs, clean, group.cues.any { it.bitmap != null },
+            ahead.identities(selectedTextId(), clean, group.presentationTimeUs, prefs.filters)))
     }
     fun selectTrack(type: Int, group: Tracks.Group?, index: Int = 0, disabled: Boolean = false) {
-        // Explicit pause prevents old-track narration from leaking into the new one.
         if (type == C.TRACK_TYPE_TEXT) selectExternalWhenAvailable = false
         pause(); apply(machine.reset(false)); lastCue = null; onCaption("")
         trackReset = true
@@ -202,18 +253,14 @@ class PlaybackSession(
         handler.post {
             if (!closed) {
                 trackReset = false
-                // Reload the current position to make Media3 emit the newly
-                // selected cues; do not re-use cached cues from the old track.
                 player.seekTo(player.currentPosition)
-                apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
-                onChanged()
+                apply(machine.setMediaReady(player.playbackState == Player.STATE_READY)); onChanged()
             }
         }
     }
     fun attachSubtitle(path: String?, mime: String?) {
         val current = media ?: return
-        val updated = current.copy(positionMs = player.currentPosition, subtitlePath = path, subtitleMime = mime)
-        open(updated)
+        open(current.copy(positionMs = player.currentPosition, subtitlePath = path, subtitleMime = mime))
     }
     fun savePosition() {
         val current = media ?: return
@@ -222,10 +269,10 @@ class PlaybackSession(
     }
     private fun apply(effects: List<NarrationMachine.Effect>) {
         if (closed) return
-        // All calls occur on the main looper. AndroidSpeech posts all callbacks,
-        // avoiding re-entry while this effect list is being applied.
         for (effect in effects) when (effect) {
-            is NarrationMachine.Effect.Speak -> speech.speak(effect.id, effect.text)
+            is NarrationMachine.Effect.Speak -> speech.speak(effect.id, effect.text,
+                ahead.remaining(selectedTextId(), effect.text, player.currentPosition, prefs.filters)
+                    ?.let { (it / player.playbackParameters.speed).toLong() }, prefs.mode == NarrationMachine.Mode.ADAPTIVE)
             NarrationMachine.Effect.StopSpeech -> speech.stop()
             is NarrationMachine.Effect.Video -> player.playWhenReady = effect.playing
             is NarrationMachine.Effect.Duck -> setDucked(effect.enabled)
@@ -233,25 +280,28 @@ class PlaybackSession(
         }
         onChanged()
     }
+    fun updateMix() { setDucked(ducked) }
     private fun setDucked(value: Boolean) {
-        ducked = value
-        fade?.let { handler.removeCallbacks(it) }
+        ducked = value; fade?.let { handler.removeCallbacks(it) }
         val from = player.volume
         val target = prefs.movieVolume * if (value) prefs.duckVolume else 1f
-        var step = 0
+        val duration = prefs.int(if (value) "duckAttack" else "duckRelease", if (value) 160 else 500, 0, 2000)
+        val hold = if (value) 0 else prefs.int("duckHold", 350, 0, 2000)
+        var began = 0L
         val animation = object : Runnable {
             override fun run() {
                 if (closed) return
-                step++
-                player.volume = (from + (target - from) * step / 8f).coerceIn(0f, 1f)
-                if (step < 8) handler.postDelayed(this, 20)
+                if (began == 0L) began = SystemClock.elapsedRealtime()
+                val progress = if (duration == 0) 1f else ((SystemClock.elapsedRealtime() - began) / duration.toFloat()).coerceIn(0f, 1f)
+                player.volume = (from + (target - from) * progress).coerceIn(0f, 1f)
+                if (progress < 1) handler.postDelayed(this, 20)
             }
         }
-        fade = animation; handler.post(animation)
+        fade = animation; handler.postDelayed(animation, hold.toLong())
     }
     fun close() {
         if (closed) return
-        pause(); closed = true
+        pause(); closed = true; mediaEpoch++
         handler.removeCallbacksAndMessages(null)
         try { context.unregisterReceiver(noisy) } catch (_: IllegalArgumentException) { }
         speech.close(); player.release()

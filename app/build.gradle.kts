@@ -2,8 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
-// The synthetic demo is generated from the checked-in French SRT, never from a
-// personal video. FFmpeg must be on PATH (installed by the GitHub workflow).
+// Generate only our synthetic demonstration, never a personal film.
 val demoResources = layout.buildDirectory.dir("generated/demo-res")
 val demoFile = demoResources.map { it.file("raw/demonstration.mkv") }
 val demoSubtitles = rootProject.file("examples/demonstration.srt")
@@ -26,11 +25,11 @@ android {
     compileSdk = 36
     buildToolsVersion = "36.0.0"
     defaultConfig {
-        applicationId = "fr.soustitresvoix.player"
+        applicationId = "fr.soustitresvoix.player.cinema"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-test"
+        versionCode = 2
+        versionName = "0.2.0-cinema-test"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets.getByName("main").res.srcDir(demoResources)
@@ -38,9 +37,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    buildTypes {
-        release { isMinifyEnabled = false }
-    }
+    buildTypes { release { isMinifyEnabled = false } }
     lint { abortOnError = true; checkReleaseBuilds = true }
 }
 tasks.named("preBuild") { dependsOn(generateDemo) }

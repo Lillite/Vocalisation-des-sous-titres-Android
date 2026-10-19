@@ -35,17 +35,32 @@ class PlayerPreferences(context: Context) {
     var voiceName: String
         get() = p.getString("voiceName", "") ?: ""
         set(v) { p.edit().putString("voiceName", v).apply() }
-    val mode get() = if (comfort) NarrationMachine.Mode.COMFORT else NarrationMachine.Mode.CONTINUOUS
+    val mode get() = runCatching { NarrationMachine.Mode.valueOf(p.getString("mode", "")!!) }.getOrDefault(
+        if (comfort) NarrationMachine.Mode.COMFORT else NarrationMachine.Mode.CONTINUOUS)
+    fun setMode(mode: NarrationMachine.Mode) { p.edit().putString("mode", mode.name).apply() }
+    var enginePackage: String
+        get() = p.getString("engine", "") ?: ""
+        set(v) { p.edit().putString("engine", v).remove("voiceName").apply() }
+    fun int(key: String, default: Int, min: Int, max: Int) = p.getInt(key, default).coerceIn(min, max)
+    fun putInt(key: String, value: Int) { p.edit().putInt(key, value).apply() }
+    fun bool(key: String, default: Boolean = false) = p.getBoolean(key, default)
+    fun putBool(key: String, value: Boolean) { p.edit().putBoolean(key, value).apply() }
+    val adaptiveMax get() = int("adaptiveMax", 125, 100, 160) / 100f
+    val resumePolicy get() = NarrationMachine.ResumePolicy.values()[int("resumePolicy", 0, 0, 2)]
+    val cacheEnabled get() = bool("cache", true)
+    val cacheBytes get() = int("cacheMiB", 128, 16, 256).toLong() * 1024 * 1024
+    val lookAheadCount get() = int("lookAheadCount", 6, 1, 12)
+    val filters get() = fr.soustitresvoix.core.SpeechTools.Filters(skipDescriptions,
+        bool("skipSpeakers"), bool("skipSongs"), bool("skipNotes"))
     fun lastMedia(): SavedMedia? {
         val uri = p.getString("lastUri", null) ?: return null
         return SavedMedia(uri, p.getString("lastTitle", "Vidéo") ?: "Vidéo",
-            p.getLong("position", 0).coerceAtLeast(0), p.getString("subtitlePath", null),
-            p.getString("subtitleMime", null))
+            p.getLong("position", 0).coerceAtLeast(0), p.getString("subtitlePath", null), p.getString("subtitleMime", null))
     }
     fun save(media: SavedMedia) {
         p.edit().putString("lastUri", media.uri).putString("lastTitle", media.title)
-            .putLong("position", media.positionMs.coerceAtLeast(0))
-            .putString("subtitlePath", media.subtitlePath).putString("subtitleMime", media.subtitleMime).apply()
+            .putLong("position", media.positionMs.coerceAtLeast(0)).putString("subtitlePath", media.subtitlePath)
+            .putString("subtitleMime", media.subtitleMime).apply()
     }
     fun clearMedia() { p.edit().remove("lastUri").remove("lastTitle").remove("position").remove("subtitlePath").remove("subtitleMime").apply() }
 }

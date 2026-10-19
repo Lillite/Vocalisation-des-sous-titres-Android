@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Color
 import android.net.Uri
@@ -13,10 +14,10 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
 import android.provider.Settings
-import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.*
 import androidx.media3.common.C
@@ -26,12 +27,13 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import fr.soustitresvoix.core.SubtitleImport
+import fr.soustitresvoix.core.NarrationMachine
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
 
-/** Native text-labelled controls: no gesture or icon is required to use the app. */
+/** Accessible library controls and an independent immersive video presentation. */
 @UnstableApi
 class MainActivity : Activity() {
     private lateinit var prefs: PlayerPreferences
@@ -43,15 +45,17 @@ class MainActivity : Activity() {
     private lateinit var titleView: TextView
     private lateinit var positionView: TextView
     private lateinit var positionSlider: SeekBar
-    private lateinit var extraControls: ScrollView
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private var requestToken = 0L
     private var stopped = false
     private var closed = false
     private var fullscreen = false
+    private var cinema: CinemaView? = null
+    private var savedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    private var backCallback: android.window.OnBackInvokedCallback? = null
     private var scrubbing = false
-    private var message = "Ouvre une vidéo ou lance l’essai intégré. Aucun compte ni connexion Internet n’est nécessaire au lecteur."
+    private var message = "Ouvre une vidéo ou lance l’essai intégré. Les vidéos et les sous-titres restent sur le téléphone."
     private var messageIsError = false
     private var lastSaveMs = 0L
     private val ticker = object : Runnable {
@@ -68,25 +72,29 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         volumeControlStream = android.media.AudioManager.STREAM_MUSIC
         prefs = PlayerPreferences(this)
+        fullscreen = savedInstanceState?.getBoolean("fullscreen", false) ?: false
+        savedOrientation = savedInstanceState?.getInt("savedOrientation", ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
+            ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        if (Build.VERSION.SDK_INT >= 33) {
+            backCallback = android.window.OnBackInvokedCallback { handleBack() }
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback!!)
+        }
         session = PlaybackSession(this, prefs, onChanged = { refreshUi() },
             onMessage = { text, error -> showMessage(text, error) }, onCaption = { })
         buildUi()
         if (!handleViewIntent(intent)) prefs.lastMedia()?.let { saved ->
             val scheme = Uri.parse(saved.uri).scheme
-            if (scheme == "content" || scheme == "android.resource") session.open(saved)
-            else prefs.clearMedia()
+            if (scheme == "content" || scheme == "android.resource") session.open(saved) else prefs.clearMedia()
         }
     }
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent); setIntent(intent); handleViewIntent(intent)
-    }
+    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); handleViewIntent(intent) }
     private fun handleViewIntent(intent: Intent?): Boolean {
         val uri = intent?.data ?: return false
         if (intent.action != Intent.ACTION_VIEW || uri.scheme != "content") return false
         rememberPermission(uri, intent.flags); openVideo(uri); return true
     }
     override fun onResume() {
-        super.onResume(); stopped = false
+        super.onResume(); stopped = false; applyWindowMode()
         main.removeCallbacks(ticker); main.post(ticker)
     }
     override fun onPause() {
@@ -95,29 +103,80 @@ class MainActivity : Activity() {
         super.onPause()
     }
     override fun onDestroy() {
-        closed = true; requestToken++
+        closed = true; requestToken++; cinema?.close()
+        if (Build.VERSION.SDK_INT >= 33) backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
         main.removeCallbacksAndMessages(null); io.shutdownNow()
         if (::playerView.isInitialized) playerView.player = null
         if (::session.isInitialized) session.close()
         super.onDestroy()
     }
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig); buildUi()
+    override fun onConfigurationChanged(newConfig: Configuration) { super.onConfigurationChanged(newConfig); buildUi() }
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("fullscreen", fullscreen); outState.putInt("savedOrientation", savedOrientation)
+        super.onSaveInstanceState(outState)
+    }
+    @Deprecated("Back bridge for Android below 13")
+    override fun onBackPressed() { handleBack() }
+    private fun handleBack() {
+        if (cinema?.back() == true) return
+        if (fullscreen) setFullscreen(false) else finish()
+    }
+    override fun onWindowFocusChanged(hasFocus: Boolean) { super.onWindowFocusChanged(hasFocus); if (hasFocus) applyWindowMode() }
+    internal fun setFullscreen(value: Boolean) {
+        if (fullscreen == value) return
+        if (value) savedOrientation = requestedOrientation
+        fullscreen = value
+        requestedOrientation = if (!value) savedOrientation else when (prefs.int("orientation", 1, 0, 2)) {
+            1 -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            2 -> ActivityInfo.SCREEN_ORIENTATION_LOCKED
+            else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+        buildUi()
+    }
+    private fun applyWindowMode() {
+        if (Build.VERSION.SDK_INT >= 28) window.attributes = window.attributes.apply {
+            layoutInDisplayCutoutMode = if (fullscreen) {
+                if (Build.VERSION.SDK_INT >= 30) WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                else WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            } else WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+        }
+        if (Build.VERSION.SDK_INT >= 30) {
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.apply {
+                systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                if (fullscreen) hide(WindowInsets.Type.systemBars()) else show(WindowInsets.Type.systemBars())
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = if (fullscreen) View.SYSTEM_UI_FLAG_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE else View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        }
     }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun text(value: String, size: Float = 20f) = TextView(this).apply {
-        text = value; textSize = size; setTextColor(Color.WHITE)
-        setPadding(dp(8), dp(4), dp(8), dp(4))
+        text = value; textSize = size; setTextColor(Color.WHITE); setPadding(dp(8), dp(4), dp(8), dp(4))
     }
     private fun button(label: String, action: () -> Unit) = Button(this).apply {
         text = label; textSize = 18f; isAllCaps = false; minHeight = dp(64)
         setPadding(dp(8), dp(8), dp(8), dp(8)); setOnClickListener { action() }
     }
     private fun buildUi() {
-        if (::playerView.isInitialized) playerView.player = null
+        cinema?.close(); cinema = null
+        if (::playerView.isInitialized) (playerView.parent as? ViewGroup)?.removeView(playerView)
+        else playerView = PlayerView(this).apply {
+            useController = false; player = session.player
+            isFocusable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        applyWindowMode(); applyCaptionStyle()
+        if (fullscreen) {
+            cinema = CinemaView(this, session, prefs, playerView, { setFullscreen(false) },
+                { settingsDialog() }, { chooseTrack(C.TRACK_TYPE_TEXT) }, { chooseTrack(C.TRACK_TYPE_AUDIO) })
+            setContentView(cinema); cinema?.requestApplyInsets(); refreshUi(); return
+        }
         val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(18, 18, 18))
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+            orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(18, 18, 18)); setPadding(dp(8), dp(8), dp(8), dp(8))
         }
         root.setOnApplyWindowInsetsListener { view, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
@@ -130,25 +189,14 @@ class MainActivity : Activity() {
             }
             insets
         }
-        titleView = text(session.media?.title ?: "Sous-titres en voix", 22f)
-        titleView.maxLines = 2
-        if (!fullscreen) root.addView(titleView)
-        playerView = PlayerView(this).apply {
-            useController = false; player = session.player
-            // Controls below are the single accessible playback control surface.
-            isFocusable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-        applyCaptionStyle()
-        root.addView(playerView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, if (fullscreen) 1f else 0.9f))
-        statusView = text("En pause", 18f)
-        root.addView(statusView)
-        positionView = text("00:00 / 00:00", 16f).apply {
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-        if (!fullscreen) root.addView(positionView)
+        titleView = text(session.media?.title ?: "Sous-titres en voix — Cinéma", 22f).apply { maxLines = 2 }
+        root.addView(titleView)
+        root.addView(playerView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.9f))
+        statusView = text("En pause", 18f); root.addView(statusView)
+        positionView = text("00:00 / 00:00", 16f).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        root.addView(positionView)
         positionSlider = SeekBar(this).apply {
-            id = View.generateViewId(); max = 1000; minimumHeight = dp(48)
-            contentDescription = "Position de la vidéo"
+            id = View.generateViewId(); max = 1000; minimumHeight = dp(48); contentDescription = "Position de la vidéo"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onStartTrackingTouch(seekBar: SeekBar) { scrubbing = true; session.pause() }
                 override fun onStopTrackingTouch(seekBar: SeekBar) { scrubbing = false; seekFraction(seekBar.progress) }
@@ -157,32 +205,28 @@ class MainActivity : Activity() {
                 }
             })
         }
-        if (!fullscreen) root.addView(positionSlider)
+        root.addView(positionSlider)
         val navigation = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         fun addNav(view: View) { navigation.addView(view, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
         addNav(button("Reculer\n10 s") { session.seek(session.player.currentPosition - 10_000) })
         playButton = button("Lire") {
             val state = session.machine.snapshot()
             if (state.wantsPlayback || state.speakingId != null) session.pause() else session.play()
-        }
-        playButton.id = R.id.play_button
+        }.apply { id = R.id.play_button }
         addNav(playButton)
         addNav(button("Avancer\n10 s") { session.seek(session.player.currentPosition + 10_000) })
         root.addView(navigation)
-        if (fullscreen) {
-            root.addView(button("Quitter le plein écran") { fullscreen = false; buildUi() })
-        }
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         messageView = text(message, 18f).apply {
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
             setTextColor(if (messageIsError) Color.rgb(255, 205, 110) else Color.LTGRAY)
         }
         column.addView(messageView)
+        column.addView(button("Plein écran cinéma") { setFullscreen(true) })
         column.addView(button("Ouvrir une vidéo") { pickDocument(OPEN_VIDEO) }.apply { id = R.id.open_video })
         column.addView(button("Essai intégré : vidéo sous-titrée") {
             requestToken++
-            session.open(SavedMedia("android.resource://$packageName/${R.raw.demonstration}", "Essai intégré"))
-            session.play()
+            session.open(SavedMedia("android.resource://$packageName/${R.raw.demonstration}", "Essai intégré")); session.play()
         }.apply { id = R.id.demo_button })
         column.addView(button("Ajouter un fichier de sous-titres") {
             if (session.media == null) showMessage("Ouvre d’abord une vidéo.", false) else pickDocument(OPEN_SUBTITLE)
@@ -190,14 +234,12 @@ class MainActivity : Activity() {
         column.addView(button("Choisir la piste de sous-titres") { chooseTrack(C.TRACK_TYPE_TEXT) })
         column.addView(button("Choisir la piste audio du film") { chooseTrack(C.TRACK_TYPE_AUDIO) })
         column.addView(button("Répéter la dernière phrase — met en pause") { session.repeatLast() })
+        column.addView(button("Reprendre explicitement la voix") { session.resumeVoice() })
         column.addView(button("Réglages de la voix et du confort") { settingsDialog() })
-        column.addView(button("Plein écran") { fullscreen = true; buildUi() })
         column.addView(button("Aide et limites de cette version") { helpDialog() })
-        extraControls = ScrollView(this).apply { isFillViewport = false; addView(column) }
-        if (!fullscreen) root.addView(extraControls, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.1f))
-        setContentView(root)
-        root.requestApplyInsets()
-        refreshUi()
+        root.addView(ScrollView(this).apply { isFillViewport = false; addView(column) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.1f))
+        setContentView(root); root.requestApplyInsets(); refreshUi()
     }
     private fun applyCaptionStyle() {
         if (!::playerView.isInitialized) return
@@ -211,14 +253,16 @@ class MainActivity : Activity() {
         }
     }
     private fun refreshUi() {
-        if (closed || !::session.isInitialized || !::playButton.isInitialized) return
+        if (closed || !::session.isInitialized) return
         val state = session.machine.snapshot()
-        playButton.text = when {
-            state.wantsPlayback -> "Pause"
-            state.speakingId != null -> "Arrêter la voix"
-            else -> "Lire"
-        }
+        if (state.wantsPlayback || state.speakingId != null) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        session.prepareTick()
+        cinema?.let { it.refresh(); return }
+        if (!::playButton.isInitialized) return
+        playButton.text = when { state.wantsPlayback -> "Pause"; state.speakingId != null -> "Arrêter la voix"; else -> "Lire" }
         val status = when {
+            state.voiceSuspended -> "Voix en attente : utilise Reprendre explicitement la voix"
             state.waitingForSpeech -> "Pause de la vidéo pour terminer la phrase"
             state.speakingId != null && !state.wantsPlayback -> "Écoute de la phrase — vidéo en pause"
             state.wantsPlayback && session.player.playbackState == Player.STATE_BUFFERING -> "Chargement de la vidéo"
@@ -232,9 +276,7 @@ class MainActivity : Activity() {
         positionSlider.isEnabled = duration > 0 && session.player.isCurrentMediaItemSeekable
         if (!scrubbing && duration > 0) positionSlider.progress = (pos.toDouble() / duration * 1000).toInt().coerceIn(0, 1000)
         positionSlider.contentDescription = "Position ${clock(pos)} sur ${clock(duration)}"
-        titleView.text = session.media?.title ?: "Sous-titres en voix"
-        if (state.wantsPlayback || state.speakingId != null) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        titleView.text = session.media?.title ?: "Sous-titres en voix — Cinéma"
     }
     private fun clock(ms: Long): String {
         val s = ms.coerceAtLeast(0) / 1000
@@ -248,11 +290,9 @@ class MainActivity : Activity() {
     private fun showMessage(value: String, error: Boolean) {
         message = value; messageIsError = error
         if (::messageView.isInitialized) {
-            messageView.text = value
-            messageView.setTextColor(if (error) Color.rgb(255, 205, 110) else Color.LTGRAY)
+            messageView.text = value; messageView.setTextColor(if (error) Color.rgb(255, 205, 110) else Color.LTGRAY)
         }
-        // Errors are not hidden behind the fullscreen interface.
-        if (error && fullscreen && !closed) { fullscreen = false; buildUi() }
+        if (error && fullscreen && !closed) setFullscreen(false)
     }
     @Suppress("DEPRECATION")
     private fun pickDocument(request: Int) {
@@ -271,10 +311,7 @@ class MainActivity : Activity() {
         val uri = data?.data ?: return
         if (uri.scheme != "content") { showMessage("Choisis un fichier avec le sélecteur Android.", true); return }
         rememberPermission(uri, data.flags)
-        when (requestCode) {
-            OPEN_VIDEO -> openVideo(uri)
-            OPEN_SUBTITLE -> importSubtitle(uri)
-        }
+        when (requestCode) { OPEN_VIDEO -> openVideo(uri); OPEN_SUBTITLE -> importSubtitle(uri) }
     }
     private fun rememberPermission(uri: Uri, flags: Int) {
         val read = flags and Intent.FLAG_GRANT_READ_URI_PERMISSION
@@ -288,8 +325,7 @@ class MainActivity : Activity() {
         return "Fichier"
     }
     private fun openVideo(uri: Uri) {
-        session.pause(); val token = ++requestToken
-        showMessage("Ouverture du fichier…", false)
+        session.pause(); val token = ++requestToken; showMessage("Ouverture du fichier…", false)
         io.execute {
             try {
                 val name = displayName(uri)
@@ -306,14 +342,12 @@ class MainActivity : Activity() {
     }
     private fun importSubtitle(uri: Uri, charset: String? = null) {
         if (session.media == null) return
-        session.pause(); val token = ++requestToken
-        showMessage("Vérification du fichier de sous-titres…", false)
+        session.pause(); val token = ++requestToken; showMessage("Vérification du fichier de sous-titres…", false)
         io.execute {
             var created: File? = null
             try {
                 val bytes = contentResolver.openInputStream(uri)?.use { input ->
-                    val out = ByteArrayOutputStream()
-                    val buffer = ByteArray(8192)
+                    val out = ByteArrayOutputStream(); val buffer = ByteArray(8192)
                     while (true) {
                         val n = input.read(buffer); if (n < 0) break
                         require(out.size() + n <= SubtitleImport.MAX_BYTES) { "Ce fichier dépasse 8 Mio." }
@@ -328,7 +362,6 @@ class MainActivity : Activity() {
                 main.post {
                     if (closed || token != requestToken) { file.delete(); return@post }
                     session.attachSubtitle(file.absolutePath, decoded.kind.mime)
-                    // Only app-owned imported subtitle copies are eligible for cleanup.
                     io.execute {
                         directory.listFiles()?.filter { it != file }?.sortedByDescending { it.lastModified() }
                             ?.drop(2)?.forEach { it.delete() }
@@ -345,10 +378,9 @@ class MainActivity : Activity() {
     }
     private fun chooseEncoding(uri: Uri) {
         val names = arrayOf("windows-1252", "UTF-8", "UTF-16LE", "UTF-16BE", "Shift_JIS", "GB18030", "Big5", "windows-1256", "windows-1251")
-        AlertDialog.Builder(this).setTitle("Choisir l’encodage du fichier")
-            .setItems(names) { _, which -> importSubtitle(uri, names[which]) }
+        AlertDialog.Builder(this).setTitle("Choisir l’encodage du fichier").setItems(names) { _, which -> importSubtitle(uri, names[which]) }
             .setNegativeButton("Annuler", null).show()
-        showMessage("L’encodage n’est pas reconnu automatiquement. Windows-1252 est fréquent pour d’anciens fichiers français ; les autres langues peuvent employer un autre encodage.", false)
+        showMessage("L’encodage n’est pas reconnu automatiquement. Windows-1252 est fréquent pour d’anciens fichiers français.", false)
     }
     private fun chooseTrack(type: Int) {
         session.pause()
@@ -356,19 +388,17 @@ class MainActivity : Activity() {
         val entries = mutableListOf(Entry("Sélection automatique", null))
         if (type == C.TRACK_TYPE_TEXT) entries += Entry("Désactiver les sous-titres", null, disabled = true)
         session.player.currentTracks.groups.filter { it.type == type }.forEach { group ->
-            for (i in 0 until group.length) {
-                if (group.isTrackSupported(i)) {
-                    val f = group.getTrackFormat(i)
-                    val language = f.language?.let { Locale.forLanguageTag(it).getDisplayName(Locale.FRENCH) } ?: "langue non indiquée"
-                    val selected = if (group.isTrackSelected(i)) " — sélectionnée" else ""
-                    entries += Entry("${f.label ?: "Piste ${entries.size}"} — $language — ${f.sampleMimeType ?: "format inconnu"}$selected", group, i)
-                }
+            for (i in 0 until group.length) if (group.isTrackSupported(i)) {
+                val f = group.getTrackFormat(i)
+                val language = f.language?.let { Locale.forLanguageTag(it).getDisplayName(Locale.FRENCH) } ?: "langue non indiquée"
+                val selected = if (group.isTrackSelected(i)) " — sélectionnée" else ""
+                entries += Entry("${f.label ?: "Piste ${entries.size}"} — $language — ${f.sampleMimeType ?: "format inconnu"}$selected", group, i)
             }
         }
         AlertDialog.Builder(this).setTitle(if (type == C.TRACK_TYPE_TEXT) "Piste de sous-titres" else "Piste audio du film")
             .setItems(entries.map { it.label }.toTypedArray()) { _, index ->
                 val e = entries[index]; session.selectTrack(type, e.group, e.index, e.disabled)
-                showMessage("Piste choisie. Vérifie que sa langue correspond à celle de la voix, puis appuie sur Lire.", false)
+                showMessage("Piste choisie. Vérifie sa langue, puis appuie sur Lire.", false)
             }.setNegativeButton("Fermer", null).show()
     }
     private fun settingsDialog() {
@@ -381,8 +411,15 @@ class MainActivity : Activity() {
             })
         }
         check("Vocaliser les sous-titres", prefs.narration) { prefs.narration = it }
-        check("Mode confort : terminer chaque phrase, avec une pause de la vidéo si nécessaire", prefs.comfort) { prefs.comfort = it }
-        column.addView(text("Sans le mode confort, la vidéo continue mais les phrases trop longues peuvent être coupées.", 16f))
+        val modeButton = button("Mode vocal : ${prefs.mode}") { }
+        modeButton.setOnClickListener {
+            AlertDialog.Builder(this).setTitle("Synchronisation de la voix")
+                .setItems(arrayOf("Confort : phrases complètes", "Continu : peut couper les phrases", "Adaptatif : accélération plafonnée puis pause")) { _, index ->
+                    prefs.setMode(NarrationMachine.Mode.values()[index]); session.refreshSettings(); modeButton.text = "Mode vocal : ${prefs.mode}"
+                }.show()
+        }
+        column.addView(modeButton)
+        column.addView(text("Confort et Adaptatif conservent les phrases complètes. Le mode Continu peut couper les phrases trop longues.", 16f))
         check("Afficher aussi les sous-titres à l’écran", prefs.showSubtitles) { prefs.showSubtitles = it }
         check("Ne pas lire les indications entre crochets, par exemple [musique]", prefs.skipDescriptions) { prefs.skipDescriptions = it }
         fun slider(label: String, from: Int, to: Int, value: Int, unit: String, change: (Int) -> Unit) {
@@ -394,8 +431,7 @@ class MainActivity : Activity() {
                     override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
                     override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
                     override fun onProgressChanged(seekBar: SeekBar, p: Int, fromUser: Boolean) {
-                        caption.text = "$label : ${p + from}$unit"
-                        seekBar.contentDescription = caption.text
+                        caption.text = "$label : ${p + from}$unit"; seekBar.contentDescription = caption.text
                         if (fromUser) change(p + from)
                     }
                 })
@@ -413,18 +449,18 @@ class MainActivity : Activity() {
             catch (_: ActivityNotFoundException) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
         })
         column.addView(button("Retirer le fichier de sous-titres ajouté") {
-            session.attachSubtitle(null, null); showMessage("Fichier ajouté retiré. Les pistes intégrées à la vidéo restent disponibles.", false)
+            session.attachSubtitle(null, null); showMessage("Fichier ajouté retiré. Les pistes intégrées restent disponibles.", false)
         })
-        val scroll = ScrollView(this).apply { addView(column) }
-        val dialog = AlertDialog.Builder(this).setTitle("Voix et confort").setView(scroll)
-            .setPositiveButton("Appliquer et fermer") { _, _ -> }.create()
-        dialog.setOnDismissListener { if (!closed) { session.refreshSettings(); applyCaptionStyle() } }
+        AdvancedSettings(this, session, prefs).populate(column)
+        val dialog = AlertDialog.Builder(this).setTitle("Voix et confort")
+            .setView(ScrollView(this).apply { addView(column) }).setPositiveButton("Appliquer et fermer") { _, _ -> }.create()
+        dialog.setOnDismissListener { if (!closed) { session.refreshSettings(); applyCaptionStyle(); applyWindowMode() } }
         dialog.show()
     }
     private fun voiceDialog() {
         session.speech.applyPreferences()
         val choices = session.speech.choices
-        if (choices.isEmpty()) { showMessage("Installe d’abord une voix hors ligne dans les réglages vocaux Android.", true); return }
+        if (choices.isEmpty()) { showMessage("Installe une voix locale dans le moteur choisi, puis actualise les voix.", true); return }
         AlertDialog.Builder(this).setTitle("Voix installées utilisables hors ligne")
             .setSingleChoiceItems(choices.map { it.label }.toTypedArray(), choices.indexOfFirst { it.name == prefs.voiceName }) { dialog, index ->
                 prefs.voiceName = choices[index].name; session.refreshSettings(); dialog.dismiss()
@@ -432,8 +468,8 @@ class MainActivity : Activity() {
     }
     private fun helpDialog() {
         session.pause()
-        AlertDialog.Builder(this).setTitle("Première version de test")
-            .setMessage("1. Ouvre une vidéo locale, par exemple MKV, MP4 ou WebM.\n\n2. Choisis sa piste de sous-titres, ou ajoute un fichier SRT, VTT, ASS/SSA.\n\n3. Choisis une voix dans la langue des sous-titres. Le lecteur ne traduit pas le texte.\n\n4. Appuie sur Lire. Le mode confort évite de couper les phrases, mais peut interrompre brièvement la vidéo.\n\nLes sous-titres en images (PGS/VobSub) et ceux incrustés dans l’image ne sont pas vocalisés. Le support des codecs audio et vidéo dépend du téléphone. Les fichiers protégés par DRM et les applications de streaming ne sont pas pris en charge.\n\nL’application demande des voix locales et n’a pas d’autorisation Internet. Le moteur vocal installé reste un composant externe. La lecture s’arrête lorsque l’application passe en arrière-plan.\n\nLes boutons ont des libellés pour TalkBack. Les sous-titres ne sont pas annoncés une seconde fois par l’interface.\n\nCette application vocalise le texte ; elle ne fournit pas d’audiodescription des scènes.")
+        AlertDialog.Builder(this).setTitle("Cinéma 0.2 — version de test")
+            .setMessage("Ouvre une vidéo, choisis une piste textuelle et une voix dans la même langue. Le lecteur ne traduit pas.\n\nPlein écran cinéma : commandes superposées, Retour pour quitter, Adapter pour conserver toute l’image. Remplir recadre et Étirer déforme.\n\nConfort : la vidéo attend les phrases longues. Adaptatif : accélération plafonnée sur l’audio préparé dont la durée est connue, puis pause si nécessaire. Si l’anticipation est indisponible, le fonctionnement Confort est conservé. Continu peut couper les phrases.\n\nLe cache anticipe les sous-titres déjà chargés. Le nombre de segments et l’espace disque sont limités. Les filtres sont facultatifs et leur résultat peut être prévisualisé.\n\nPGS, VobSub et sous-titres incrustés ne sont pas vocalisés. Pas de DRM, de traduction, d’audiodescription ni de lecture en arrière-plan. Les codecs dépendent du téléphone.\n\nAucune permission Internet n’est demandée par ce lecteur. Le moteur vocal choisi est une application externe. Les liens de téléchargement s’ouvrent dans le navigateur. Aucun accès NPU/GPU vocal n’est présumé.\n\nCette édition s’installe à côté de la version 0.1 pour préserver tes réglages et ton lecteur existant.")
             .setPositiveButton("Fermer", null).show()
     }
     companion object { private const val OPEN_VIDEO = 10; private const val OPEN_SUBTITLE = 11 }
