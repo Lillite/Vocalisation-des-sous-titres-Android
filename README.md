@@ -1,61 +1,41 @@
-# Vocalisation des sous-titres Android — Sous-titres en voix
+# Sous-titres en voix — édition Cinéma 0.2
 
-Lecteur vidéo Android local destiné en priorité à une personne malvoyante : vocalisation des sous-titres textuels, commandes explicites, baisse réglable du son du film et mode confort qui attend la fin d’une phrase.
+Cette branche `cinema-0.2` est une édition de test distincte. La branche `main` et l’application 0.1 restent intactes. L’identifiant `fr.soustitresvoix.player.cinema` permet l’installation à côté de la version initiale ; ses préférences sont séparées.
 
-**Version de test 0.1.0.** Un projet compilé ou un test automatisé réussi ne garantit ni l’absence de bugs ni le confort réel sur chaque téléphone. L’état de la compilation et les rapports exécutés sont dans l’onglet **Actions** de ce dépôt privé.
+## Installer et utiliser
 
-## Installer depuis un téléphone
+Le workflow **Cinema - verifier et compiler** publie `SousTitresVoix-Cinema-APK` uniquement après réussite des contrôles, du lint, de la compilation et des tests instrumentés. Consulter l’exécution correspondante dans Actions. Extraire l’APK de l’artefact puis l’installer sur Android. Ne pas désactiver Play Protect.
 
-1. Ouvrir **Actions**, puis l’exécution **Verifier et compiler Android** réussie (coche verte).
-2. Dans **Artifacts**, télécharger **SousTitresVoix-APK-test** en étant connecté au compte autorisé sur ce dépôt.
-3. Extraire le ZIP, ouvrir `app-debug.apk`, puis suivre la demande d’installation Android. Autoriser uniquement l’application utilisée pour ouvrir ce fichier, sans désactiver globalement les protections du téléphone.
-4. Ouvrir **Sous-titres en voix**, puis **Réglages de la voix et du confort**. Choisir une voix française hors ligne et écouter son échantillon.
-5. Lancer **Essai intégré : vidéo sous-titrée** avant d’essayer un fichier personnel.
+Dans l’application : ouvrir une vidéo, choisir ses sous-titres textuels, choisir une voix de même langue, puis Lire et **Plein écran cinéma**. Un toucher affiche les commandes superposées. Retour déverrouille d’abord, puis quitte le plein écran ; il ne ferme pas immédiatement la vidéo.
 
-Le workflow ne publie l’APK qu’après la réussite des contrôles de compilation, signature, manifeste et tests instrumentés. Aucun APK n’est promis pour une exécution en échec.
+## Fonctionnalités de cette branche
 
-## Fonctions prévues par le code
+- Plein écran immersif, commandes superposées, masquage réglable (0 = jamais), orientation système/paysage/verrouillée et zones sûres pour les boutons et sous-titres.
+- Adapter (image entière), Remplir (recadrage), Étirer (déformation), zoom et recentrage. Gestes facultatifs et boutons équivalents ; désactivation des gestes personnalisés avec l’exploration tactile TalkBack.
+- Réglages rapides des volumes sans pause de la vidéo. La voix en cours garde son volume jusqu’au prochain segment.
+- Moteur de synthèse vocale choisi uniquement pour cette application, sans changement des paramètres de TalkBack ; choix parmi les voix locales installées.
+- Modes Confort et Continu conservés ; mode Adaptatif avec accélération plafonnée lorsque durée audio et intervalle du sous-titre sont connus. Sinon, vitesse normale et pause de confort. Aucun résumé ni suppression automatique du dialogue.
+- Préparation par `synthesizeToFile` des sous-titres déjà chargés, cache local de 16 à 256 Mio, 1 à 12 segments anticipés. Synthèse directe prioritaire et repli direct si le moteur ne fournit pas un WAV compatible. Il ne s’agit pas d’une préparation garantie de tout le film.
+- Reprise de la réplique entière, du segment interrompu ou par commande explicite. Répétition sans conserver un doublon dans la file.
+- Baisse du son du film : profondeur, durée de baisse, remontée et délai entre répliques réglables.
+- Filtres facultatifs des crochets, étiquettes de locuteur en majuscules, lignes musicales explicitement marquées, notes de traduction explicites. Aperçu original/texte vocalisé ; le texte affiché reste intact.
+- Identités temporelles de sous-titres lorsque disponibles, pour distinguer la présentation répétée de la même occurrence et une réplique identique plus tard. Limites explicites de mémoire pour l’index anticipé.
+- Diagnostic local : décodeur choisi, images abandonnées, CPU et mémoire du processus du lecteur, température de batterie et état thermique Android, temps de synthèse et cache. Les mesures n’incluent pas automatiquement un moteur vocal externe. Aucun accès NPU/GPU vocal n’est présumé.
 
-- Vidéos locales, notamment conteneurs MKV, MP4 et WebM ; les codecs effectivement lisibles dépendent des décodeurs du téléphone.
-- Sous-titres textuels intégrés et fichiers externes SRT, VTT, ASS/SSA. Choix explicite de l’encodage pour les fichiers anciens.
-- Synthèse vocale Android avec voix installées déclarées utilisables hors ligne. Pas de LLM ni de compte nécessaire pendant le visionnage.
-- Mode confort activé par défaut : si la voix n’a pas terminé à la transition suivante, la vidéo attend.
-- Mode continu facultatif : pas d’attente pour la voix, mais les phrases trop longues peuvent être interrompues.
-- Volumes séparés de la voix et du film, baisse progressive du film pendant la parole, vitesse de la voix, taille des sous-titres, plein écran et reprise de position.
-- Pause explicite, retour/avance de dix secondes, répétition de la dernière phrase et messages d’erreur visibles.
+## Voix et téléchargements
 
-## Limites
+SherpaTTS : https://f-droid.org/packages/org.woheller69.ttsengine/
 
-Pas d’OCR pour les sous-titres en images PGS/VobSub ou incrustés dans la vidéo ; pas de traduction, de doublage humain ni d’audiodescription des scènes. Aucun accès aux contenus DRM d’autres applications. Pas de décodeurs FFmpeg intégrés au lecteur : FFmpeg sert uniquement à produire la vidéo synthétique de test pendant la compilation. Lecture en arrière-plan non prise en charge dans cette version.
+Acapela TTS Voices (éditeur) : https://www.acapela-group.com/fr/solutions/acapela-tts-voices-for-google-play/
 
-L’application source ne demande aucune permission. Le workflow vérifie aussi le manifeste de l’APK compilé pour exclure notamment Internet, microphone, caméra, contacts et accès général au stockage. Le moteur vocal Android reste un composant externe dont les voix doivent être vérifiées sur appareil.
+Synthèse Google : https://play.google.com/store/apps/details?id=com.google.android.tts
 
-## Compilation et tests
+Installer le moteur, ouvrir celui-ci et télécharger une voix française, puis revenir dans **Réglages de la voix et du confort → Choisir le moteur vocal de CE lecteur → Actualiser les moteurs et les voix → Choisir une voix hors ligne**. SherpaTTS propose la gestion de langues et des modèles Piper/Coqui. Un modèle ONNX isolé n’est pas directement importable par ce lecteur. La qualité sonore doit être comparée à l’écoute sur le téléphone cible.
 
-Chaîne fixée : Java 17, Gradle 8.13, Android SDK 36, Build Tools 36.0.0, AGP 8.11.1, Kotlin 2.2.21, Media3 1.11.1. Minimum Android configuré : API 26 (Android 8). Pour une compilation locale, installer également FFmpeg avec les encodeurs libx264 et AAC sur le PATH.
+## Tests et limites
 
-```sh
-gradle --no-daemon :core:test :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
-# Avec un appareil ou émulateur lancé :
-gradle --no-daemon :app:connectedDebugAndroidTest
-```
+Les tests de régression du noyau initial sont conservés. La suite Cinéma ajoute 31 contrôles : segmentation/reprise, filtres, identités, plafonnement adaptatif, WAV et éviction du cache. Les tests Android ajoutent la géométrie réelle du plein écran, les barres système en paysage, la conservation du lecteur, la prélecture MKV, les réglages rapides et un service TTS de test qui produit un PCM synthétique. Ce dernier prouve le chemin synthèse/cache/lecture, pas la qualité d’une voix naturelle. Les résultats effectivement exécutés sont dans les rapports de chaque workflow.
 
-La tâche `generateDemo` crée automatiquement un MKV H.264/AAC/SubRip avec les huit phrases françaises de `examples/demonstration.srt`. Aucun fichier vidéo personnel n’est utilisé ou transmis. L’APK se trouve ensuite dans `app/build/outputs/apk/debug/app-debug.apk`.
+Ni OCR, ni traduction, ni LibVLC, ni envoi de films sur Internet. Pas de lecture en arrière-plan dans cette version. Les sous-titres en images/incrustés et les codecs non disponibles restent des limites. Le fonctionnement complet avec TalkBack, la consommation et la qualité des moteurs vocaux du OnePlus doivent être évalués sur ce téléphone, pas déduits d’un émulateur.
 
-Le module `core` est indépendant d’Android. Sa suite comporte 54 contrôles et 10 000 transitions pseudo-aléatoires par graine. JUnit répète la suite avec les graines 42, 2026 et 7351. Les deux tests instrumentés vérifient une commande explicitement libellée et l’émission d’un sous-titre français par la lecture réelle du MKV sur Android. Ils ne valident pas le timbre d’une voix, TalkBack complet ou une séance de deux heures.
-
-```sh
-# Alternative locale sans Android/Gradle, avec kotlinc installé :
-bash tools/check-core.sh 42
-python3 tools/check-project.py
-```
-
-## Signature
-
-L’APK livré par le workflow est une version **debug**, signée pour des essais privés. Aucune clé privée n’est versionnée. La clé de test peut différer entre les exécutions ; configurer une clé stable conservée en sécurité avant une distribution suivie. Ne pas publier cette version comme une version de production.
-
-## Documents
-
-- `docs/TESTS_TELEPHONE.md` : parcours de validation sur le téléphone cible.
-- `docs/ARCHITECTURE.md` : séparation du moteur, des API Android et de l’interface.
-- Les artefacts GitHub Actions contiennent les résultats JUnit, le rapport Android Lint, le manifeste extrait et l’empreinte SHA-256 de l’APK.
+Signature debug pour essais privés : aucune clé privée n’est versionnée. La clé peut changer entre builds. Ne pas présenter cette édition comme une version de production. Prévoir une signature stable hors du dépôt avant des mises à jour suivies.

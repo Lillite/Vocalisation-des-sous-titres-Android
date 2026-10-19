@@ -44,6 +44,7 @@ tasks.named("preBuild") { dependsOn(generateDemo) }
 kotlin { jvmToolchain(17) }
 dependencies {
     implementation(project(":core"))
+    implementation("androidx.activity:activity:1.11.0")
     implementation("androidx.media3:media3-exoplayer:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
     androidTestImplementation("androidx.test:runner:1.6.2")

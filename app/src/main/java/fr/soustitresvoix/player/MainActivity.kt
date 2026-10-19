@@ -1,6 +1,7 @@
 package fr.soustitresvoix.player
 
-import android.app.Activity
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -35,7 +36,7 @@ import java.util.concurrent.Executors
 
 /** Accessible library controls and an independent immersive video presentation. */
 @UnstableApi
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
     private lateinit var prefs: PlayerPreferences
     internal lateinit var session: PlaybackSession; private set
     private lateinit var playerView: PlayerView
@@ -53,7 +54,6 @@ class MainActivity : Activity() {
     private var fullscreen = false
     private var cinema: CinemaView? = null
     private var savedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-    private var backCallback: android.window.OnBackInvokedCallback? = null
     private var scrubbing = false
     private var message = "Ouvre une vidéo ou lance l’essai intégré. Les vidéos et les sous-titres restent sur le téléphone."
     private var messageIsError = false
@@ -75,10 +75,9 @@ class MainActivity : Activity() {
         fullscreen = savedInstanceState?.getBoolean("fullscreen", false) ?: false
         savedOrientation = savedInstanceState?.getInt("savedOrientation", ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
             ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        if (Build.VERSION.SDK_INT >= 33) {
-            backCallback = android.window.OnBackInvokedCallback { handleBack() }
-            onBackInvokedDispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback!!)
-        }
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() { handleBack() }
+        })
         session = PlaybackSession(this, prefs, onChanged = { refreshUi() },
             onMessage = { text, error -> showMessage(text, error) }, onCaption = { })
         buildUi()
@@ -104,7 +103,6 @@ class MainActivity : Activity() {
     }
     override fun onDestroy() {
         closed = true; requestToken++; cinema?.close()
-        if (Build.VERSION.SDK_INT >= 33) backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
         main.removeCallbacksAndMessages(null); io.shutdownNow()
         if (::playerView.isInitialized) playerView.player = null
         if (::session.isInitialized) session.close()
@@ -115,8 +113,6 @@ class MainActivity : Activity() {
         outState.putBoolean("fullscreen", fullscreen); outState.putInt("savedOrientation", savedOrientation)
         super.onSaveInstanceState(outState)
     }
-    @Deprecated("Back bridge for Android below 13")
-    override fun onBackPressed() { handleBack() }
     private fun handleBack() {
         if (cinema?.back() == true) return
         if (fullscreen) setFullscreen(false) else finish()

@@ -135,13 +135,13 @@ class AndroidSpeech(
         }
         activeId = id
         val ticket = generation; val key = SpeechTools.key(configuration, text)
-        if (!preferences.cacheEnabled) { direct(id, text, availableMs, adaptive); return }
+        if (!preferences.cacheEnabled) { direct(id, text); return }
         arm(id, 15_000)
         io.execute {
             val entry = runCatching { cache.get(key) }.getOrNull()
             main.post {
                 if (closed || generation != ticket || activeId != id) return@post
-                if (entry == null) { misses++; direct(id, text, availableMs, adaptive) }
+                if (entry == null) { misses++; direct(id, text) }
                 else { hits++; playFile(id, text, entry, availableMs, adaptive) }
             }
         }
@@ -158,18 +158,17 @@ class AndroidSpeech(
                 try {
                     mp.setVolume(preferences.voiceVolume, preferences.voiceVolume)
                     mp.playbackParams = PlaybackParams().setSpeed(lastFactor).setPitch(1f)
-                    mp.start(); arm(id, (entry.durationMs / lastFactor).toLong() + 15_000)
-                    pump()
-                } catch (_: RuntimeException) { releaseAudio(); direct(id, text, availableMs, adaptive) }
+                    mp.start(); arm(id, (entry.durationMs / lastFactor).toLong() + 15_000); pump()
+                } catch (_: RuntimeException) { releaseAudio(); direct(id, text) }
             }
             mp.setOnCompletionListener { finish(id, null) }
             mp.setOnErrorListener { _, _, _ ->
-                if (activeId == id) { releaseAudio(); direct(id, text, availableMs, adaptive) }; true
+                if (activeId == id) { releaseAudio(); direct(id, text) }; true
             }
             arm(id, 15_000); mp.prepareAsync()
-        } catch (_: Exception) { releaseAudio(); direct(id, text, availableMs, adaptive) }
+        } catch (_: Exception) { releaseAudio(); direct(id, text) }
     }
-    private fun direct(id: String, text: String, availableMs: Long?, adaptive: Boolean) {
+    private fun direct(id: String, text: String) {
         if (activeId != id || closed) return
         cancelPreparation()
         val tts = engine ?: return finish(id, "moteur indisponible")
@@ -185,17 +184,15 @@ class AndroidSpeech(
         if (closed || !isReady || !preferences.cacheEnabled || preparationDisabled) return
         val requested = texts.filter { it.isNotBlank() && it.length <= 1000 }.distinct().take(preferences.lookAheadCount)
         if (requested == lastRequested) return
-        lastRequested = requested
-        pending.clear(); pending.addAll(requested)
-        pump()
+        lastRequested = requested; pending.clear(); pending.addAll(requested); pump()
     }
     private var synthKey = ""
     private var synthStarted = 0L
     private fun pump() {
         if (closed || !isReady || live || (activeId != null && audio == null) || synthId != null || lookup ||
             preparationDisabled || !preferences.cacheEnabled || pending.isEmpty()) return
-        val text = pending.removeFirst(); val ticket = generation; val epoch = preparationEpoch; val key = SpeechTools.key(configuration, text)
-        lookup = true
+        val text = pending.removeFirst(); val ticket = generation; val epoch = preparationEpoch
+        val key = SpeechTools.key(configuration, text); lookup = true
         io.execute {
             val exists = runCatching { cache.get(key) != null }.getOrDefault(false)
             val file = if (exists) null else runCatching { cache.temporary() }.getOrNull()
@@ -205,12 +202,16 @@ class AndroidSpeech(
                     if (!io.isShutdown) file?.let { io.execute { it.delete() } }; return@post
                 }
                 if (exists) { pump(); return@post }
+                if (file == null) {
+                    preparationDisabled = true; preparationStatus = "Cache indisponible ; lecture vocale directe conservée"
+                    return@post
+                }
                 val id = "cache-${++synthSequence}"
                 synthId = id; synthFile = file; synthKey = key; synthStarted = SystemClock.elapsedRealtime()
                 preparationStatus = "Préparation locale en cours"
                 try {
                     engine?.setSpeechRate(preferences.speechRate)
-                    val result = engine?.synthesizeToFile(text, Bundle(), requireNotNull(file), id)
+                    val result = engine?.synthesizeToFile(text, Bundle(), file, id)
                     if (result != TextToSpeech.SUCCESS) complete(id, "synthèse en fichier refusée")
                     main.postDelayed({ if (synthId == id) {
                         cancelPreparation(); preparationDisabled = true
@@ -226,7 +227,7 @@ class AndroidSpeech(
             val file = synthFile ?: return@post
             val key = synthKey; val ticket = generation
             synthId = null; synthFile = null
-            lastSynthesisMs = SystemClock.elapsedRealtime() - synthStarted
+            lastSynthesisMs = SystemClock.elapsedRealtime() - synthStarted; lastAudioMs = 0
             if (error != null) {
                 io.execute { file.delete() }; preparationDisabled = true
                 preparationStatus = "Préparation indisponible avec ce moteur ; voix directe conservée"
@@ -235,7 +236,7 @@ class AndroidSpeech(
                     val result = runCatching { cache.put(key, file) }.getOrNull(); cacheSize = cache.size()
                     main.post { if (!closed && ticket == generation) {
                         if (result != null) { preparedCount++; lastAudioMs = result.durationMs
-                            preparationStatus = "$preparedCount segments préparés localement" }
+                            preparationStatus = "$preparedCount segments préparés localementlement" }
                         else { preparationDisabled = true; preparationStatus = "Format audio du moteur non exploitable ; voix directe conservée" }
                         pump()
                     } }
@@ -262,8 +263,7 @@ class AndroidSpeech(
         live = false
     }
     fun cancelPreparation() {
-        preparationEpoch++; lastRequested = emptyList()
-        pending.clear()
+        preparationEpoch++; lastRequested = emptyList(); pending.clear()
         if (synthId != null) {
             synthId = null; runCatching { engine?.stop() }
             synthFile?.let { f -> io.execute { f.delete() } }; synthFile = null
@@ -274,7 +274,6 @@ class AndroidSpeech(
     fun close() {
         if (closed) return
         stop(); closed = true; generation++; main.removeCallbacksAndMessages(null)
-        runCatching { engine?.shutdown() }; engine = null
-        io.shutdown()
+        runCatching { engine?.shutdown() }; engine = null; io.shutdown()
     }
 }

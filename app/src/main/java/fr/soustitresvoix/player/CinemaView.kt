@@ -16,7 +16,7 @@ import androidx.media3.ui.PlayerView
 import java.util.Locale
 import kotlin.math.abs
 
-/** Video fills the window; controls and safe-area padding belong to separate overlays. */
+/** Video fills the window; safe-area padding belongs only to overlays. */
 @UnstableApi
 class CinemaView(
     private val activity: Activity, private val session: PlaybackSession, private val prefs: PlayerPreferences,
@@ -39,7 +39,8 @@ class CinemaView(
     private var locked = false
     private var scrubbing = false
     private var disposed = false
-    private var zoom = 1f
+    private var zoom = prefs.int("zoomPercent", 100, 100, 400) / 100f
+    private var previousPlaybackIntent = false
     private var dx = 0f; private var dy = 0f
     private var startX = 0f; private var startY = 0f
     private var startVolume = 1f; private var startBrightness = 0.5f
@@ -100,6 +101,7 @@ class CinemaView(
         tools.addView(button("Sous-titres") { subtitles() })
         tools.addView(button("Audio") { audioTracks() })
         tools.addView(button("Image / zoom") { imageDialog() })
+        tools.addView(button("Volumes rapides") { QuickMixDialog.show(activity, session, prefs) })
         tools.addView(button("Voix / écran") { settings() })
         tools.addView(button("Masquer") { showControls(false) })
         bottom.addView(HorizontalScrollView(activity).apply { addView(tools) })
@@ -150,9 +152,7 @@ class CinemaView(
             override fun onScroll(first: MotionEvent?, event: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
                 if (scaling || first == null) return false
                 moved = true
-                if (zoom > 1.01f) {
-                    dx -= distanceX; dy -= distanceY; applyImage(); return true
-                }
+                if (zoom > 1.01f) { dx -= distanceX; dy -= distanceY; applyImage(); return true }
                 val horizontal = abs(event.x - startX) > abs(event.y - startY)
                 if (horizontal && prefs.bool("gestureSeek", true)) {
                     val duration = session.player.duration.takeIf { it > 0 && it != C.TIME_UNSET } ?: Long.MAX_VALUE
@@ -203,15 +203,20 @@ class CinemaView(
     fun refresh() {
         if (disposed) return
         val state = session.machine.snapshot()
-        play.text = when { state.wantsPlayback -> "Pause"; state.speakingId != null -> "Arrêter la voix"; else -> "Lire" }
-        status.text = when { state.voiceSuspended -> "Voix en attente : Reprendre la voix"; state.waitingForSpeech -> "La voix termine la phrase"; state.wantsPlayback -> ""; else -> "En pause" }
+        val playLabel = when { state.wantsPlayback -> "Pause"; state.speakingId != null -> "Arrêter la voix"; else -> "Lire" }
+        if (play.text.toString() != playLabel) play.text = playLabel
+        val statusLabel = when { state.voiceSuspended -> "Voix en attente : Reprendre la voix"; state.waitingForSpeech -> "La voix termine la phrase"; state.wantsPlayback -> ""; else -> "En pause" }
+        if (status.text.toString() != statusLabel) status.text = statusLabel
+        status.visibility = if (statusLabel.isBlank()) View.GONE else View.VISIBLE
         val d = session.player.duration; val pos = session.player.currentPosition
         time.text = "${clock(pos)} / ${if (d > 0 && d != C.TIME_UNSET) clock(d) else "—"}"
         seek.isEnabled = d > 0 && d != C.TIME_UNSET && session.player.isCurrentMediaItemSeekable
-        if (!scrubbing && seek.isEnabled) seek.progress = (pos.toDouble() / d * 1000).toInt().coerceIn(0, 1000)
-        seek.contentDescription = "Position ${clock(pos)} sur ${if (d > 0) clock(d) else "durée inconnue"}"
-        title.text = session.media?.title ?: "Vidéo"
-        if (!state.wantsPlayback && state.speakingId == null && !locked && !visibleControls) showControls(true)
+        if (!scrubbing && !seek.isAccessibilityFocused && seek.isEnabled) seek.progress = (pos.toDouble() / d * 1000).toInt().coerceIn(0, 1000)
+        if (!seek.isAccessibilityFocused) seek.contentDescription = "Position ${clock(pos)} sur ${if (d > 0) clock(d) else "durée inconnue"}"
+        val titleLabel = session.media?.title ?: "Vidéo"
+        if (title.text.toString() != titleLabel) title.text = titleLabel
+        if (previousPlaybackIntent && !state.wantsPlayback && state.speakingId == null && !locked && !visibleControls) showControls(true)
+        previousPlaybackIntent = state.wantsPlayback
     }
     private fun hasAccessibleFocus(view: View): Boolean = view.isAccessibilityFocused ||
         (view is ViewGroup && (0 until view.childCount).any { hasAccessibleFocus(view.getChildAt(it)) })
@@ -258,11 +263,22 @@ class CinemaView(
         column.addView(button("Zoom +") { zoom = (zoom + 0.25f).coerceAtMost(4f); applyImage() })
         column.addView(button("Zoom −") { zoom = (zoom - 0.25f).coerceAtLeast(1f); applyImage() })
         column.addView(button("Recentrer / réinitialiser") { zoom = 1f; dx = 0f; dy = 0f; applyImage() })
+        column.addView(button("Déplacer l’image à gauche") { dx -= dp(40); applyImage() })
+        column.addView(button("Déplacer l’image à droite") { dx += dp(40); applyImage() })
+        column.addView(button("Déplacer l’image vers le haut") { dy -= dp(40); applyImage() })
+        column.addView(button("Déplacer l’image vers le bas") { dy += dp(40); applyImage() })
+        column.addView(button("Luminosité +10 %") {
+            activity.window.attributes = activity.window.attributes.apply { screenBrightness = ((screenBrightness.takeIf { it >= 0 } ?: 0.5f) + 0.1f).coerceIn(0.01f, 1f) }
+        })
+        column.addView(button("Luminosité −10 %") {
+            activity.window.attributes = activity.window.attributes.apply { screenBrightness = ((screenBrightness.takeIf { it >= 0 } ?: 0.5f) - 0.1f).coerceIn(0.01f, 1f) }
+        })
         column.addView(button("Luminosité automatique du système") { activity.window.attributes = activity.window.attributes.apply { screenBrightness = -1f } })
         AlertDialog.Builder(activity).setTitle("Image et cadrage").setView(ScrollView(activity).apply { addView(column) })
             .setPositiveButton("Fermer", null).show()
     }
     fun close() {
+        prefs.putInt("zoomPercent", (zoom * 100).toInt())
         disposed = true; main.removeCallbacksAndMessages(null)
         video.videoSurfaceView?.apply { scaleX = 1f; scaleY = 1f; translationX = 0f; translationY = 0f }
         video.subtitleView?.setBottomPaddingFraction(0.08f)

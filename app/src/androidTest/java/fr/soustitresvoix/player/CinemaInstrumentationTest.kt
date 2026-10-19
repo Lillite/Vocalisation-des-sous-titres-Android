@@ -104,4 +104,69 @@ class CinemaInstrumentationTest {
             instrument.runOnMainSync { assertEquals(1, speech!!.hits); assertEquals(1.25f, speech!!.lastFactor, 0.001f) }
         } finally { instrument.runOnMainSync { speech?.close(); PlayerPreferences(instrument.targetContext).enginePackage = "" } }
     }
+    @Test fun landscapeFullscreenHidesSystemBarsAndBackExitsOnlyCinema() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            var current: MainActivity? = null
+            scenario.onActivity { a ->
+                current = a
+                a.session.prefs.narration = false; a.session.refreshSettings()
+                a.session.prefs.putInt("orientation", 1)
+                a.session.open(SavedMedia("android.resource://${a.packageName}/${R.raw.demonstration}", "Démonstration cinéma"))
+                a.setFullscreen(true)
+            }
+            waitFor("Landscape was not applied") {
+                val root = current?.findViewById<ViewGroup>(R.id.cinema_root)
+                root != null && root.width > root.height
+            }
+            waitFor("System bars were not hidden") {
+                val insets = current?.window?.decorView?.rootWindowInsets
+                insets != null && !insets.isVisible(android.view.WindowInsets.Type.systemBars())
+            }
+            waitFor("Demo did not become ready") { current?.session?.player?.playbackState == androidx.media3.common.Player.STATE_READY }
+            screenshot("landscape-controls")
+            scenario.onActivity { a -> (a.findViewById<View>(R.id.cinema_root) as CinemaView).showControls(false) }
+            Thread.sleep(800)
+            scenario.onActivity { a -> assertEquals(View.GONE, a.findViewById<View>(R.id.cinema_controls).visibility) }
+            screenshot("landscape-hidden")
+            scenario.onActivity { a ->
+                val player = a.session.player
+                a.onBackPressedDispatcher.onBackPressed()
+                assertFalse(a.isFinishing); assertSame(player, a.session.player)
+                assertNotNull(a.findViewById<Button>(R.id.open_video))
+            }
+        }
+    }
+    @Test fun quickMixDoesNotPausePlayback() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { a ->
+                a.session.prefs.narration = false; a.session.refreshSettings()
+                a.session.open(SavedMedia("android.resource://${a.packageName}/${R.raw.demonstration}", "Essai"))
+                a.session.play(); assertTrue(a.session.machine.snapshot().wantsPlayback)
+                QuickMixDialog.show(a, a.session, a.session.prefs)
+                assertTrue(a.session.machine.snapshot().wantsPlayback)
+            }
+        }
+    }
+    @Test fun cancelledCachedLookupCannotFinishANewerUtterance() {
+        val done = CountDownLatch(1)
+        val completed = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val failure = AtomicReference<String?>(null)
+        var speech: AndroidSpeech? = null
+        instrument.runOnMainSync {
+            val prefs = PlayerPreferences(instrument.targetContext)
+            prefs.enginePackage = instrument.context.packageName; prefs.putBool("cache", true)
+            speech = AndroidSpeech(instrument.targetContext, prefs, { _, _ -> },
+                { id -> completed.add(id); done.countDown() }, { _, message -> failure.set(message); done.countDown() })
+        }
+        try {
+            waitFor("Fixture did not initialize") { speech!!.isReady }
+            instrument.runOnMainSync { speech!!.prepareAhead(listOf("Bonjour.")) }
+            waitFor("Fixture did not produce cached audio") { speech!!.preparedCount > 0 }
+            instrument.runOnMainSync {
+                speech!!.speak("old", "Bonjour."); speech!!.stop(); speech!!.speak("new", "Bonjour.")
+            }
+            assertTrue(done.await(15, TimeUnit.SECONDS)); assertNull(failure.get())
+            assertEquals(listOf("new"), completed.toList())
+        } finally { instrument.runOnMainSync { speech?.close(); PlayerPreferences(instrument.targetContext).enginePackage = "" } }
+    }
 }

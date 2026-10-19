@@ -30,10 +30,8 @@ import java.io.File
 
 @UnstableApi
 class PlaybackSession(
-    private val context: Context,
-    val prefs: PlayerPreferences,
-    private val onChanged: () -> Unit,
-    private val onMessage: (String, Boolean) -> Unit,
+    private val context: Context, val prefs: PlayerPreferences,
+    private val onChanged: () -> Unit, private val onMessage: (String, Boolean) -> Unit,
     private val onCaption: (String) -> Unit
 ) {
     private val handler = Handler(Looper.getMainLooper())
@@ -46,6 +44,7 @@ class PlaybackSession(
     private val startedAt = SystemClock.elapsedRealtime()
     private val startedCpu = android.os.Process.getElapsedCpuTime()
     private var lastPreparationTick = 0L
+    private var appliedFilters = prefs.filters
     val player: ExoPlayer = ExoPlayer.Builder(context,
         DefaultRenderersFactory(context).setEnableDecoderFallback(true)).build()
     private val audioManager = requireNotNull(context.getSystemService(AudioManager::class.java))
@@ -93,10 +92,7 @@ class PlaybackSession(
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setPreferredTextLanguages("fr", "fra").setSelectUndeterminedTextLanguage(true).build()
         player.addListener(object : Player.Listener {
-            override fun onCues(cueGroup: CueGroup) {
-                lastCue = cueGroup
-                if (!trackReset) forwardCues(cueGroup)
-            }
+            override fun onCues(cueGroup: CueGroup) { lastCue = cueGroup; if (!trackReset) forwardCues(cueGroup) }
             override fun onPlaybackStateChanged(state: Int) {
                 apply(machine.setMediaReady(state == Player.STATE_READY || state == Player.STATE_ENDED))
                 if (state == Player.STATE_ENDED) {
@@ -176,8 +172,7 @@ class PlaybackSession(
     private fun requestFocus(): Boolean {
         if (focusHeld) return true
         if (audioManager.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-            onMessage("L’accès au son est refusé pour le moment. Termine l’appel ou la lecture dans l’autre application.", true)
-            return false
+            onMessage("L’accès au son est refusé pour le moment. Termine l’appel ou la lecture dans l’autre application.", true); return false
         }
         focusHeld = true; return true
     }
@@ -191,8 +186,7 @@ class PlaybackSession(
         apply(machine.reset(keepPlaybackIntent = true)); lastCue = null; onCaption("")
         val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 }
         val position = if (duration != null) positionMs.coerceIn(0, duration) else positionMs.coerceAtLeast(0)
-        player.seekTo(position)
-        apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
+        player.seekTo(position); apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
     }
     fun resumeVoice() { if (media != null && requestFocus()) apply(machine.resumeVoice()) }
     internal fun selectedTextId(): String? {
@@ -232,6 +226,11 @@ class PlaybackSession(
     fun previewVoice() { if (requestFocus()) apply(machine.preview("Bonjour. Cette voix lira les sous-titres de votre vidéo. Vous pouvez régler sa vitesse et le volume du film.")) }
     fun refreshSettings() {
         pause(); speech.applyPreferences()
+        if (appliedFilters != prefs.filters) {
+            appliedFilters = prefs.filters
+            apply(machine.reset(false)); apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
+            lastCue?.let { forwardCues(it) }
+        }
         apply(machine.setMode(prefs.mode)); apply(machine.setEnabled(prefs.narration))
         apply(machine.setResumePolicy(prefs.resumePolicy)); setDucked(ducked); onChanged()
     }
@@ -244,16 +243,13 @@ class PlaybackSession(
     }
     fun selectTrack(type: Int, group: Tracks.Group?, index: Int = 0, disabled: Boolean = false) {
         if (type == C.TRACK_TYPE_TEXT) selectExternalWhenAvailable = false
-        pause(); apply(machine.reset(false)); lastCue = null; onCaption("")
-        trackReset = true
-        val params = player.trackSelectionParameters.buildUpon().clearOverridesOfType(type)
-            .setTrackTypeDisabled(type, disabled)
+        pause(); apply(machine.reset(false)); lastCue = null; onCaption(""); trackReset = true
+        val params = player.trackSelectionParameters.buildUpon().clearOverridesOfType(type).setTrackTypeDisabled(type, disabled)
         if (group != null) params.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
         player.trackSelectionParameters = params.build()
         handler.post {
             if (!closed) {
-                trackReset = false
-                player.seekTo(player.currentPosition)
+                trackReset = false; player.seekTo(player.currentPosition)
                 apply(machine.setMediaReady(player.playbackState == Player.STATE_READY)); onChanged()
             }
         }
@@ -264,8 +260,7 @@ class PlaybackSession(
     }
     fun savePosition() {
         val current = media ?: return
-        val updated = current.copy(positionMs = player.currentPosition.coerceAtLeast(0))
-        media = updated; prefs.save(updated)
+        val updated = current.copy(positionMs = player.currentPosition.coerceAtLeast(0)); media = updated; prefs.save(updated)
     }
     private fun apply(effects: List<NarrationMachine.Effect>) {
         if (closed) return
@@ -280,7 +275,10 @@ class PlaybackSession(
         }
         onChanged()
     }
-    fun updateMix() { setDucked(ducked) }
+    fun updateMix() {
+        fade?.let { handler.removeCallbacks(it) }
+        player.volume = (prefs.movieVolume * if (ducked) prefs.duckVolume else 1f).coerceIn(0f, 1f)
+    }
     private fun setDucked(value: Boolean) {
         ducked = value; fade?.let { handler.removeCallbacks(it) }
         val from = player.volume
@@ -301,8 +299,7 @@ class PlaybackSession(
     }
     fun close() {
         if (closed) return
-        pause(); closed = true; mediaEpoch++
-        handler.removeCallbacksAndMessages(null)
+        pause(); closed = true; mediaEpoch++; handler.removeCallbacksAndMessages(null)
         try { context.unregisterReceiver(noisy) } catch (_: IllegalArgumentException) { }
         speech.close(); player.release()
     }
