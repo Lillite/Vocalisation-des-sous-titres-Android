@@ -1,0 +1,31 @@
+1
+00:00:01,000 --> 00:00:04,000
+Bonjour. Ceci est un essai des sous-titres vocalisés.
+
+2
+00:00:05,000 --> 00:00:07,000
+Cette phrase est volontairement longue : en mode confort, la vidéo doit attendre si la voix n’a pas encore terminé de la lire.
+
+3
+00:00:08,000 --> 00:00:11,000
+La vidéo reprend ensuite. Tu peux régler le volume du film séparément.
+
+4
+00:00:12,000 --> 00:00:14,000
+[Musique douce] Les indications entre crochets peuvent être conservées ou ignorées.
+
+5
+00:00:16,000 --> 00:00:17,000
+Oui.
+
+6
+00:00:18,000 --> 00:00:19,000
+Oui.
+
+7
+00:00:21,000 --> 00:00:24,000
+Tu peux maintenant mettre en pause, revenir en arrière et essayer de répéter cette phrase.
+
+8
+00:00:26,000 --> 00:00:28,000
+Dernier essai : cette dernière phrase dépasse la fin de la vidéo et doit tout de même être lue jusqu’au bout en mode confort.
