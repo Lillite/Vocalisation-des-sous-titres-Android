@@ -2,38 +2,35 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
-// The synthetic demo is generated from the checked-in French SRT, never from a
-// personal video. FFmpeg must be on PATH (installed by the GitHub workflow).
+// Generate a synthetic demo; never upload a personal film.
 val demoResources = layout.buildDirectory.dir("generated/demo-res")
 val demoFile = demoResources.map { it.file("raw/demonstration.mkv") }
 val demoSubtitles = rootProject.file("examples/demonstration.srt")
 val generateDemo = tasks.register<Exec>("generateDemo") {
-    inputs.file(demoSubtitles)
-    outputs.file(demoFile)
+    inputs.file(demoSubtitles); outputs.file(demoFile)
     doFirst { demoFile.get().asFile.parentFile.mkdirs() }
     commandLine("ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
         "-f", "lavfi", "-i", "color=c=0x162033:s=640x360:r=12:d=28",
         "-f", "lavfi", "-i", "sine=frequency=220:sample_rate=48000:duration=28",
-        "-i", demoSubtitles.absolutePath,
-        "-map", "0:v", "-map", "1:a", "-map", "2:s",
+        "-i", demoSubtitles.absolutePath, "-map", "0:v", "-map", "1:a", "-map", "2:s",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "32k", "-af", "volume=0.08",
-        "-c:s", "srt", "-metadata:s:s:0", "language=fra", "-t", "28",
-        demoFile.get().asFile.absolutePath)
+        "-c:a", "aac", "-b:a", "32k", "-af", "volume=0.08", "-c:s", "srt",
+        "-metadata:s:s:0", "language=fra", "-t", "28", demoFile.get().asFile.absolutePath)
 }
 android {
     namespace = "fr.soustitresvoix.player"
     compileSdk = 36
     buildToolsVersion = "36.0.0"
     defaultConfig {
-        applicationId = "fr.soustitresvoix.player"
+        applicationId = "fr.soustitresvoix.player.cinema"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-test"
+        versionCode = 2
+        versionName = "0.2.0-cinema-test"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets.getByName("main").res.srcDir(demoResources)
+    androidResources { noCompress += "mkv" }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

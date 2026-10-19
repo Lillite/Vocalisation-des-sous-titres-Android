@@ -19,7 +19,7 @@ import org.junit.runner.RunWith
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
-/** Integration tests: require a real Android device or an emulator. */
+/** Prepared integration tests: require a real Android device or an emulator. */
 @UnstableApi
 @RunWith(AndroidJUnit4::class)
 class PlayerInstrumentationTest {

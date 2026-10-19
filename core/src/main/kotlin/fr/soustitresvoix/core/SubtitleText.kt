@@ -4,7 +4,6 @@ object SubtitleText {
     // Only known styling tags are removed; comparisons such as "a < b" survive.
     private val html = Regex("</?(?:b|i|u|s|font|span|c(?:\\.[^ >]+)?|v|lang)(?:\\s+[^>]*)?>", RegexOption.IGNORE_CASE)
     private val breaks = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
-    // Escape literal closing delimiters: Android ICU is stricter than desktop Java.
     private val assOverride = Regex("\\{\\\\[^}]*\\}")
     private val spaces = Regex("[\\t \\u00a0]+")
     private val descriptions = Regex("\\[[^\\]\\r\\n]*\\]")

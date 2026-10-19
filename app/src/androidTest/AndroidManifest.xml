@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Test APK only. This synthetic engine is NOT shipped in the player APK. -->
+        <service android:name="fr.soustitresvoix.player.TestTtsService" android:label="Moteur synthétique des tests" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.TTS_SERVICE" /></intent-filter>
+        </service>
+    </application>
+</manifest>

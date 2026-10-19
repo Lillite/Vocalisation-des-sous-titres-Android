@@ -50,6 +50,13 @@ class MainActivity : Activity() {
     private var stopped = false
     private var closed = false
     private var fullscreen = false
+    private lateinit var rootLayout: LinearLayout
+    private lateinit var videoHost: FrameLayout
+    private lateinit var cinema: CinemaControls
+    private val normalViews = mutableListOf<View>()
+    private var previousOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+    private var previousBrightness = -1f
+    private var backCallback: android.window.OnBackInvokedCallback? = null
     private var scrubbing = false
     private var message = "Ouvre une vidéo ou lance l’essai intégré. Aucun compte ni connexion Internet n’est nécessaire au lecteur."
     private var messageIsError = false
@@ -57,7 +64,7 @@ class MainActivity : Activity() {
     private val ticker = object : Runnable {
         override fun run() {
             if (closed || stopped) return
-            refreshUi()
+            refreshUi(); session.tickPreparation()
             if (android.os.SystemClock.elapsedRealtime() - lastSaveMs > 5000) {
                 session.savePosition(); lastSaveMs = android.os.SystemClock.elapsedRealtime()
             }
@@ -71,6 +78,11 @@ class MainActivity : Activity() {
         session = PlaybackSession(this, prefs, onChanged = { refreshUi() },
             onMessage = { text, error -> showMessage(text, error) }, onCaption = { })
         buildUi()
+        if (Build.VERSION.SDK_INT >= 33) {
+            backCallback = android.window.OnBackInvokedCallback { if (!handleCinemaBack()) finish() }
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, backCallback!!)
+        }
+        if (savedInstanceState?.getBoolean("cinema") == true) setFullscreen(true)
         if (!handleViewIntent(intent)) prefs.lastMedia()?.let { saved ->
             val scheme = Uri.parse(saved.uri).scheme
             if (scheme == "content" || scheme == "android.resource") session.open(saved)
@@ -87,6 +99,7 @@ class MainActivity : Activity() {
     }
     override fun onResume() {
         super.onResume(); stopped = false
+        if (::rootLayout.isInitialized) applyWindowMode()
         main.removeCallbacks(ticker); main.post(ticker)
     }
     override fun onPause() {
@@ -96,13 +109,16 @@ class MainActivity : Activity() {
     }
     override fun onDestroy() {
         closed = true; requestToken++
+        if (::cinema.isInitialized) cinema.dispose()
+        if (Build.VERSION.SDK_INT >= 33) backCallback?.let { onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it) }
         main.removeCallbacksAndMessages(null); io.shutdownNow()
         if (::playerView.isInitialized) playerView.player = null
         if (::session.isInitialized) session.close()
         super.onDestroy()
     }
     override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig); buildUi()
+        super.onConfigurationChanged(newConfig)
+        if (::cinema.isInitialized) { cinema.setZoom(1f); applyWindowMode(); rootLayout.requestApplyInsets() }
     }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun text(value: String, size: Float = 20f) = TextView(this).apply {
@@ -114,75 +130,70 @@ class MainActivity : Activity() {
         setPadding(dp(8), dp(8), dp(8), dp(8)); setOnClickListener { action() }
     }
     private fun buildUi() {
-        if (::playerView.isInitialized) playerView.player = null
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(18, 18, 18))
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+        rootLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.BLACK)
         }
+        val root = rootLayout
         root.setOnApplyWindowInsetsListener { view, insets ->
+            val left: Int; val top: Int; val right: Int; val bottom: Int
             if (Build.VERSION.SDK_INT >= 30) {
                 val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-                view.setPadding(i.left + dp(8), i.top + dp(8), i.right + dp(8), i.bottom + dp(8))
+                left = i.left; top = i.top; right = i.right; bottom = i.bottom
             } else {
                 @Suppress("DEPRECATION")
-                view.setPadding(insets.systemWindowInsetLeft + dp(8), insets.systemWindowInsetTop + dp(8),
-                    insets.systemWindowInsetRight + dp(8), insets.systemWindowInsetBottom + dp(8))
+                val v = intArrayOf(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+                left = v[0]; top = v[1]; right = v[2]; bottom = v[3]
+            }
+            if (fullscreen) {
+                view.setPadding(0, 0, 0, 0)
+                cinema.safeInsets(left, top, right, bottom)
+                playerView.subtitleView?.setPadding(left + dp(12), top, right + dp(12), bottom + dp(8))
+            } else {
+                view.setPadding(left + dp(8), top + dp(8), right + dp(8), bottom + dp(8))
+                cinema.safeInsets(0, 0, 0, 0)
+                playerView.subtitleView?.setPadding(0, 0, 0, 0)
             }
             insets
         }
-        titleView = text(session.media?.title ?: "Sous-titres en voix", 22f)
-        titleView.maxLines = 2
-        if (!fullscreen) root.addView(titleView)
+        fun normal(view: View) { normalViews += view; root.addView(view) }
+        titleView = text(session.media?.title ?: "Sous-titres en voix — Cinéma", 22f).apply { maxLines = 2 }
+        normal(titleView)
         playerView = PlayerView(this).apply {
             useController = false; player = session.player
-            // Controls below are the single accessible playback control surface.
             isFocusable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            clipChildren = true; clipToPadding = true
         }
         applyCaptionStyle()
-        root.addView(playerView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, if (fullscreen) 1f else 0.9f))
-        statusView = text("En pause", 18f)
-        root.addView(statusView)
-        positionView = text("00:00 / 00:00", 16f).apply {
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
-        if (!fullscreen) root.addView(positionView)
+        videoHost = FrameLayout(this).apply { id = R.id.video_host; setBackgroundColor(Color.BLACK); clipChildren = true }
+        videoHost.addView(playerView, FrameLayout.LayoutParams(-1, -1))
+        cinema = CinemaControls(this, playerView, session, prefs, { setFullscreen(false) }, { cinemaMenu() }).apply { visibility = View.GONE }
+        videoHost.addView(cinema, FrameLayout.LayoutParams(-1, -1))
+        root.addView(videoHost, LinearLayout.LayoutParams(-1, 0, 0.9f))
+        statusView = text("En pause", 18f); normal(statusView)
+        positionView = text("00:00 / 00:00", 16f).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }; normal(positionView)
         positionSlider = SeekBar(this).apply {
-            id = View.generateViewId(); max = 1000; minimumHeight = dp(48)
-            contentDescription = "Position de la vidéo"
+            max = 1000; minimumHeight = dp(48); contentDescription = "Position de la vidéo"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onStartTrackingTouch(seekBar: SeekBar) { scrubbing = true; session.pause() }
-                override fun onStopTrackingTouch(seekBar: SeekBar) { scrubbing = false; seekFraction(seekBar.progress) }
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    if (fromUser && !scrubbing) seekFraction(progress)
-                }
+                override fun onStartTrackingTouch(s: SeekBar) { scrubbing = true; session.pause() }
+                override fun onStopTrackingTouch(s: SeekBar) { scrubbing = false; seekFraction(s.progress) }
+                override fun onProgressChanged(s: SeekBar, progress: Int, fromUser: Boolean) { if (fromUser && !scrubbing) seekFraction(progress) }
             })
-        }
-        if (!fullscreen) root.addView(positionSlider)
+        }; normal(positionSlider)
         val navigation = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        fun addNav(view: View) { navigation.addView(view, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
-        addNav(button("Reculer\n10 s") { session.seek(session.player.currentPosition - 10_000) })
+        fun addNav(view: View) { navigation.addView(view, LinearLayout.LayoutParams(0, -2, 1f)) }
+        addNav(button("Reculer 10 s") { session.seek(session.player.currentPosition - 10_000) })
         playButton = button("Lire") {
             val state = session.machine.snapshot()
-            if (state.wantsPlayback || state.speakingId != null) session.pause() else session.play()
-        }
-        playButton.id = R.id.play_button
-        addNav(playButton)
-        addNav(button("Avancer\n10 s") { session.seek(session.player.currentPosition + 10_000) })
-        root.addView(navigation)
-        if (fullscreen) {
-            root.addView(button("Quitter le plein écran") { fullscreen = false; buildUi() })
-        }
+            if (state.wantsPlayback || state.speakingId != null) session.pause()
+            else if (state.voiceResumeRequired) session.resumeVoice() else session.play()
+        }.apply { id = R.id.play_button }
+        addNav(playButton); addNav(button("Avancer 10 s") { session.seek(session.player.currentPosition + 10_000) }); normal(navigation)
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        messageView = text(message, 18f).apply {
-            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-            setTextColor(if (messageIsError) Color.rgb(255, 205, 110) else Color.LTGRAY)
-        }
-        column.addView(messageView)
+        messageView = text(message, 18f).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }; column.addView(messageView)
+        column.addView(button("Plein écran cinéma") { setFullscreen(true) }.apply { id = R.id.enter_cinema })
         column.addView(button("Ouvrir une vidéo") { pickDocument(OPEN_VIDEO) }.apply { id = R.id.open_video })
         column.addView(button("Essai intégré : vidéo sous-titrée") {
-            requestToken++
-            session.open(SavedMedia("android.resource://$packageName/${R.raw.demonstration}", "Essai intégré"))
-            session.play()
+            requestToken++; session.open(SavedMedia("android.resource://$packageName/${R.raw.demonstration}", "Essai intégré")); session.play()
         }.apply { id = R.id.demo_button })
         column.addView(button("Ajouter un fichier de sous-titres") {
             if (session.media == null) showMessage("Ouvre d’abord une vidéo.", false) else pickDocument(OPEN_SUBTITLE)
@@ -190,14 +201,132 @@ class MainActivity : Activity() {
         column.addView(button("Choisir la piste de sous-titres") { chooseTrack(C.TRACK_TYPE_TEXT) })
         column.addView(button("Choisir la piste audio du film") { chooseTrack(C.TRACK_TYPE_AUDIO) })
         column.addView(button("Répéter la dernière phrase — met en pause") { session.repeatLast() })
+        column.addView(button("Reprendre la voix") { session.resumeVoice() })
         column.addView(button("Réglages de la voix et du confort") { settingsDialog() })
-        column.addView(button("Plein écran") { fullscreen = true; buildUi() })
+        column.addView(button("Moteurs vocaux : choisir et télécharger") { engineDialog() })
+        column.addView(button("Diagnostic et performances mesurées") { diagnosticsDialog() })
         column.addView(button("Aide et limites de cette version") { helpDialog() })
-        extraControls = ScrollView(this).apply { isFillViewport = false; addView(column) }
-        if (!fullscreen) root.addView(extraControls, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.1f))
-        setContentView(root)
-        root.requestApplyInsets()
-        refreshUi()
+        extraControls = ScrollView(this).apply { addView(column) }; normalViews += extraControls
+        root.addView(extraControls, LinearLayout.LayoutParams(-1, 0, 1.1f))
+        setContentView(root); applyWindowMode(); root.requestApplyInsets(); refreshUi()
+    }
+    internal fun setFullscreen(value: Boolean) {
+        if (value == fullscreen) return
+        if (value) { previousOrientation = requestedOrientation; previousBrightness = window.attributes.screenBrightness }
+        fullscreen = value
+        normalViews.forEach { it.visibility = if (value) View.GONE else View.VISIBLE }
+        cinema.visibility = if (value) View.VISIBLE else View.GONE
+        (videoHost.layoutParams as LinearLayout.LayoutParams).apply { weight = if (value) 1f else 0.9f }
+        if (value) {
+            requestedOrientation = when (prefs.cinemaOrientation) {
+                1 -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                2 -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED
+                else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+            cinema.setVisible(true)
+        } else {
+            cinema.setLocked(false); cinema.setZoom(1f)
+            requestedOrientation = previousOrientation
+            window.attributes = window.attributes.apply { screenBrightness = previousBrightness }
+        }
+        applyWindowMode(); rootLayout.requestApplyInsets(); rootLayout.requestLayout()
+    }
+    @Suppress("DEPRECATION")
+    private fun applyWindowMode() {
+        if (Build.VERSION.SDK_INT >= 30) {
+            window.setDecorFitsSystemWindows(false)
+            window.attributes = window.attributes.apply { layoutInDisplayCutoutMode = if (fullscreen) WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS else WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT }
+            window.insetsController?.apply {
+                systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                if (fullscreen) hide(WindowInsets.Type.systemBars()) else show(WindowInsets.Type.systemBars())
+            }
+        } else {
+            window.decorView.systemUiVisibility = if (fullscreen) View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE else View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        }
+    }
+    override fun onWindowFocusChanged(hasFocus: Boolean) { super.onWindowFocusChanged(hasFocus); if (hasFocus && ::rootLayout.isInitialized) applyWindowMode() }
+    override fun onSaveInstanceState(outState: Bundle) { outState.putBoolean("cinema", fullscreen); super.onSaveInstanceState(outState) }
+    internal fun handleCinemaBack(): Boolean {
+        if (!fullscreen) return false
+        if (cinema.locked) cinema.setLocked(false) else setFullscreen(false)
+        return true
+    }
+    @Deprecated("Used by Android versions before predictive back")
+    override fun onBackPressed() { if (!handleCinemaBack()) super.onBackPressed() }
+    private fun cinemaMenu() {
+        cinema.setMenuOpen(true)
+        val labels = arrayOf("Réglages rapides : son et voix", "Piste de sous-titres", "Piste audio", "Voix, adaptation et filtres", "Orientation, gestes et commandes", "Diagnostic des performances")
+        val dialog = AlertDialog.Builder(this).setTitle("Lecture cinéma").setItems(labels) { _, i ->
+            when (i) { 0 -> quickSettings(); 1 -> chooseTrack(C.TRACK_TYPE_TEXT); 2 -> chooseTrack(C.TRACK_TYPE_AUDIO); 3 -> settingsDialog(); 4 -> cinemaSettings(); 5 -> diagnosticsDialog() }
+        }.setNegativeButton("Fermer", null).create()
+        dialog.setOnDismissListener { cinema.setMenuOpen(false) }; dialog.show()
+    }
+    private fun cinemaSettings() {
+        session.pause()
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8)) }
+        box.addView(text("Masquage des commandes : 0 = jamais. Avec TalkBack, les commandes restent affichées.", 17f))
+        addSettingSlider(box, "Délai de masquage", 0, 30, prefs.hideSeconds, " s") { prefs.hideSeconds = it }
+        box.addView(CheckBox(this).apply { text = "Activer les gestes (double toucher, volume, luminosité, zoom)"; textSize = 18f; minHeight = dp(56); isChecked = prefs.gestures; setOnCheckedChangeListener { _, b -> prefs.gestures = b } })
+        val choices = arrayOf("Suivre le téléphone", "Paysage en plein écran", "Verrouiller l’orientation actuelle")
+        choices.forEachIndexed { index, label -> box.addView(button(label) {
+            prefs.cinemaOrientation = index
+            requestedOrientation = when(index) { 1 -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE; 2 -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED; else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+        }) }
+        AlertDialog.Builder(this).setTitle("Écran et commandes").setView(ScrollView(this).apply { addView(box) }).setPositiveButton("Fermer", null).show()
+    }
+    private fun addSettingSlider(box: LinearLayout, label: String, from: Int, to: Int, value: Int, unit: String, change: (Int) -> Unit) {
+        val caption = text("$label : $value$unit", 17f); box.addView(caption)
+        val bar = SeekBar(this).apply { max = to - from; progress = (value - from).coerceIn(0, to - from); minimumHeight = dp(48); contentDescription = caption.text }
+        fun applyValue(v: Int) { caption.text = "$label : $v$unit"; bar.contentDescription = caption.text; change(v) }
+        bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onStartTrackingTouch(s: SeekBar) = Unit
+            override fun onStopTrackingTouch(s: SeekBar) = Unit
+            override fun onProgressChanged(s: SeekBar, p: Int, u: Boolean) { if (u) applyValue(p + from) }
+        }); box.addView(bar)
+        val row = LinearLayout(this)
+        val step = if (to - from > 500) 50 else if (to - from > 50) 5 else 1
+        row.addView(button("Moins : $label") { bar.progress = (bar.progress - step).coerceAtLeast(0); applyValue(bar.progress + from) }, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(button("Plus : $label") { bar.progress = (bar.progress + step).coerceAtMost(bar.max); applyValue(bar.progress + from) }, LinearLayout.LayoutParams(0, -2, 1f)); box.addView(row)
+    }
+    private fun quickSettings() {
+        cinema.setMenuOpen(true)
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8)) }
+        addSettingSlider(box, "Film", 0, 100, (prefs.movieVolume * 100).toInt(), " %") { prefs.movieVolume = it / 100f; session.updateVolumes() }
+        addSettingSlider(box, "Voix (prochain segment)", 10, 100, (prefs.voiceVolume * 100).toInt(), " %") { prefs.voiceVolume = it / 100f }
+        addSettingSlider(box, "Film pendant la voix", 0, 100, (prefs.duckVolume * 100).toInt(), " %") { prefs.duckVolume = it / 100f; session.updateVolumes() }
+        val brightness = window.attributes.screenBrightness.takeIf { it >= 0 }
+            ?: (Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128) / 255f)
+        addSettingSlider(box, "Luminosité de cette fenêtre", 2, 100, (brightness * 100).toInt().coerceIn(2, 100), " %") {
+            window.attributes = window.attributes.apply { screenBrightness = it / 100f }
+        }
+        val d = AlertDialog.Builder(this).setTitle("Réglages sans arrêter le film").setView(ScrollView(this).apply { addView(box) }).setPositiveButton("Fermer", null).create()
+        d.setOnDismissListener { cinema.setMenuOpen(false) }; d.show()
+    }
+    private fun engineDialog() {
+        session.pause()
+        val engines = session.speech.engines
+        val labels = engines.map { "${it.label} — ${it.name}" } + "Télécharger d’autres moteurs : sources officielles"
+        AlertDialog.Builder(this).setTitle("Moteur vocal du lecteur seulement").setItems(labels.toTypedArray()) { _, i ->
+            if (i < engines.size) session.speech.switchEngine(engines[i].name) else engineDownloads()
+        }.setNegativeButton("Fermer", null).show()
+    }
+    private fun engineDownloads() {
+        val entries = listOf(
+            "Sherpa-ONNX : voix française Miro (écoutes et APK arm64-v8a)" to "https://k2-fsa.github.io/sherpa/onnx/tts/all/French/vits-piper-fr_FR-miro-high.html",
+            "Sherpa-ONNX : voix française Tom (écoutes et APK arm64-v8a)" to "https://k2-fsa.github.io/sherpa/onnx/tts/all/French/vits-piper-fr_FR-tom-medium.html",
+            "Acapela TTS Voices (Google Play, voix payantes)" to "https://play.google.com/store/apps/details?id=com.acapelagroup.android.tts",
+            "Reconnaissance et synthèse vocales Google (Google Play)" to "https://play.google.com/store/apps/details?id=com.google.android.tts")
+        AlertDialog.Builder(this).setTitle("Ouvrir une source officielle dans le navigateur").setItems(entries.map { it.first }.toTypedArray()) { _, i ->
+            try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(entries[i].second))) }
+            catch (_: ActivityNotFoundException) { showMessage("Aucun navigateur disponible.", true) }
+        }.setNegativeButton("Fermer", null).show()
+    }
+    private fun diagnosticsDialog() {
+        val report = session.metrics.report(session.speech)
+        AlertDialog.Builder(this).setTitle("Mesures locales — cette session").setMessage(report)
+            .setPositiveButton("Fermer", null).setNeutralButton("Partager ce rapport") { _, _ ->
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, report), "Partager les mesures"))
+            }.show()
     }
     private fun applyCaptionStyle() {
         if (!::playerView.isInitialized) return
@@ -226,6 +355,7 @@ class MainActivity : Activity() {
             else -> "En pause"
         }
         if (statusView.text.toString() != status) statusView.text = status
+        if (::cinema.isInitialized) cinema.update(session.media?.title ?: "Sous-titres en voix", status)
         val duration = session.player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: 0
         val pos = session.player.currentPosition.coerceAtLeast(0)
         positionView.text = "${clock(pos)} / ${clock(duration)}"
@@ -252,7 +382,7 @@ class MainActivity : Activity() {
             messageView.setTextColor(if (error) Color.rgb(255, 205, 110) else Color.LTGRAY)
         }
         // Errors are not hidden behind the fullscreen interface.
-        if (error && fullscreen && !closed) { fullscreen = false; buildUi() }
+        if (error && fullscreen && !closed) { setFullscreen(false) }
     }
     @Suppress("DEPRECATION")
     private fun pickDocument(request: Int) {
@@ -382,6 +512,29 @@ class MainActivity : Activity() {
         }
         check("Vocaliser les sous-titres", prefs.narration) { prefs.narration = it }
         check("Mode confort : terminer chaque phrase, avec une pause de la vidéo si nécessaire", prefs.comfort) { prefs.comfort = it }
+        check("Mode adaptatif : accélération limitée, puis pause confort si nécessaire", prefs.adaptive) { prefs.adaptive = it }
+        column.addView(text("Le mode adaptatif utilise les durées indexées quand elles sont disponibles ; sinon il conserve le mode confort. Il ne résume et ne supprime aucun dialogue.", 16f))
+        addSettingSlider(column, "Accélération maximale par rapport à la vitesse habituelle", 100, 180, prefs.adaptivePercent, " %") { prefs.adaptivePercent = it }
+        check("Préparer les prochaines répliques dans un cache vocal local", prefs.cacheEnabled) { prefs.cacheEnabled = it }
+        addSettingSlider(column, "Anticipation", 10, 120, prefs.lookAheadSeconds, " s") { prefs.lookAheadSeconds = it }
+        addSettingSlider(column, "Limite du cache", 16, 128, prefs.cacheMb, " Mio") { prefs.cacheMb = it }
+        column.addView(button("Vider le cache vocal") { session.speech.clearCache(); showMessage("Cache vocal vidé. Aucun fichier vidéo supprimé.", false) })
+        column.addView(button("Reprise après une pause : choisir le comportement") {
+            val choices = arrayOf("Début de la réplique", "Début du segment interrompu", "Attendre la commande Reprendre la voix")
+            AlertDialog.Builder(this).setTitle("Reprise vocale").setSingleChoiceItems(choices, prefs.resumePolicy.ordinal) { d, i -> prefs.resumePolicy = fr.soustitresvoix.core.NarrationMachine.ResumePolicy.values()[i]; d.dismiss() }.setNegativeButton("Fermer", null).show()
+        })
+        addSettingSlider(column, "Entrée de la baisse du film", 0, 1000, prefs.attackMs, " ms") { prefs.attackMs = it }
+        addSettingSlider(column, "Remontée du film", 0, 2000, prefs.releaseMs, " ms") { prefs.releaseMs = it }
+        addSettingSlider(column, "Maintien entre deux répliques (anti-pompage)", 0, 2000, prefs.duckHoldMs, " ms") { prefs.duckHoldMs = it }
+        check("Ne pas lire les noms explicites en MAJUSCULES suivis de deux-points", prefs.skipSpeakers) { prefs.skipSpeakers = it }
+        check("Ne pas lire les lignes de chanson marquées ♪ ou ♫", prefs.skipSongs) { prefs.skipSongs = it }
+        check("Ne pas lire les notes explicitement marquées NDT", prefs.skipNotes) { prefs.skipNotes = it }
+        column.addView(button("Aperçu des filtres sur la réplique courante") {
+            val raw = session.lastCaption.ifBlank { "MARIE: Bonjour.\n[musique]\n♪ Une chanson ♪\nNDT: une note." }
+            val filtered = fr.soustitresvoix.core.SpeechPlanning.filter(raw, prefs.filters)
+            AlertDialog.Builder(this).setTitle("Aperçu sans modifier le fichier").setMessage("Original :\n$raw\n\nVocalisé :\n${filtered.ifBlank { "(rien)" }}").setPositiveButton("Fermer", null).show()
+        })
+        column.addView(button("Choisir ou télécharger un moteur vocal") { engineDialog() })
         column.addView(text("Sans le mode confort, la vidéo continue mais les phrases trop longues peuvent être coupées.", 16f))
         check("Afficher aussi les sous-titres à l’écran", prefs.showSubtitles) { prefs.showSubtitles = it }
         check("Ne pas lire les indications entre crochets, par exemple [musique]", prefs.skipDescriptions) { prefs.skipDescriptions = it }
@@ -432,8 +585,8 @@ class MainActivity : Activity() {
     }
     private fun helpDialog() {
         session.pause()
-        AlertDialog.Builder(this).setTitle("Première version de test")
-            .setMessage("1. Ouvre une vidéo locale, par exemple MKV, MP4 ou WebM.\n\n2. Choisis sa piste de sous-titres, ou ajoute un fichier SRT, VTT, ASS/SSA.\n\n3. Choisis une voix dans la langue des sous-titres. Le lecteur ne traduit pas le texte.\n\n4. Appuie sur Lire. Le mode confort évite de couper les phrases, mais peut interrompre brièvement la vidéo.\n\nLes sous-titres en images (PGS/VobSub) et ceux incrustés dans l’image ne sont pas vocalisés. Le support des codecs audio et vidéo dépend du téléphone. Les fichiers protégés par DRM et les applications de streaming ne sont pas pris en charge.\n\nL’application demande des voix locales et n’a pas d’autorisation Internet. Le moteur vocal installé reste un composant externe. La lecture s’arrête lorsque l’application passe en arrière-plan.\n\nLes boutons ont des libellés pour TalkBack. Les sous-titres ne sont pas annoncés une seconde fois par l’interface.\n\nCette application vocalise le texte ; elle ne fournit pas d’audiodescription des scènes.")
+        AlertDialog.Builder(this).setTitle("Version Cinéma 0.2 — aide et limites")
+            .setMessage("1. Ouvre une vidéo locale, par exemple MKV, MP4 ou WebM.\n\n2. Choisis sa piste de sous-titres, ou ajoute un fichier SRT, VTT, ASS/SSA.\n\n3. Choisis une voix dans la langue des sous-titres. Le lecteur ne traduit pas le texte.\n\n4. Appuie sur Lire. Le mode confort évite de couper les phrases, mais peut interrompre brièvementment la vidéo.\n\nLes sous-titres en images (PGS/VobSub) et ceux incrustés dans l’image ne sont pas vocalisés. Le support des codecs audio et vidéo dépend du téléphone. Les fichiers protégés par DRM et les applications de streaming ne sont pas pris en charge.\n\nL’application demande des voix locales et n’a pas d’autorisation Internet. Le moteur vocal installé reste un composant externe. La lecture s’arrête lorsque l’application passe en arrière-plan.\n\nLes boutons ont des libellés pour TalkBack. Les sous-titres ne sont pas annoncés une seconde fois par l’interface.\n\nCette application vocalise le texte ; elle ne fournit pas d’audiodescription des scènes.")
             .setPositiveButton("Fermer", null).show()
     }
     companion object { private const val OPEN_VIDEO = 10; private const val OPEN_SUBTITLE = 11 }
