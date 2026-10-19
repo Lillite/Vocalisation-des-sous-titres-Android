@@ -236,7 +236,7 @@ class AndroidSpeech(
                     val result = runCatching { cache.put(key, file) }.getOrNull(); cacheSize = cache.size()
                     main.post { if (!closed && ticket == generation) {
                         if (result != null) { preparedCount++; lastAudioMs = result.durationMs
-                            preparationStatus = "$preparedCount segments préparés localementlement" }
+                            preparationStatus = "$preparedCount segments préparés localement" }
                         else { preparationDisabled = true; preparationStatus = "Format audio du moteur non exploitable ; voix directe conservée" }
                         pump()
                     } }
@@ -245,6 +245,11 @@ class AndroidSpeech(
         } else if (id == activeId) finish(id, error)
     } }
     private fun finish(id: String, error: String?) {
+        // Engine errors can be synchronous while playback effects are applied.
+        // Deliver completion on a later loop turn to avoid state-machine reentry.
+        main.post { finishOnMain(id, error) }
+    }
+    private fun finishOnMain(id: String, error: String?) {
         if (closed || activeId != id) return
         activeId = null; live = false; releaseAudio()
         watchdog?.let { main.removeCallbacks(it) }; watchdog = null

@@ -130,6 +130,10 @@ class MainActivity : ComponentActivity() {
         buildUi()
     }
     private fun applyWindowMode() {
+        // getDecorView initializes PhoneWindow's decor before requesting insets.
+        // On Android 16 getInsetsController() otherwise dereferences a null decor
+        // during onCreate; onWindowFocusChanged reapplies this after attachment.
+        val decor = window.decorView
         if (Build.VERSION.SDK_INT >= 28) window.attributes = window.attributes.apply {
             layoutInDisplayCutoutMode = if (fullscreen) {
                 if (Build.VERSION.SDK_INT >= 30) WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
@@ -138,7 +142,7 @@ class MainActivity : ComponentActivity() {
         }
         if (Build.VERSION.SDK_INT >= 30) {
             window.setDecorFitsSystemWindows(false)
-            window.insetsController?.apply {
+            decor.windowInsetsController?.apply {
                 systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                 if (fullscreen) hide(WindowInsets.Type.systemBars()) else show(WindowInsets.Type.systemBars())
             }
