@@ -36,7 +36,7 @@ class FullSubtitleIndexer(private val context: Context) {
         val uri = Uri.parse(media.uri)
         require(uri.scheme in setOf("content", "android.resource", "file")) { "Indexation locale uniquement" }
         val factory = CueAheadFactory({ track, cues -> if (!cancelled.get()) result.add(track, cues) })
-        val source = DefaultDataSource(context)
+        val source = DefaultDataSource(context, false)
         var extractor: Extractor? = null
         var position = 0L; var reads = 0L; var seeks = 0; var lastPercent = -1
         val seek = PositionHolder()
@@ -51,7 +51,7 @@ class FullSubtitleIndexer(private val context: Context) {
             }
             val chosen = extractor ?: throw IOException("Indexation complète indisponible pour ce conteneur. La lecture directe reste disponible.")
             chosen.init(object : ExtractorOutput {
-                override fun track(id: Int, type: Int): TrackOutput = DummyTrackOutput()
+                override fun track(id: Int, type: Int): TrackOutput = DiscardingTrackOutput()
                 override fun endTracks() = Unit
                 override fun seekMap(map: SeekMap) = Unit
             })
