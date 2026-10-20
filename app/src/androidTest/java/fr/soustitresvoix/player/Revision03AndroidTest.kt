@@ -138,4 +138,36 @@ class Revision03AndroidTest {
         assertEquals(listOf("- Bonjour","- Au revoir"),SpeechTools.segments("- Bonjour\n- Au revoir"))
         assertNull(BlackBars.inspect(IntArray(10000){Color.BLACK},100,100))
     }
+    @Test fun foregroundPriorityDoesNotLoseAnInFlightPreparationLookup() {
+        var speech: AndroidSpeech? = null
+        instrument.runOnMainSync {
+            val p = PlayerPreferences(instrument.targetContext)
+            p.enginePackage = instrument.context.packageName; p.putBool("cache", true)
+            speech = AndroidSpeech(instrument.targetContext, p, { _, _ -> }, {}, { _, _ -> })
+        }
+        try {
+            waitFor("TTS fixture not ready") { speech!!.isReady }
+            instrument.runOnMainSync {
+                speech!!.clearCache()
+                speech!!.prepareBatch(listOf("Première préparation conservée.", "Seconde préparation conservée."))
+                // The asynchronous cache callback cannot run until this main-loop turn ends.
+                speech!!.cancelPreparation(keepPending = true)
+            }
+            waitFor("A foreground interruption lost a pending preparation item") {
+                speech!!.preparedCount == 2 && !speech!!.bulkPreparation
+            }
+        } finally {
+            instrument.runOnMainSync { speech?.close(); PlayerPreferences(instrument.targetContext).enginePackage = "" }
+        }
+    }
+    @Test fun quickMixWindowIsDismissedWhenItsActivityIsDestroyed() {
+        var dialog: android.app.AlertDialog? = null
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { a ->
+                dialog = QuickMixDialog.show(a, a.session, a.session.prefs)
+                assertTrue(dialog!!.isShowing)
+            }
+        }
+        instrument.runOnMainSync { assertFalse("Quick mix leaked its destroyed Activity", dialog!!.isShowing) }
+    }
 }

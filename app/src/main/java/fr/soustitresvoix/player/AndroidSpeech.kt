@@ -63,6 +63,7 @@ class AndroidSpeech(
     private var preparationDisabled = false
     private var pending = ArrayDeque<String>()
     private var lookup = false
+    private var lookupText: String? = null
     private var preparationEpoch = 0L
     private var lastRequested: List<String> = emptyList()
     var choices: List<Choice> = emptyList(); private set
@@ -270,16 +271,25 @@ class AndroidSpeech(
         if (closed || !isReady || live || (activeId != null && audio == null) || synthId != null || lookup ||
             preparationDisabled || !preferences.cacheEnabled || pending.isEmpty()) return
         val text = pending.removeFirst(); val ticket = generation; val epoch = preparationEpoch
-        val key = SpeechTools.key(configuration, text); lookup = true
+        val key = SpeechTools.key(configuration, text); lookup = true; lookupText = text
+        val lookupStarted = SystemClock.elapsedRealtime()
         io.execute {
             val exists = runCatching { cache.get(key) != null }.getOrDefault(false)
             val file = if (exists) null else runCatching { cache.temporary() }.getOrNull()
             main.post {
                 lookup = false
+                val ownedText = lookupText; lookupText = null
+                if (!closed && ticket == generation) cacheLatency.add(SystemClock.elapsedRealtime() - lookupStarted)
                 if (closed || ticket != generation || epoch != preparationEpoch || live || (activeId != null && audio == null)) {
-                    if (!io.isShutdown) file?.let { io.execute { it.delete() } }; return@post
+                    // A foreground request can arrive before its cache lookup completes.
+                    // Preserve this pending item; explicit cancellation never restores it.
+                    if (!closed && ticket == generation && epoch == preparationEpoch && ownedText != null)
+                        pending.addFirst(ownedText)
+                    if (!io.isShutdown) file?.let { io.execute { it.delete() } }
+                    if (!closed && ticket == generation) pump()
+                    return@post
                 }
-                if (exists) { hits++; pump(); return@post }
+                if (exists) { pump(); return@post }
                 if (file == null) {
                     bulkPreparation = false; preparationDisabled = true; preparationStatus = "Cache indisponible ; lecture vocale directe conservée"
                     return@post
@@ -351,7 +361,12 @@ class AndroidSpeech(
     fun cancelPreparation(keepPending: Boolean = false) {
         preparationEpoch++; lastRequested = emptyList()
         if (!keepPending) { pending.clear(); bulkPreparation = false }
-        else if (synthId != null && synthText.isNotBlank()) pending.addFirst(synthText)
+        else {
+            if (synthId != null && synthText.isNotBlank()) pending.addFirst(synthText)
+            lookupText?.let { pending.addFirst(it) }
+        }
+        // The in-flight callback still clears lookup, but cannot reinsert this item twice.
+        lookupText = null
         if (synthId != null) {
             synthId = null; runCatching { engine?.stop() }
             synthFile?.let { f -> io.execute { f.delete() } }; synthFile = null

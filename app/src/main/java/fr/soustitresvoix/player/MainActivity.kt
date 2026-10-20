@@ -255,7 +255,7 @@ class MainActivity : ComponentActivity() {
     private fun refreshUi() {
         if (closed || !::session.isInitialized) return
         val state = session.machine.snapshot()
-        if (state.wantsPlayback || state.speakingId != null) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (state.wantsPlayback || state.speakingId != null || session.isPreparing) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         session.prepareTick()
         cinema?.let { it.refresh(); return }

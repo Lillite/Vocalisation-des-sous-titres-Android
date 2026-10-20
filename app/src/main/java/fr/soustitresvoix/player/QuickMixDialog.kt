@@ -5,11 +5,14 @@ import android.app.AlertDialog
 import android.graphics.Color
 import android.widget.*
 import androidx.media3.common.util.UnstableApi
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 
 /** Does not pause the video. Current live TTS volume changes at the next segment. */
 @UnstableApi
 object QuickMixDialog {
-    fun show(activity: Activity, session: PlaybackSession, prefs: PlayerPreferences) {
+    fun show(activity: Activity, session: PlaybackSession, prefs: PlayerPreferences): AlertDialog {
         fun dp(n: Int) = (n * activity.resources.displayMetrics.density).toInt()
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8)) }
         fun level(label: String, minimum: Int, get: () -> Float, set: (Float) -> Unit) {
@@ -27,7 +30,19 @@ object QuickMixDialog {
         level("Son du film pendant la voix", 0, { prefs.duckVolume }) { prefs.duckVolume = it; session.updateMix() }
         level("Volume de la voix — prochain segment", 10, { prefs.voiceVolume }) { prefs.voiceVolume = it }
         column.addView(TextView(activity).apply { text = "Ces réglages ne mettent pas le film en pause."; textSize = 16f; setTextColor(Color.WHITE) })
-        AlertDialog.Builder(activity).setTitle("Volumes rapides")
-            .setView(ScrollView(activity).apply { addView(column) }).setPositiveButton("Fermer", null).show()
+        val dialog = AlertDialog.Builder(activity).setTitle("Volumes rapides")
+            .setView(ScrollView(activity).apply { addView(column) }).setPositiveButton("Fermer", null).create()
+        val owner = activity as? LifecycleOwner
+        if (owner != null) {
+            if (owner.lifecycle.currentState == Lifecycle.State.DESTROYED) return dialog
+            lateinit var observer: LifecycleEventObserver
+            observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_DESTROY) dialog.dismiss()
+            }
+            owner.lifecycle.addObserver(observer)
+            dialog.setOnDismissListener { owner.lifecycle.removeObserver(observer) }
+        }
+        if (!activity.isFinishing && !activity.isDestroyed) dialog.show()
+        return dialog
     }
 }
