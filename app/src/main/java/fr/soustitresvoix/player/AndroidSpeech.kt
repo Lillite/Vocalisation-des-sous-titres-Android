@@ -50,6 +50,8 @@ class AndroidSpeech(
     private var activeBudget: (() -> Long?)? = null
     private var activeAdaptive = false
     private var planningFloor = 1f
+    private var activePlanning: ((Long) -> Float)? = null
+    private var fileRateAdjustmentRejected = false
     private var synthText = ""
     private var configuredEngine = ""
     private var configuration = ""
@@ -157,13 +159,14 @@ class AndroidSpeech(
             isReady = true; onAvailability(true, "Voix : ${voice.locale.getDisplayName(Locale.FRENCH)}. Moteur demandé : $pkg.")
         } catch (_: RuntimeException) { isReady = false; onAvailability(false, "Le moteur vocal n’a pas fourni ses voix.") }
     }
-    fun speak(id: String, text: String, availableMs: Long? = null, adaptive: Boolean = false, remaining: String = "", forecast: Float = 1f, budget: (() -> Long?)? = null) {
+    fun speak(id: String, text: String, availableMs: Long? = null, adaptive: Boolean = false, remaining: String = "", forecast: Float = 1f, budget: (() -> Long?)? = null, planning: ((Long) -> Float)? = null) {
         stopForeground()
         if (!isReady || text.length > TextToSpeech.getMaxSpeechInputLength()) {
             main.post { if (!closed) onFailure(id, "voix indisponible ou texte trop long") }; return
         }
         activeId = id; activeText = text; remainingText = remaining
         activeBudget = budget ?: { availableMs }; activeAdaptive = adaptive; planningFloor = forecast
+        activePlanning = planning; fileRateAdjustmentRejected = false
         requestStarted = SystemClock.elapsedRealtime(); audioStarted = 0
         val ticket = generation; val key = SpeechTools.key(configuration, text)
         if (!preferences.cacheEnabled) { direct(id, text); return }
@@ -197,9 +200,11 @@ class AndroidSpeech(
                     mp.start(); audioStarted = SystemClock.elapsedRealtime(); firstAudioLatency.add(audioStarted - requestStarted); arm(id, (entry.durationMs / lastFactor).toLong() + 15_000); pump()
                 } catch (_: RuntimeException) { releaseAudio(); direct(id, text) }
             }
-            mp.setOnCompletionListener { finish(id, null) }
+            mp.setOnCompletionListener {
+                if (activeId == id && audio === mp) finish(id, null, mp)
+            }
             mp.setOnErrorListener { _, _, _ ->
-                if (activeId == id) { releaseAudio(); direct(id, text) }; true
+                if (activeId == id && audio === mp) { releaseAudio(); direct(id, text) }; true
             }
             arm(id, 15_000); mp.prepareAsync()
         } catch (_: Exception) { releaseAudio(); direct(id, text) }
@@ -213,7 +218,10 @@ class AndroidSpeech(
         try {
             val resultRate = tts.setSpeechRate((preferences.speechRate * lastFactor).coerceAtMost(5f))
             if (resultRate == TextToSpeech.ERROR) {
-                lastFactor = 1f; tts.setSpeechRate(preferences.speechRate)
+                lastFactor = 1f
+                if (tts.setSpeechRate(preferences.speechRate) == TextToSpeech.ERROR) {
+                    finish(id, "le moteur refuse également la vitesse de base"); return
+                }
                 preparationStatus = "Accélération refusée par le moteur ; mode confort conservé"
             }
             val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, preferences.voiceVolume) }
@@ -224,27 +232,38 @@ class AndroidSpeech(
     private fun plannedFactor(audioMs: Long): Float {
         if (!activeAdaptive) return 1f
         val remainingMs = if (remainingText.isBlank()) 0L else durations.estimate(remainingText, preferences.speechRate)
-        return maxOf(AdaptiveTiming.factor(audioMs, remainingMs, activeBudget?.invoke(), preferences.adaptiveMax), planningFloor)
+        val forecast = activePlanning?.invoke(audioMs) ?: planningFloor
+        return maxOf(AdaptiveTiming.factor(audioMs, remainingMs, activeBudget?.invoke(), preferences.adaptiveMax), forecast)
             .coerceIn(1f, preferences.adaptiveMax)
     }
     fun updateAdaptive() {
         val mp = audio ?: return
-        if (!activeAdaptive || activeId == null) return
+        if (!activeAdaptive || activeId == null || fileRateAdjustmentRejected) return
         runCatching {
             val left = (mp.duration.toLong() - mp.currentPosition).coerceAtLeast(0)
             val target = plannedFactor(left)
             // Increase only within a sentence; preserve its punctuation and breath pauses.
             if (target > lastFactor + 0.04f) {
-                lastFactor = target
-                mp.playbackParams = PlaybackParams().setSpeed(target).setPitch(1f)
+                runCatching { mp.playbackParams = PlaybackParams().setSpeed(target).setPitch(1f) }
+                    .onSuccess { lastFactor = target }
+                    .onFailure {
+                        fileRateAdjustmentRejected = true
+                        timingSource = "durée audio mesurée ; changement de vitesse refusé, facteur précédent conservé"
+                    }
             }
         }
     }
     fun prepareBatch(texts: List<String>) {
         cancelPreparation()
         if (closed || !isReady || !preferences.cacheEnabled || preparationDisabled) { preparationStatus = "Choisis une voix et active le cache avant la préparation"; return }
+        if (texts.any { it.length > 1000 }) {
+            preparationStatus = "Préparation refusée : un segment dépasse la limite vocale. Aucun segment n’a été supprimé silencieusement."; return
+        }
+        val valid = texts.asSequence().filter { it.isNotBlank() }.distinct().take(100_001).toList()
+        if (valid.size > 100_000) {
+            preparationStatus = "Préparation refusée : plus de 100 000 segments distincts. Choisis une plage plus courte."; return
+        }
         bulkPreparation = true; preparedAudioMs = 0
-        val valid = texts.asSequence().filter { it.isNotBlank() && it.length <= 1000 }.distinct().take(100_000).toList()
         pending.addAll(valid); lastRequested = valid
         preparationStatus = "${valid.size} segments demandés ; la limite du cache reste applicable"
         pump()
@@ -332,10 +351,14 @@ class AndroidSpeech(
             }
         } else if (id == activeId) finish(id, error)
     } }
-    private fun finish(id: String, error: String?) {
+    private fun finish(id: String, error: String?, expectedAudio: MediaPlayer? = null) {
         // Engine errors can be synchronous while playback effects are applied.
         // Deliver completion on a later loop turn to avoid state-machine reentry.
-        main.post { finishOnMain(id, error) }
+        main.post {
+            // A released file player can still have a completion already queued.
+            // It must not complete the direct TTS fallback of the same utterance.
+            if (expectedAudio == null || audio === expectedAudio) finishOnMain(id, error)
+        }
     }
     private fun finishOnMain(id: String, error: String?) {
         if (closed || activeId != id) return
@@ -354,6 +377,7 @@ class AndroidSpeech(
     private fun releaseAudio() { val mp = audio; audio = null; runCatching { mp?.release() } }
     private fun stopForeground() {
         activeId = null; releaseAudio()
+        activeBudget = null; activePlanning = null
         watchdog?.let { main.removeCallbacks(it) }; watchdog = null
         if (live) runCatching { engine?.stop() }
         live = false

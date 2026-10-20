@@ -13,6 +13,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -21,6 +22,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.analytics.AnalyticsListener
@@ -43,6 +45,7 @@ class PlaybackSession(
     private var indexer: FullSubtitleIndexer? = null
     var indexingStatus = "Indexation complète non demandée"; private set
     private var manualPreparation = false
+    private var thermalPreparationStopped = false
     val isPreparing: Boolean get() = indexer != null || speech.bulkPreparation || manualPreparation
     private var indexedUri: String? = null
     private var lastAdaptiveTick = 0L
@@ -120,6 +123,9 @@ class PlaybackSession(
         player.addAnalyticsListener(object : AnalyticsListener {
             override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, dropped: Int, elapsedMs: Long) { droppedFrames += dropped }
             override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, name: String, timestampMs: Long, durationMs: Long) { videoDecoder = name }
+            override fun onVideoInputFormatChanged(eventTime: AnalyticsListener.EventTime, format: Format, decoderReuseEvaluation: DecoderReuseEvaluation?) {
+                if (!closed) visual.onInputFormatChanged(format)
+            }
         })
         player.setAudioAttributes(androidx.media3.common.AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), false)
@@ -233,24 +239,52 @@ class PlaybackSession(
     fun prepareTick() {
         if (closed || SystemClock.elapsedRealtime() - lastPreparationTick < 1000) return
         lastPreparationTick = SystemClock.elapsedRealtime()
-        val power = context.getSystemService(PowerManager::class.java)
-        val hot = Build.VERSION.SDK_INT >= 29 && power.currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE
-        if (hot || !prefs.narration) { speech.cancelPreparation(); manualPreparation=false; return }
+        if (stopPreparationForHeat()) return
+        if (!prefs.narration) { cancelIndexing(); speech.cancelPreparation(); return }
         if (manualPreparation) { if (indexer == null && !speech.bulkPreparation) manualPreparation=false; return }
         if (!machine.snapshot().wantsPlayback) return
         val texts = machine.pendingTexts() + ahead.future(selectedTextId(), player.currentPosition, prefs.filters, prefs.lookAheadCount, 600)
         speech.prepareAhead(texts)
     }
+    private fun stopPreparationForHeat(): Boolean {
+        val hot = Build.VERSION.SDK_INT >= 29 &&
+            context.getSystemService(PowerManager::class.java).currentThermalStatus >= PowerManager.THERMAL_STATUS_SEVERE
+        if (!hot) {
+            if (thermalPreparationStopped) {
+                thermalPreparationStopped = false
+                indexingStatus = "État thermique redevenu compatible. L’anticipation peut reprendre ; relance la préparation complète si nécessaire."
+                onChanged()
+            }
+            return false
+        }
+        if (!thermalPreparationStopped || isPreparing) {
+            cancelIndexing(); speech.cancelPreparation()
+            indexingStatus = "Indexation et préparation arrêtées : Android signale un état thermique sévère. Le cache existant est conservé."
+        }
+        if (!thermalPreparationStopped) {
+            thermalPreparationStopped = true
+            onMessage(indexingStatus, false); onChanged()
+        }
+        return true
+    }
     fun prepareRange(seconds: Int?) {
         val saved = media ?: return
+        if (stopPreparationForHeat()) return
         refreshSettings(); manualPreparation = true
         val start = if (seconds == null) 0L else player.currentPosition
         val selected = selectedTextId()
         val epoch = mediaEpoch
         fun prepare(index: CueAheadIndex) {
+            if (stopPreparationForHeat()) return
             val text = index.selected(selected).asSequence()
                 .filter { it.endUs / 1000 > start && (seconds == null || it.startUs / 1000 < start + seconds * 1000L) }
-                .flatMap { SpeechTools.segments(SpeechTools.filter(it.raw, prefs.filters)).asSequence() }.toList()
+                .flatMap { SpeechTools.segments(SpeechTools.filter(it.raw, prefs.filters)).asSequence() }
+                .distinct().take(100_001).toList()
+            if (text.size > 100_000) {
+                manualPreparation = false
+                indexingStatus = "Préparation refusée : plus de 100 000 segments distincts. Choisis une plage plus courte."
+                onMessage(indexingStatus, true); return
+            }
             if (text.isEmpty()) { manualPreparation=false; onMessage("Aucune réplique trouvée pour la piste sélectionnée. Vérifie qu’elle est textuelle.", true); return }
             speech.prepareBatch(text)
             onMessage("Préparation de ${text.size} segments demandée. Elle reste annulable et limitée par le cache.", false)
@@ -281,6 +315,7 @@ class PlaybackSession(
     fun cancelIndexing() { indexer?.cancel(); indexer=null; manualPreparation=false }
     fun cancelPreparation() { cancelIndexing(); speech.cancelPreparation(); indexingStatus="Préparation annulée ; lecture et cache existant conservés" }
     fun benchmark() {
+        if (stopPreparationForHeat()) return
         refreshSettings(); speech.synthesisLatency.clear(); speech.firstAudioLatency.clear(); speech.cacheLatency.clear(); holdLatency.clear()
         manualPreparation=true
         speech.prepareBatch(listOf("Bonjour. Ceci est le même extrait pour comparer les moteurs.",
@@ -337,9 +372,11 @@ class PlaybackSession(
         val captions = group.cues.mapNotNull { it.text?.toString() }
         lastRawCaption = captions.joinToString("\n"); onCaption(lastRawCaption)
         val clean = captions.map { SpeechTools.filter(it, prefs.filters) }.filter { it.isNotBlank() }
+        val occurrences = ahead.resolved(selectedTextId(), clean, group.presentationTimeUs, prefs.filters)
         apply(machine.cues(group.presentationTimeUs, clean, group.cues.any { it.bitmap != null },
-            ahead.identities(selectedTextId(), clean, group.presentationTimeUs, prefs.filters),
-            clean.map { text -> ahead.windowEnd(selectedTextId(), text, player.currentPosition, prefs.filters)?.plus(prefs.allowedLagMs) }))
+            occurrences?.map { it.identity },
+            occurrences?.map { it.endUs / 1000 + prefs.allowedLagMs } ?:
+                clean.map { text -> ahead.windowEnd(selectedTextId(), text, player.currentPosition, prefs.filters)?.plus(prefs.allowedLagMs) }))
     }
     fun selectTrack(type: Int, group: Tracks.Group?, index: Int = 0, disabled: Boolean = false) {
         if (type == C.TRACK_TYPE_TEXT) { selectExternalWhenAvailable = false; cancelIndexing() }
@@ -375,18 +412,26 @@ class PlaybackSession(
             is NarrationMachine.Effect.Speak -> {
                 val adaptive = prefs.mode == NarrationMachine.Mode.ADAPTIVE && !effect.preview
                 val deadline = effect.deadlineMs ?: ahead.windowEnd(selectedTextId(), effect.text, player.currentPosition, prefs.filters)?.let { it + if (adaptive) prefs.allowedLagMs else 0 }
-                val now = player.currentPosition
-                val speed = player.playbackParameters.speed
-                val future = if (adaptive) ahead.planningWindow(selectedTextId(), now, prefs.filters) else emptyList()
-                val currentDuration = speech.durations.estimate(effect.text, prefs.speechRate) +
-                    if (effect.remainingText.isBlank()) 0 else speech.durations.estimate(effect.remainingText, prefs.speechRate)
-                val forecastJobs = mutableListOf<Pair<Long, Long>>()
-                if (deadline != null) forecastJobs += currentDuration to ((deadline - now) / speed).toLong()
-                future.forEach { forecastJobs += speech.durations.estimate(it.first, prefs.speechRate) to
-                    ((it.second + prefs.allowedLagMs - now) / speed).toLong() }
-                val forecast = fr.soustitresvoix.core.AdaptiveTiming.forecastFactor(forecastJobs, prefs.adaptiveMax)
-                speech.speak(effect.id, effect.text, adaptive = adaptive, remaining = effect.remainingText, forecast = forecast, budget = {
+                speech.speak(effect.id, effect.text, adaptive = adaptive, remaining = effect.remainingText, budget = {
                     deadline?.let { ((it - player.currentPosition) / player.playbackParameters.speed).toLong() }
+                }, planning = if (!adaptive) null else { audioLeft ->
+                    val now = player.currentPosition
+                    val speed = player.playbackParameters.speed
+                    fun relative(time: Long) = ((time - now) / speed).toLong()
+                    val jobs = mutableListOf(fr.soustitresvoix.core.AdaptiveTiming.Window(
+                        audioLeft, deadlineMs = deadline?.let(::relative)))
+                    machine.pendingPlan().forEach { pending ->
+                        jobs += fr.soustitresvoix.core.AdaptiveTiming.Window(
+                            speech.durations.estimate(pending.text, prefs.speechRate),
+                            deadlineMs = pending.deadlineMs?.let(::relative))
+                    }
+                    ahead.planningItems(selectedTextId(), now).forEach { cue ->
+                        val text = SpeechTools.filter(cue.raw, prefs.filters)
+                        if (text.isNotBlank()) jobs += fr.soustitresvoix.core.AdaptiveTiming.Window(
+                            speech.durations.estimate(text, prefs.speechRate),
+                            relative(cue.startUs / 1000), relative(cue.endUs / 1000 + prefs.allowedLagMs))
+                    }
+                    fr.soustitresvoix.core.AdaptiveTiming.planFactor(jobs, prefs.adaptiveMax)
                 })
             }
             NarrationMachine.Effect.StopSpeech -> speech.stop()

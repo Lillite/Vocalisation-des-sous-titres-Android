@@ -224,9 +224,9 @@ class MainActivity : ComponentActivity() {
         column.addView(messageView)
         column.addView(button("Plein écran cinéma") { setFullscreen(true) })
         column.addView(button("Ouvrir une vidéo") { pickDocument(OPEN_VIDEO) }.apply { id = R.id.open_video })
-        column.addView(button("Essai intégré : vidéo sous-titrée") {
+        column.addView(button("Essai intégré : sous-titres et mire de cadrage") {
             requestToken++
-            session.open(SavedMedia("android.resource://$packageName/${R.raw.demonstration}", "Essai intégré")); session.play()
+            session.open(SavedMedia("android.resource://$packageName/${R.raw.demonstration}", "Mire : quatre coins, cercle et sous-titres")); session.play()
         }.apply { id = R.id.demo_button })
         column.addView(button("Ajouter un fichier de sous-titres") {
             if (session.media == null) showMessage("Ouvre d’abord une vidéo.", false) else pickDocument(OPEN_SUBTITLE)

@@ -3,8 +3,6 @@ package fr.soustitresvoix.core
 import java.io.File
 import java.io.RandomAccessFile
 import java.security.MessageDigest
-import java.text.BreakIterator
-import java.util.Locale
 
 /** Conservative, opt-in filters. No guessing of speakers or dialogue semantics. */
 object SpeechTools {
@@ -15,7 +13,9 @@ object SpeechTools {
     fun filter(raw: String, f: Filters): String = SubtitleText.clean(raw, f.descriptions).lines().mapNotNull { line ->
         if (f.songs && (line.startsWith("♪") || line.startsWith("♫"))) null
         else if (f.notes && note.containsMatchIn(line)) null
-        else if (f.speakers) speaker.replaceFirst(line, "") else line
+        // Keep an explicit speaker boundary after removing its label. A single
+        // wrapped line break otherwise joins two different speakers downstream.
+        else if (f.speakers && speaker.containsMatchIn(line)) "\n" + speaker.replaceFirst(line, "") else line
     }.joinToString("\n").trim()
 
     /** Sentence-sized replay segments, then engine-safe chunks. Keeps all words. */

@@ -61,6 +61,11 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
     }
     fun resumeVoice(): List<Effect> { voiceSuspended = false; return play() }
     fun pendingTexts(): List<String> = queue.map { it.text }
+    data class PlannedReplica(val text: String, val deadlineMs: Long?)
+    /** Pending groups include both this replica's remaining segments and overlaps. */
+    fun pendingPlan(): List<PlannedReplica> = queue.groupBy { it.group }.values.map { jobs ->
+        PlannedReplica(jobs.joinToString(" ") { it.text }, jobs.first().deadlineMs)
+    }
     fun play(): List<Effect> = event {
         if (voiceSuspended && enabled) {
             wantsPlayback = false

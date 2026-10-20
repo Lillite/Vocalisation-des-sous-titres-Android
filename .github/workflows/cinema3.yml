@@ -2,7 +2,7 @@ name: Cinema 0.3 - verifier et compiler
 on:
   workflow_dispatch:
   push:
-    branches: [cinema-0.3]
+    branches: [cinema-0.3, cinema-0.3.1]
 permissions:
   contents: read
 concurrency:
@@ -64,9 +64,13 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 36
-          target: google_apis
+          # The tests use their own TTS fixture and no Google service. The AOSP
+          # image avoids GMS first-boot downloads that caused a SystemUI ANR.
+          target: default
           arch: x86_64
           profile: pixel_2
+          cores: 2
+          ram-size: 2048M
           disk-size: 2048M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none

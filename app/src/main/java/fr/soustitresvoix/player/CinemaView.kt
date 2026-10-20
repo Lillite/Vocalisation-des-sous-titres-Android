@@ -39,7 +39,9 @@ class CinemaView(
     private var locked = false
     private var scrubbing = false
     private var disposed = false
-    private var zoom = prefs.int("zoomPercent", 100, 100, 400) / 100f
+    private var zoom = 1f
+    private var framingMediaUri: String? = null
+    private var framingRestored = false
     private var previousPlaybackIntent = false
     private var dx = 0f; private var dy = 0f
     private var startX = 0f; private var startY = 0f
@@ -187,11 +189,7 @@ class CinemaView(
             }
             scale.onTouchEvent(event); gesture.onTouchEvent(event); true
         }
-        session.media?.let { media ->
-            val key = fr.soustitresvoix.core.SpeechTools.key("framing", media.uri)
-            val savedMode = prefs.int("frame-$key", prefs.int("imageMode", 0, 0, 2), 0, 2)
-            prefs.putInt("imageMode", savedMode)
-        }
+        restoreFraming()
         applyImage(); refresh(); scheduleHide()
         addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateCaptionPosition() }
     }
@@ -210,6 +208,7 @@ class CinemaView(
     }
     fun refresh() {
         if (disposed) return
+        if (!framingRestored || framingMediaUri != session.media?.uri) { restoreFraming(); applyImage() }
         val state = session.machine.snapshot()
         val playLabel = when { state.wantsPlayback -> "Pause"; state.speakingId != null -> "Arrêter la voix"; else -> "Lire" }
         if (play.text.toString() != playLabel) play.text = playLabel
@@ -231,7 +230,12 @@ class CinemaView(
     private fun scheduleHide() {
         main.removeCallbacks(hide)
         val seconds = prefs.int("controlsTimeout", 5, 0, 30)
-        if (seconds > 0 && visibleControls && !accessibility.isTouchExplorationEnabled) main.postDelayed(hide, seconds * 1000L)
+        if (seconds > 0 && visibleControls && !accessibility.isTouchExplorationEnabled) {
+            val timeout = if (Build.VERSION.SDK_INT >= 29) accessibility.getRecommendedTimeoutMillis(
+                seconds * 1000, AccessibilityManager.FLAG_CONTENT_CONTROLS or AccessibilityManager.FLAG_CONTENT_TEXT)
+            else seconds * 1000
+            main.postDelayed(hide, timeout.toLong())
+        }
     }
     fun showControls(show: Boolean) {
         visibleControls = show; top.visibility = if (show) View.VISIBLE else View.GONE
@@ -254,12 +258,36 @@ class CinemaView(
         main.removeCallbacks(clearFeedback); main.postDelayed(clearFeedback, 1000)
     }
     private val clearFeedback = Runnable { feedback.visibility = View.GONE }
+    private fun rememberFraming(value: Int) {
+        prefs.putInt("imageMode", value)
+        // A deliberate crop belongs to this video, never to the default for unseen files.
+        if (value != 1) prefs.putInt("imageDefaultMode", value)
+        session.media?.let { prefs.putInt("frame-${fr.soustitresvoix.core.SpeechTools.key("framing", it.uri)}", value) }
+    }
+    private fun restoreFraming() {
+        framingMediaUri = session.media?.uri; framingRestored = true
+        val previousSafe = prefs.int("imageMode", 0, 0, 2).takeIf { it != 1 } ?: 0
+        val default = prefs.int("imageDefaultMode", previousSafe, 0, 2).takeIf { it != 1 } ?: 0
+        val mode = framingMediaUri?.let { uri ->
+            prefs.int("frame-${fr.soustitresvoix.core.SpeechTools.key("framing", uri)}", default, 0, 2)
+        } ?: default
+        prefs.putInt("imageMode", mode); prefs.putBool("protectFrame", mode != 1)
+        zoom = 1f; dx = 0f; dy = 0f
+    }
+    internal fun setFrameProtection(enabled: Boolean) {
+        prefs.putBool("protectFrame", enabled)
+        if (enabled) {
+            zoom = 1f; dx = 0f; dy = 0f
+            if (prefs.int("imageMode", 0, 0, 2) == 1) rememberFraming(0)
+        }
+        applyImage()
+    }
     internal fun setFramingMode(value: Int, authorizeCrop: Boolean = false): Boolean {
         if (value !in 0..2) return false
         if (value == 1 && prefs.protectFrame && !authorizeCrop) return false
         prefs.putBool("protectFrame", value != 1)
-        prefs.putInt("imageMode", value); zoom=1f; dx=0f; dy=0f
-        session.media?.let { prefs.putInt("frame-${fr.soustitresvoix.core.SpeechTools.key("framing", it.uri)}", value) }
+        rememberFraming(value); zoom=1f; dx=0f; dy=0f
+        if (value != 1 && session.visual.margins.nonzero()) session.visual.crop(fr.soustitresvoix.core.BlackBars.Margins())
         applyImage(); return true
     }
     internal fun setImageZoom(value: Float) {
@@ -270,7 +298,7 @@ class CinemaView(
     private fun applyImage() {
         if (prefs.protectFrame) {
             zoom=1f; dx=0f; dy=0f
-            if (prefs.int("imageMode",0,0,2)==1) prefs.putInt("imageMode",0)
+            if (prefs.int("imageMode",0,0,2)==1) rememberFraming(0)
         }
         video.resizeMode = when (prefs.int("imageMode", 0, 0, 2)) {
             1 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
@@ -283,24 +311,29 @@ class CinemaView(
     }
     fun imageDialog() {
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val protection = CheckBox(activity).apply {
+            text="Protéger le cadre : bloquer zoom et déplacements accidentels"; textSize=17f; minHeight=dp(56); isChecked=prefs.protectFrame
+            setOnCheckedChangeListener { _, checked -> setFrameProtection(checked) }
+        }
         fun mode(label: String, value: Int) { column.addView(button(label) {
             if (!setFramingMode(value)) AlertDialog.Builder(activity).setTitle("Autoriser la perte d’une partie du cadre ?")
                 .setMessage("Le mode recadré remplit l’écran en coupant une partie de l’image. Cela désactive la protection contre le recadrage accidentel.")
-                .setPositiveButton("Autoriser le recadrage") { _, _ -> setFramingMode(value, true) }
+                .setPositiveButton("Autoriser le recadrage") { _, _ -> setFramingMode(value, true); protection.isChecked=prefs.protectFrame }
                 .setNegativeButton("Garder l’image entière",null).show()
+            else protection.isChecked=prefs.protectFrame
         }) }
         mode("Image entière, proportions originales", 0)
         mode("Tout l’écran — image entière étirée", 2)
         mode("Tout l’écran, image recadrée", 1)
-        column.addView(CheckBox(activity).apply {
-            text="Protéger le cadre : bloquer zoom et déplacements accidentels"; textSize=17f; minHeight=dp(56); isChecked=prefs.protectFrame
-            setOnCheckedChangeListener { _, checked -> prefs.putBool("protectFrame", checked); applyImage() }
-        })
+        column.addView(protection)
+        column.addView(label("Les deux modes « image entière » annulent aussi les marges précédemment retirées. Une nouvelle analyse peut ensuite proposer des marges à valider."))
         column.addView(button("Diagnostic du cadrage et des bandes noires") {
             val format=session.player.videoFormat; val size=session.player.videoSize
+            val ratio=if (size.height > 0) String.format(Locale.FRANCE,"%.3f",size.width * size.pixelWidthHeightRatio / size.height) else "inconnu"
+            val framing=arrayOf("Image entière, proportions originales","Tout l’écran, image recadrée","Tout l’écran — image entière étirée")[prefs.int("imageMode",0,0,2)]
             val message="Vidéo codée : ${format?.width ?: 0} × ${format?.height ?: 0} pixels\n"+
-                "Vidéo déclarée : ${size.width} × ${size.height} ; rapport des pixels ${size.pixelWidthHeightRatio}\n"+
-                "Surface disponible : ${width} × ${height} pixels\nMode : ${prefs.int("imageMode",0,0,2)} (0 original, 1 recadré, 2 étiré), zoom ${zoom}×\n"+
+                "Vidéo déclarée : ${size.width} × ${size.height} ; rapport des pixels ${size.pixelWidthHeightRatio} ; rapport d’affichage $ratio\n"+
+                "Surface disponible : ${width} × ${height} pixels\nMode : $framing ; zoom ${zoom}×\n"+
                 "Protection : ${prefs.protectFrame} ; marges validées : ${session.visual.margins}\n"+
                 "Les bandes encodées font partie des images. Le poinçon et les coins physiques peuvent masquer de petites zones. Analyse facultative séparée, jamais automatique."
             AlertDialog.Builder(activity).setTitle("Diagnostic de l’image").setMessage(message).setPositiveButton("Fermer",null).show()

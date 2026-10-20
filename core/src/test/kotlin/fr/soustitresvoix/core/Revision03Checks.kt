@@ -27,6 +27,26 @@ object Revision03Checks {
         test("explicit speaker lines never merge") { check(SpeechTools.segments("- Salut\n- Pourquoi ?")==listOf("- Salut","- Pourquoi ?")) }
         test("named speaker lines remain separate") { check(SpeechTools.segments("ALICE: Bonjour\nBOB: Salut")==listOf("ALICE: Bonjour","BOB: Salut")) }
         test("ellipsis and closing quotes are preserved") { val s="Pourquoi ? « Vraiment ! » Oui..."; check(SpeechTools.segments(s).joinToString(" ")==s) }
+        test("French closing guillemet belongs to its own sentence") {
+            check(SpeechTools.segments("Il dit : « Oui ! » Puis il part.") == listOf("Il dit : « Oui ! »", "Puis il part."))
+        }
+        test("opening guillemet does not attach to the previous question") {
+            check(SpeechTools.segments("Pourquoi ? « Vraiment ! » Oui...") == listOf("Pourquoi ?", "« Vraiment ! »", "Oui..."))
+        }
+        test("closing quote followed by a reporting clause stays fluid") {
+            check(SpeechTools.segments("« Oui ! », répond-elle. Elle part.") == listOf("« Oui ! », répond-elle.", "Elle part."))
+        }
+        test("removing speaker names retains each speaker boundary") {
+            val text = SpeechTools.filter("ALICE: Bonjour,\ncomment vas-tu ?\nBOB: Très bien.", SpeechTools.Filters(speakers = true))
+            check(SpeechTools.segments(text) == listOf("Bonjour, comment vas-tu ?", "Très bien."))
+        }
+        test("speaker filtering never merges two unpunctuated speakers") {
+            val text = SpeechTools.filter("ALICE: Bonjour\nBOB: Salut", SpeechTools.Filters(speakers = true))
+            check(SpeechTools.segments(text) == listOf("Bonjour", "Salut"))
+        }
+        test("Arabic sentence punctuation remains available to the voice") {
+            check(SpeechTools.segments("لماذا؟ نعم.") == listOf("لماذا؟", "نعم."))
+        }
         test("paragraph boundaries survive segmentation") { check(SpeechTools.segments("Premier\n\nSecond")==listOf("Premier","Second")) }
         test("Unicode and long words never split surrogate pairs") {
             val s="😀".repeat(1500); val chunks=SpeechTools.segments(s)
@@ -42,11 +62,41 @@ object Revision03Checks {
         test("maximum is always respected") { check(AdaptiveTiming.factor(Long.MAX_VALUE,Long.MAX_VALUE,1,1.7f)==1.7f) }
         test("invalid maximum is safe") { check(AdaptiveTiming.factor(10000,0,2000,Float.NaN)==1f) }
         test("forecast considers accumulation not just first segment") { check(AdaptiveTiming.forecastFactor(listOf(1000L to 2100L, 4000L to 3100L),2f)>1.6f) }
+        test("planner cannot borrow silence before a future subtitle appears") {
+            val factor = AdaptiveTiming.planFactor(listOf(
+                AdaptiveTiming.Window(3000, releaseMs=10000, deadlineMs=12000)), 2f)
+            check(factor in 1.578f..1.580f)
+        }
+        test("independent later dialogue cannot unnecessarily speed this sentence") {
+            check(AdaptiveTiming.planFactor(listOf(AdaptiveTiming.Window(1000, deadlineMs=2000),
+                AdaptiveTiming.Window(3000, releaseMs=10000, deadlineMs=12000)), 2f) == 1f)
+        }
+        test("planner includes unknown-deadline backlog before a known deadline") {
+            check(AdaptiveTiming.planFactor(listOf(AdaptiveTiming.Window(1000),
+                AdaptiveTiming.Window(3000, deadlineMs=2100)), 2f) == 2f)
+        }
+        test("planner leaves naturally fitting separated dialogue at normal rate") {
+            check(AdaptiveTiming.planFactor(listOf(AdaptiveTiming.Window(1000, deadlineMs=2000),
+                AdaptiveTiming.Window(1000, releaseMs=10000, deadlineMs=12000)), 2f) == 1f)
+        }
+        test("planner cannot exceed the user ceiling for an impossible overlap") {
+            check(AdaptiveTiming.planFactor(listOf(AdaptiveTiming.Window(9000, deadlineMs=1000)), 1.4f) == 1.4f)
+            check(AdaptiveTiming.planFactor(listOf(AdaptiveTiming.Window(9000, deadlineMs=1000)), Float.NaN) == 1f)
+        }
         test("duration calibration learns from completed measurements") { val m=SpeechDurationModel(); val t="Bonjour à tous, voici la phrase."; val before=m.estimate(t,1f); m.observe(t,before*2,1f); check(m.estimate(t,1f)>before); check(m.observations==1) }
         test("calibration rejects empty zero-time observations") { val m=SpeechDurationModel(); m.observe("Bonjour",0,1f); check(m.observations==0) }
         test("explicit deadline avoids pause at cosmetic cue disappearance") { val m=ready(); m.cues(1000,listOf("Bonjour."),identities=listOf("a"),deadlinesMs=listOf(2000)); m.cues(1500000,emptyList()); check(m.snapshot().videoRequested); m.advance(1999); check(m.snapshot().videoRequested); m.advance(2000); check(!m.snapshot().videoRequested) }
         test("deadline never generates speech before a cue event") { val m=ready(); repeat(10) { m.advance(it*1000L) }; check(m.snapshot().speakingId==null) }
         test("remaining sentence text accompanies the current segment") { val s=ready().cues(1,listOf("Bonjour. Au revoir."),deadlinesMs=listOf(5000)).speak(); check(s.text=="Bonjour." && s.remainingText=="Au revoir." && s.deadlineMs==5000L) }
+        test("adaptive pending plan keeps overlapping replicas and remaining segments") {
+            val m=ready()
+            val first=m.cues(1,listOf("Bonjour. Au revoir."), identities=listOf("a"), deadlinesMs=listOf(5000)).speak()
+            m.cues(2,listOf("Bonjour. Au revoir.", "Deuxième locuteur."), identities=listOf("a", "b"), deadlinesMs=listOf(5000, 3000))
+            check(m.pendingPlan() == listOf(NarrationMachine.PlannedReplica("Au revoir.", 5000),
+                NarrationMachine.PlannedReplica("Deuxième locuteur.", 3000)))
+            check(m.speechFinished(first.id).speak().text == "Au revoir.")
+            check(m.pendingPlan() == listOf(NarrationMachine.PlannedReplica("Deuxième locuteur.", 3000)))
+        }
         test("known overlap does not expire the older long cue early") { val m=ready(); m.cues(1,listOf("A"),identities=listOf("a"),deadlinesMs=listOf(5000)); m.cues(2,listOf("A","B"),identities=listOf("a","b"),deadlinesMs=listOf(5000,6000)); m.advance(2000); check(m.snapshot().videoRequested) }
         test("identical simultaneous speakers keep separate deadlines") { val m=ready(); val first=m.cues(1,listOf("Oui","Oui"),identities=listOf("a","b"),deadlinesMs=listOf(1000,3000)).speak(); val next=m.speechFinished(first.id).speak(); check(first.deadlineMs==1000L && next.deadlineMs==3000L) }
         test("pause blocks old completion and timer-based resume") { val m=ready(); val id=m.cues(1,listOf("Bonjour."),deadlinesMs=listOf(1000)).speak().id; m.pause(); m.advance(2000); m.speechFinished(id); check(!m.snapshot().wantsPlayback && !m.snapshot().videoRequested) }

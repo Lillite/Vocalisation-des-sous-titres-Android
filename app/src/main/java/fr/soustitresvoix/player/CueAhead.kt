@@ -63,7 +63,7 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
         override fun sampleData(data: ParsableByteArray, length: Int, sampleDataPart: Int) {
             if (cueFormat && sampleDataPart == TrackOutput.SAMPLE_DATA_PART_MAIN && !overflow) {
                 if (bytes.size().toLong() + length <= 1_048_576) bytes.write(data.data, data.position, length)
-                else { bytes.reset(); overflow = true }
+                else { bytes.reset(); overflow = true; truncated = true }
             }
             out.sampleData(data, length, sampleDataPart)
         }
@@ -80,7 +80,10 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
             if (!cueFormat) return
             val b = bytes.toByteArray(); val start = b.size - offset - size
             if (!overflow && cryptoData == null && start >= 0 && size > 0) {
-                try { report(track, CueDecoder().decode(timeUs, b, start, size)) } catch (_: RuntimeException) { }
+                try { report(track, CueDecoder().decode(timeUs, b, start, size)) }
+                catch (_: RuntimeException) { truncated = true }
+            } else if (overflow || cryptoData != null || start < 0) {
+                truncated = true
             }
             bytes.reset()
             if (!overflow && offset in 1..b.size) bytes.write(b, b.size - offset, offset)
@@ -109,8 +112,8 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
 @UnstableApi
 class CueAheadIndex {
     var truncated = false; private set
-    data class Item(val track: String?, val startUs: Long, val endUs: Long, val raw: String) {
-        val identity: String get() = "$track:$startUs:$endUs:$raw"
+    data class Item(val track: String?, val startUs: Long, val endUs: Long, val raw: String, val ordinal: Int = 0) {
+        val identity: String get() = "$track:$startUs:$endUs:$ordinal:$raw"
     }
     private val frames = TreeMap<Long, MutableList<Item>>()
     private val unique = HashSet<Item>()
@@ -134,13 +137,16 @@ class CueAheadIndex {
     val count: Int @Synchronized get() = unique.size
     @Synchronized fun clear() { frames.clear(); unique.clear(); trackSnapshots.clear(); characters = 0; cursorUs = 0; truncated = false }
     @Synchronized fun add(track: String?, group: CuesWithTiming) {
-        if (group.startTimeUs == C.TIME_UNSET || group.durationUs <= 0 || group.durationUs == C.TIME_UNSET) return
+        if (group.startTimeUs == C.TIME_UNSET || group.durationUs <= 0 || group.durationUs == C.TIME_UNSET) {
+            if (group.cues.any { !it.text.isNullOrEmpty() }) truncated = true
+            return
+        }
         val end = group.startTimeUs + group.durationUs
-        if (end < group.startTimeUs) return
-        for (cue in group.cues) {
+        if (end < group.startTimeUs) { truncated = true; return }
+        for ((ordinal, cue) in group.cues.withIndex()) {
             val raw = cue.text?.toString() ?: continue
-            if (raw.length > 24_000) continue
-            val item = Item(track, group.startTimeUs, end, raw)
+            if (raw.length > 24_000) { truncated = true; continue }
+            val item = Item(track, group.startTimeUs, end, raw, ordinal)
             if (unique.add(item)) {
                 trackSnapshots.remove(track)
                 frames.getOrPut(item.startUs) { mutableListOf() }.add(item)
@@ -168,24 +174,34 @@ class CueAheadIndex {
     }
     @Synchronized fun windowEnd(track: String?, text: String, positionMs: Long, filters: SpeechTools.Filters): Long? =
         active(track, positionMs.coerceAtLeast(0) * 1000 + 1000).asSequence()
-            .filter { canon(SpeechTools.filter(it.raw, filters)).contains(canon(text)) }
+            .filter {
+                val filtered = SpeechTools.filter(it.raw, filters)
+                val target = canon(text)
+                target.isNotEmpty() && (canon(filtered) == target ||
+                    SpeechTools.segments(filtered).any { segment -> canon(segment) == target })
+            }
             .minOfOrNull { it.endUs / 1000 }
     @Synchronized fun nextStart(track: String?, positionMs: Long): Long? =
         frames.tailMap(positionMs.coerceAtLeast(0) * 1000, false).values.asSequence().flatten()
             .firstOrNull { it.track == track }?.startUs?.div(1000)
     @Synchronized fun planningWindow(track: String?, positionMs: Long, filters: SpeechTools.Filters): List<Pair<String, Long>> =
-        frames.subMap(positionMs.coerceAtLeast(0) * 1000, false, (positionMs + 15_000) * 1000, true)
+        planningItems(track, positionMs).map { SpeechTools.filter(it.raw, filters) to it.endUs / 1000 }
+    @Synchronized fun planningItems(track: String?, positionMs: Long): List<Item> =
+        frames.subMap(positionMs.coerceAtLeast(0) * 1000, false, (positionMs.coerceAtLeast(0) + 15_000) * 1000, true)
             .values.asSequence().flatten().filter { it.track == track && it.endUs / 1000 > positionMs }
-            .take(16).map { SpeechTools.filter(it.raw, filters) to it.endUs / 1000 }.toList()
+            .take(16).toList()
     @Synchronized fun remaining(track: String?, text: String, positionMs: Long, filters: SpeechTools.Filters): Long? =
         windowEnd(track, text, positionMs, filters)?.minus(positionMs)
-    @Synchronized fun identities(track: String?, texts: List<String>, timeUs: Long, filters: SpeechTools.Filters): List<String>? {
+    /** Match occurrences once, so their identity and deadline cannot disagree. */
+    @Synchronized fun resolved(track: String?, texts: List<String>, timeUs: Long, filters: SpeechTools.Filters): List<Item>? {
         val active = active(track, timeUs + 1000)
-        val used = mutableSetOf<String>(); val result = mutableListOf<String>()
+        val used = mutableSetOf<Item>(); val result = mutableListOf<Item>()
         for (text in texts) {
-            val match = active.firstOrNull { it.identity !in used && canon(SpeechTools.filter(it.raw, filters)) == canon(text) } ?: return null
-            result.add(match.identity); used.add(match.identity)
+            val match = active.firstOrNull { it !in used && canon(SpeechTools.filter(it.raw, filters)) == canon(text) } ?: return null
+            result.add(match); used.add(match)
         }
         return result
     }
+    @Synchronized fun identities(track: String?, texts: List<String>, timeUs: Long, filters: SpeechTools.Filters): List<String>? =
+        resolved(track, texts, timeUs, filters)?.map { it.identity }
 }

@@ -10,10 +10,14 @@ import android.os.Looper
 import android.widget.*
 import androidx.media3.common.C
 import androidx.media3.common.Effect
+import androidx.media3.common.Format
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.Brightness
 import androidx.media3.effect.Contrast
 import androidx.media3.effect.Crop
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import fr.soustitresvoix.core.BlackBars
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -24,9 +28,16 @@ class VisualTools(private val session: PlaybackSession) {
     var contrast = 0f; private set
     var brightness = 0f; private set
     var bypass = false; private set
-    val hdr: Boolean get() = session.player.videoFormat?.colorInfo?.colorTransfer in listOf(C.COLOR_TRANSFER_ST2084, C.COLOR_TRANSFER_HLG) ||
-        session.player.videoFormat?.sampleMimeType == "video/dolby-vision"
-    fun reset() { margins = BlackBars.Margins(); contrast=0f; brightness=0f; bypass=false; apply() }
+    private var observedFormat: Format? = null
+    val hdr: Boolean get() = isHdrFormat(observedFormat ?: session.player.videoFormat) || session.player.currentTracks.groups.any { group ->
+        group.type == C.TRACK_TYPE_VIDEO && (0 until group.length).any { group.isTrackSelected(it) && isHdrFormat(group.getTrackFormat(it)) }
+    }
+    companion object {
+        internal fun isHdrFormat(format: Format?): Boolean = format?.colorInfo?.colorTransfer in
+            listOf(C.COLOR_TRANSFER_ST2084, C.COLOR_TRANSFER_HLG) || format?.sampleMimeType == "video/dolby-vision"
+    }
+    fun reset() { observedFormat=null; margins = BlackBars.Margins(); contrast=0f; brightness=0f; bypass=false; apply() }
+    fun onInputFormatChanged(format: Format) { observedFormat = format; apply() }
     fun crop(value: BlackBars.Margins) { require(value.safe()); margins=value; apply() }
     fun adjust(c: Float, b: Float) { contrast=c.coerceIn(-.3f,.3f); brightness=b.coerceIn(-.2f,.2f); apply() }
     fun toggleComparison() { bypass=!bypass; apply() }
@@ -40,6 +51,7 @@ class VisualTools(private val session: PlaybackSession) {
         session.player.setVideoEffects(effects)
     }
     fun showAnalysis(activity: Activity, updated: () -> Unit) {
+        if (activity.isFinishing || activity.isDestroyed) return
         if (android.os.Build.VERSION.SDK_INT < 27) {
             AlertDialog.Builder(activity).setMessage("L’analyse bornée des images nécessite Android 8.1 ou plus. Aucun recadrage appliqué.").setPositiveButton("Fermer", null).show(); return
         }
@@ -52,16 +64,26 @@ class VisualTools(private val session: PlaybackSession) {
             .setMessage("Examen de sept images réparties dans la vidéo. Aucun fichier modifié. Le résultat est une hypothèse, jamais une suppression automatique.")
             .setNegativeButton("Annuler") { _, _ -> cancelled.set(true) }.create()
         progress.setOnCancelListener { cancelled.set(true) }; progress.show()
+        var preview: AlertDialog? = null
+        val owner = activity as? LifecycleOwner
+        var observer: LifecycleEventObserver? = null
+        fun detach() { observer?.let { owner?.lifecycle?.removeObserver(it) }; observer = null }
+        observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_DESTROY) {
+                cancelled.set(true); worker.shutdownNow(); progress.dismiss(); preview?.dismiss(); detach()
+            }
+        }
+        owner?.lifecycle?.addObserver(observer!!)
         worker.execute {
             val bitmaps = mutableListOf<Bitmap>()
             try {
                 val retriever = MediaMetadataRetriever()
                 try {
-                    retriever.setDataSource(activity, Uri.parse(saved.uri))
+                    retriever.setDataSource(activity.applicationContext, Uri.parse(saved.uri))
                     val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0
                     require(duration > 0) { "Durée indisponible pour cette analyse." }
                     for (fraction in listOf(.1,.23,.36,.5,.64,.77,.9)) {
-                        if (cancelled.get()) break
+                        if (cancelled.get() || Thread.currentThread().isInterrupted) break
                         val frame = retriever.getScaledFrameAtTime((duration*1000*fraction).toLong(), MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 480, 270)
                             ?: throw IllegalStateException("Extraction des images indisponible pour ce codec.")
                         val editable = requireNotNull(frame.copy(Bitmap.Config.ARGB_8888, true))
@@ -75,10 +97,11 @@ class VisualTools(private val session: PlaybackSession) {
                 handler.post {
                     progress.dismiss()
                     if (cancelled.get() || activity.isFinishing || activity.isDestroyed || session.media?.uri != saved.uri) {
-                        bitmaps.forEach { it.recycle() }; return@post
+                        bitmaps.forEach { it.recycle() }; detach(); return@post
                     }
                     if (candidate == null) {
                         bitmaps.forEach { it.recycle() }
+                        detach()
                         message(activity, "Aucune marge constante suffisamment fiable. Les scènes sombres, textes dans les marges ou variations empêchent la proposition. Aucun recadrage appliqué.")
                     } else {
                         val column=LinearLayout(activity).apply { orientation=LinearLayout.VERTICAL }
@@ -93,15 +116,24 @@ class VisualTools(private val session: PlaybackSession) {
                             .setPositiveButton("Appliquer ces marges") { _, _ ->
                                 if (session.media?.uri == saved.uri) { crop(candidate); updated() }
                             }.setNegativeButton("Conserver l’image entière",null).create()
-                        dialog.setOnDismissListener { bitmaps.forEach { it.recycle() } }; dialog.show()
+                        preview = dialog
+                        dialog.setOnDismissListener { bitmaps.forEach { it.recycle() }; detach(); preview = null }; dialog.show()
                     }
                 }
             } catch (e: Exception) {
-                handler.post { progress.dismiss(); bitmaps.forEach { it.recycle() }
+                handler.post { progress.dismiss(); bitmaps.forEach { it.recycle() }; detach()
                     if (!cancelled.get() && !activity.isFinishing && !activity.isDestroyed) message(activity, e.message ?: "Analyse indisponible") }
             } finally { worker.shutdown() }
         }
     }
     private fun percent(v: Float) = String.format(java.util.Locale.FRANCE,"%.1f %%",v*100)
-    private fun message(a: Activity,s: String) { AlertDialog.Builder(a).setMessage(s).setPositiveButton("Fermer",null).show() }
+    private fun message(a: Activity,s: String) {
+        if (a.isFinishing || a.isDestroyed) return
+        val dialog = AlertDialog.Builder(a).setMessage(s).setPositiveButton("Fermer",null).create()
+        val owner = a as? LifecycleOwner
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_DESTROY) dialog.dismiss() }
+        owner?.lifecycle?.addObserver(observer)
+        dialog.setOnDismissListener { owner?.lifecycle?.removeObserver(observer) }
+        dialog.show()
+    }
 }

@@ -6,8 +6,17 @@ plugins {
 val demoResources = layout.buildDirectory.dir("generated/demo-res")
 val demoFile = demoResources.map { it.file("raw/demonstration.mkv") }
 val demoSubtitles = rootProject.file("examples/demonstration.srt")
+// Four corners, a circle and a grid make actual stretching/cropping observable.
+val demoPattern = "geq=lum='if(between(hypot(X-W/2,Y-H/2),78,81),220,lum(X,Y))':cb='cb(X,Y)':cr='cr(X,Y)'," +
+    "drawgrid=width=80:height=60:thickness=1:color=white@0.25," +
+    "drawbox=x=0:y=0:w=iw:h=ih:color=white:t=2," +
+    "drawbox=x=0:y=0:w=64:h=64:color=0xff0000:t=fill," +
+    "drawbox=x=576:y=0:w=64:h=64:color=0x00ff00:t=fill," +
+    "drawbox=x=0:y=296:w=64:h=64:color=0x0000ff:t=fill," +
+    "drawbox=x=576:y=296:w=64:h=64:color=0xffff00:t=fill"
 val generateDemo = tasks.register<Exec>("generateDemo") {
     inputs.file(demoSubtitles)
+    inputs.property("pattern", demoPattern)
     outputs.file(demoFile)
     doFirst { demoFile.get().asFile.parentFile.mkdirs() }
     commandLine("ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
@@ -15,6 +24,7 @@ val generateDemo = tasks.register<Exec>("generateDemo") {
         "-f", "lavfi", "-i", "sine=frequency=220:sample_rate=48000:duration=28",
         "-i", demoSubtitles.absolutePath,
         "-map", "0:v", "-map", "1:a", "-map", "2:s",
+        "-vf", demoPattern,
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "32k", "-af", "volume=0.08",
         "-c:s", "srt", "-metadata:s:s:0", "language=fra", "-t", "28",
@@ -28,8 +38,8 @@ android {
         applicationId = "fr.soustitresvoix.player.cinema3"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0-cinema-test"
+        versionCode = 4
+        versionName = "0.3.1-cinema-test"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets.getByName("main").res.srcDir(demoResources)
