@@ -1,4 +1,4 @@
-name: Import et validation Cinema 0.3
+name: Corrections finales et validation Cinema 0.3
 on:
   push:
     branches: [validation-cinema-0.3]
@@ -14,29 +14,25 @@ jobs:
         with:
           ref: cinema-0.3
           fetch-depth: 0
-      - name: Verifier et appliquer uniquement le correctif local controle
+      - name: Appliquer le correctif de concurrence et de cycle de vie controle
         shell: bash
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = 'Lillite/Vocalisation-des-sous-titres-Android'
-          git merge-base --is-ancestor 32ac63d7ac226a29f09bc728ad982721f120b333 HEAD
+          test "$(git rev-parse HEAD)" = '526d1a06ce961946a88b40d3fb68e22c8acfc7f5'
           python3 - <<'PY'
-          import base64, hashlib, lzma, pathlib, subprocess
-          allowed = {'.github/workflows/cinema3.yml'} | {f'tools/revision03.{i}.b64' for i in range(1,4)}
-          changed = set(subprocess.check_output(['git','diff','--name-only','32ac63d7ac226a29f09bc728ad982721f120b333','HEAD'],text=True).splitlines())
-          assert changed <= allowed, f'Concurrent source changes: {changed - allowed}'
-          raw = ''.join(pathlib.Path(f'tools/revision03.{i}.b64').read_text().strip() for i in range(1,4))
-          patch = lzma.decompress(base64.b64decode(raw,validate=True))
-          assert hashlib.sha256(patch).hexdigest() == 'cbdc0aa8fa4d88b2908ba5aa364ec7472440f2a477c407d3622516e65b8d58b4', 'Patch checksum mismatch'
-          pathlib.Path('/tmp/revision03.patch').write_bytes(patch)
-          print('Patch integrity verified:', len(patch), 'bytes')
+          import base64, hashlib, lzma, pathlib
+          encoded = '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'
+          patch = lzma.decompress(base64.b64decode(encoded, validate=True))
+          assert hashlib.sha256(patch).hexdigest() == '4590023a350a189b82500c7bdf232a22bf144cffa44c0c2c15fd01475fd64b2b'
+          pathlib.Path('/tmp/final03.patch').write_bytes(patch)
+          print('Correctif verifie:', len(patch), 'octets')
           PY
-          git apply --check --unidiff-zero --exclude=.github/workflows/cinema3.yml /tmp/revision03.patch
-          git apply --unidiff-zero --exclude=.github/workflows/cinema3.yml /tmp/revision03.patch
-          git rm tools/revision03.1.b64 tools/revision03.2.b64 tools/revision03.3.b64
-          git add app core docs tools README.md
+          git apply --check /tmp/final03.patch
+          git apply /tmp/final03.patch
+          git add app/src/main/java/fr/soustitresvoix/player/AndroidSpeech.kt app/src/main/java/fr/soustitresvoix/player/MainActivity.kt app/src/main/java/fr/soustitresvoix/player/QuickMixDialog.kt app/src/androidTest/java/fr/soustitresvoix/player/Revision03AndroidTest.kt
           git diff --cached --check
-          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Cinéma 0.3 : adaptation hors cache, indexation complète, étirement protégé et diagnostics'
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Préserver la préparation interrompue et fermer les volumes rapides avec leur activité'
           git push origin HEAD:cinema-0.3
           git config --local --unset-all http.https://github.com/.extraheader || true
       - uses: actions/setup-java@v4
