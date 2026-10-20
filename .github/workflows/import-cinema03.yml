@@ -1,0 +1,121 @@
+name: Import et validation Cinema 0.3
+on:
+  push:
+    branches: [validation-cinema-0.3]
+    paths: ['.github/workflows/import-cinema03.yml']
+permissions:
+  contents: write
+jobs:
+  cinema:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cinema-0.3
+          fetch-depth: 0
+      - name: Verifier et appliquer uniquement le correctif local controle
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Lillite/Vocalisation-des-sous-titres-Android'
+          git merge-base --is-ancestor 32ac63d7ac226a29f09bc728ad982721f120b333 HEAD
+          python3 - <<'PY'
+          import base64, hashlib, lzma, pathlib, subprocess
+          allowed = {'.github/workflows/cinema3.yml'} | {f'tools/revision03.{i}.b64' for i in range(1,4)}
+          changed = set(subprocess.check_output(['git','diff','--name-only','32ac63d7ac226a29f09bc728ad982721f120b333','HEAD'],text=True).splitlines())
+          assert changed <= allowed, f'Concurrent source changes: {changed - allowed}'
+          raw = ''.join(pathlib.Path(f'tools/revision03.{i}.b64').read_text().strip() for i in range(1,4))
+          patch = lzma.decompress(base64.b64decode(raw,validate=True))
+          assert hashlib.sha256(patch).hexdigest() == 'cbdc0aa8fa4d88b2908ba5aa364ec7472440f2a477c407d3622516e65b8d58b4', 'Patch checksum mismatch'
+          pathlib.Path('/tmp/revision03.patch').write_bytes(patch)
+          print('Patch integrity verified:', len(patch), 'bytes')
+          PY
+          git apply --check --unidiff-zero --exclude=.github/workflows/cinema3.yml /tmp/revision03.patch
+          git apply --unidiff-zero --exclude=.github/workflows/cinema3.yml /tmp/revision03.patch
+          git rm tools/revision03.1.b64 tools/revision03.2.b64 tools/revision03.3.b64
+          git add app core docs tools README.md
+          git diff --cached --check
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Cinéma 0.3 : adaptation hors cache, indexation complète, étirement protégé et diagnostics'
+          git push origin HEAD:cinema-0.3
+          git config --local --unset-all http.https://github.com/.extraheader || true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Preparer SDK et demonstration
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y ffmpeg >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses < <(yes) >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          mkdir -p build/verification
+          git rev-parse HEAD > build/verification/source-commit.txt
+          git archive --format=zip --output=build/verification/sources-cinema.zip HEAD
+      - name: Controles structurels
+        run: python3 tools/check-project.py
+      - name: Tests du noyau, lint et compilation
+        shell: bash
+        run: |
+          set +e
+          gradle --no-daemon --stacktrace :core:test :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest > build/verification/build-console.txt 2>&1
+          result=$?
+          tail -n 180 build/verification/build-console.txt
+          exit "$result"
+      - name: Verifier identite, permissions et signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee build/verification/signature.txt
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$APK" > build/verification/manifest.xml
+          python3 tools/check-apk-manifest.py build/verification/manifest.xml
+          sha256sum "$APK" > build/verification/apk-sha256.txt
+      - name: Preparer emulateur jetable
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk /opt/hostedtoolcache/CodeQL
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          df -h /
+      - name: Tests reels Android 36
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disk-size: 2048M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash tools/run-device-tests.sh
+      - name: Conserver preuves et sources
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cinema03-rapports
+          path: |
+            build/verification/
+            core/build/reports/tests/
+            core/build/test-results/
+            app/build/reports/
+            app/build/outputs/androidTest-results/
+          retention-days: 14
+          if-no-files-found: warn
+      - name: APK seulement apres tous les tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: SousTitresVoix-Cinema03-APK
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            build/verification/apk-sha256.txt
+            build/verification/source-commit.txt
+          retention-days: 14
+          if-no-files-found: error
