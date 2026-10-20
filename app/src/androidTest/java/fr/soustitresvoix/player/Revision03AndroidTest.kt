@@ -807,11 +807,28 @@ class Revision03AndroidTest {
                 }
                 throw AssertionError("The effect pipeline did not advance: $state", failure)
             }
-            val processedBrightness = frameBrightness()
-            var pausedPosition = 0L
+            var pauseBarrier: androidx.media3.exoplayer.PlayerMessage? = null
             scenario.onActivity { activity ->
                 activity.session.pause()
+                // The public pause request masks playWhenReady immediately, but the
+                // playback thread still has to stop its clock and publish the final position.
+                pauseBarrier = activity.session.player.createMessage { _, _ -> }.send()
+            }
+            assertTrue("The playback thread did not acknowledge the pause barrier",
+                requireNotNull(pauseBarrier).blockUntilDelivered(20_000))
+            instrument.waitForIdleSync()
+            var pausedPosition = 0L
+            scenario.onActivity { activity ->
+                assertFalse(activity.session.player.playWhenReady)
+                assertFalse(activity.session.machine.snapshot().wantsPlayback)
+                assertNull(activity.session.player.playerError)
                 pausedPosition = activity.session.player.currentPosition
+            }
+            val processedBrightness = frameBrightness()
+            scenario.onActivity { activity ->
+                assertEquals(pausedPosition, activity.session.player.currentPosition)
+                assertFalse(activity.session.player.playWhenReady)
+                assertFalse(activity.session.machine.snapshot().wantsPlayback)
                 val visual = activity.session.visual
                 visual.toggleComparison()
                 assertFalse(visual.detailedScalingActive)

@@ -90,6 +90,12 @@ Ces échecs restent des constats historiques associés à ce commit. La validati
 
 Les deux APK ont compilé et les 14 méthodes JUnit du noyau ont réussi, mais Lint a signalé trois erreurs `RestrictedApi` pour les références à `PlaybackVideoGraphWrapper` dans `CinemaVideoRenderer`. Cette passe a été arrêtée avant les tests Android : elle n’atteste donc pas le rendu corrigé. Le renderer utilise désormais le `VideoSink` public fourni par `changeVideoSinkInputStream`, en conservant le même vidage et la même autorisation de première image. Aucune règle Lint n’est supprimée et aucune API interne n’est appelée. Le résultat du correctif se lit dans les preuves de la passe complète du commit livré.
 
+### Constats de la passe `b2b61c6`
+
+La [cinquième passe, exécution 39456732983](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/39456732983), a exécuté **52 tests Android : 51 réussis, un échec, zéro entrée `errors` et aucun test ignoré**. Les tests du noyau, Lint, les deux compilations APK, le manifeste et la signature ont réussi. La mire des quatre coins et les quatre scénarios auparavant bloqués par l’identifiant de piste externe ont également réussi.
+
+Le seul échec, `gpuEffectsCanBeAppliedAndBypassedOnSdrVideo`, comparait une position de 1 671 ms capturée immédiatement après la demande de pause à 1 683 ms après son application asynchrone. La vérification du fonctionnement de Media3 1.11.1 confirme que l’état `playWhenReady` devient visible sur le thread d’interface avant que le thread de lecture ait arrêté l’horloge et publié sa dernière position. Le correctif concerne uniquement la synchronisation du test : attendre hors du thread d’interface une barrière FIFO `PlayerMessage` publique, puis `waitForIdleSync`, et relever ensuite la position de référence avant de changer les effets. Les égalités de position restent strictes, sans tolérance ajoutée ; aucun changement de production n’est motivé par cet écart de 12 ms. La validation de ce test corrigé se lit dans la passe complète du commit livré et n’est pas déduite de ces 51 réussites.
+
 ## Limites à conserver dans toute présentation
 
 - Ni « zéro bug », ni efficacité mesurée sur un OnePlus non connecté à cet environnement.
