@@ -18,12 +18,15 @@ import java.util.TreeMap
 /** Observe already-buffered subtitles; never decode a second copy of the video. */
 @UnstableApi
 class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : ExtractorsFactory {
+    private val limit = 100_000
     private val factory = DefaultExtractorsFactory()
+    var truncated = false; private set
     private var reports = 0
     private var reportedChars = 0L
     @Synchronized private fun report(track: String?, group: CuesWithTiming) {
         val characters = group.cues.sumOf { it.text?.length ?: 0 }
-        if (characters == 0 || reports >= 16384 || reportedChars + characters > 2_000_000) return
+        if (characters == 0) return
+        if (reports >= limit || reportedChars + characters > 12_000_000) { truncated = true; return }
         reports++; reportedChars += characters
         onCue(track, group)
     }
@@ -105,15 +108,31 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
 /** Bounded optional index. Exhausting it never prevents live subtitle playback. */
 @UnstableApi
 class CueAheadIndex {
+    var truncated = false; private set
     data class Item(val track: String?, val startUs: Long, val endUs: Long, val raw: String) {
         val identity: String get() = "$track:$startUs:$endUs:$raw"
     }
     private val frames = TreeMap<Long, MutableList<Item>>()
     private val unique = HashSet<Item>()
+    private val trackSnapshots = mutableMapOf<String?, TrackSnapshot>()
+    private data class TrackSnapshot(val items: List<Item>, val maxEnds: LongArray)
+    private fun canon(text: String) = text.trim().replace(Regex("\\s+"), " ")
+    private fun snapshot(track: String?): TrackSnapshot = trackSnapshots.getOrPut(track) {
+        val items = frames.values.asSequence().flatten().filter { it.track == track }.toList()
+        var max = Long.MIN_VALUE
+        TrackSnapshot(items, LongArray(items.size) { i -> max = maxOf(max, items[i].endUs); max })
+    }
+    private fun active(track: String?, timeUs: Long): List<Item> {
+        val s = snapshot(track); var lo = 0; var hi = s.items.size
+        while (lo < hi) { val mid = (lo + hi) ushr 1; if (s.items[mid].startUs <= timeUs) lo = mid+1 else hi=mid }
+        val out = mutableListOf<Item>(); var i=lo-1
+        while (i >= 0 && s.maxEnds[i] > timeUs) { if (s.items[i].endUs > timeUs) out += s.items[i]; i-- }
+        return out.asReversed()
+    }
     private var characters = 0
     private var cursorUs = 0L
     val count: Int @Synchronized get() = unique.size
-    @Synchronized fun clear() { frames.clear(); unique.clear(); characters = 0; cursorUs = 0 }
+    @Synchronized fun clear() { frames.clear(); unique.clear(); trackSnapshots.clear(); characters = 0; cursorUs = 0; truncated = false }
     @Synchronized fun add(track: String?, group: CuesWithTiming) {
         if (group.startTimeUs == C.TIME_UNSET || group.durationUs <= 0 || group.durationUs == C.TIME_UNSET) return
         val end = group.startTimeUs + group.durationUs
@@ -123,38 +142,48 @@ class CueAheadIndex {
             if (raw.length > 24_000) continue
             val item = Item(track, group.startTimeUs, end, raw)
             if (unique.add(item)) {
+                trackSnapshots.remove(track)
                 frames.getOrPut(item.startUs) { mutableListOf() }.add(item)
                 characters += raw.length
             }
         }
-        while (unique.size > 8192 || characters > 1_000_000) {
+        while (unique.size > 100_000 || characters > 12_000_000) {
+            truncated = true
             val key = if (frames.firstKey() < cursorUs - 30_000_000L) frames.firstKey() else frames.lastKey()
             removeFrame(key)
         }
     }
     private fun removeFrame(key: Long) {
-        frames.remove(key)?.forEach { unique.remove(it); characters -= it.raw.length }
+        frames.remove(key)?.forEach { unique.remove(it); characters -= it.raw.length; trackSnapshots.remove(it.track) }
     }
     @Synchronized fun selected(track: String?): List<Item> = frames.values.flatten().filter { it.track == track }
-    @Synchronized fun future(track: String?, positionMs: Long, filters: SpeechTools.Filters, count: Int): List<String> {
+    @Synchronized fun future(track: String?, positionMs: Long, filters: SpeechTools.Filters, count: Int, seconds: Int = 60): List<String> {
         cursorUs = positionMs.coerceAtLeast(0) * 1000
-        val futureEnd = cursorUs + 60_000_000L
+        val futureEnd = cursorUs + seconds.coerceIn(5, 7200) * 1_000_000L
         if (futureEnd < cursorUs) return emptyList()
         return frames.subMap(cursorUs, true, futureEnd, false).values.asSequence().flatten()
             .filter { it.track == track }
             .flatMap { SpeechTools.segments(SpeechTools.filter(it.raw, filters)).asSequence() }
-            .distinct().take(count.coerceIn(0, 12)).toList()
+            .distinct().take(count.coerceIn(0, 100_000)).toList()
     }
+    @Synchronized fun windowEnd(track: String?, text: String, positionMs: Long, filters: SpeechTools.Filters): Long? =
+        active(track, positionMs.coerceAtLeast(0) * 1000 + 1000).asSequence()
+            .filter { canon(SpeechTools.filter(it.raw, filters)).contains(canon(text)) }
+            .minOfOrNull { it.endUs / 1000 }
+    @Synchronized fun nextStart(track: String?, positionMs: Long): Long? =
+        frames.tailMap(positionMs.coerceAtLeast(0) * 1000, false).values.asSequence().flatten()
+            .firstOrNull { it.track == track }?.startUs?.div(1000)
+    @Synchronized fun planningWindow(track: String?, positionMs: Long, filters: SpeechTools.Filters): List<Pair<String, Long>> =
+        frames.subMap(positionMs.coerceAtLeast(0) * 1000, false, (positionMs + 15_000) * 1000, true)
+            .values.asSequence().flatten().filter { it.track == track && it.endUs / 1000 > positionMs }
+            .take(16).map { SpeechTools.filter(it.raw, filters) to it.endUs / 1000 }.toList()
     @Synchronized fun remaining(track: String?, text: String, positionMs: Long, filters: SpeechTools.Filters): Long? =
-        frames.headMap((positionMs + 200) * 1000, true).values.asSequence().flatten()
-            .filter { it.track == track && it.endUs > positionMs * 1000 && SpeechTools.filter(it.raw, filters).contains(text) }
-            .minOfOrNull { it.endUs / 1000 - positionMs }
+        windowEnd(track, text, positionMs, filters)?.minus(positionMs)
     @Synchronized fun identities(track: String?, texts: List<String>, timeUs: Long, filters: SpeechTools.Filters): List<String>? {
-        val active = frames.headMap(timeUs + 1000, true).values.asSequence().flatten()
-            .filter { it.track == track && timeUs < it.endUs }.toList()
+        val active = active(track, timeUs + 1000)
         val used = mutableSetOf<String>(); val result = mutableListOf<String>()
         for (text in texts) {
-            val match = active.firstOrNull { it.identity !in used && SpeechTools.filter(it.raw, filters) == text } ?: return null
+            val match = active.firstOrNull { it.identity !in used && canon(SpeechTools.filter(it.raw, filters)) == canon(text) } ?: return null
             result.add(match.identity); used.add(match.identity)
         }
         return result

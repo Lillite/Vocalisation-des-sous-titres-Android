@@ -19,18 +19,7 @@ object SpeechTools {
     }.joinToString("\n").trim()
 
     /** Sentence-sized replay segments, then engine-safe chunks. Keeps all words. */
-    fun segments(text: String): List<String> {
-        if (text.isBlank()) return emptyList()
-        val out = mutableListOf<String>()
-        val iterator = BreakIterator.getSentenceInstance(Locale.FRENCH)
-        iterator.setText(text)
-        var start = iterator.first(); var end = iterator.next()
-        while (end != BreakIterator.DONE) {
-            out += SubtitleText.splitForSpeech(text.substring(start, end), 1000)
-            start = end; end = iterator.next()
-        }
-        return out
-    }
+    fun segments(text: String): List<String> = LinguisticSegments.split(text)
     fun adaptiveFactor(durationMs: Long?, availableMs: Long?, maximum: Float): Float {
         if (durationMs == null || availableMs == null || availableMs <= 0 || durationMs <= 0) return 1f
         return (durationMs.toDouble() / availableMs).toFloat().coerceIn(1f, maximum.coerceIn(1f, 1.6f))
@@ -75,13 +64,18 @@ class SpeechDiskCache(private val directory: File, private val limitBytes: () ->
         if (initialized) return
         directory.mkdirs()
         directory.listFiles()?.filter { it.extension == "part" }?.forEach { it.delete() }
+        directory.listFiles()?.filter { it.extension == "sha256" && !File(directory, "${it.nameWithoutExtension}.wav").isFile }?.forEach { it.delete() }
         initialized = true; trim()
     }
     fun get(key: String): Entry? {
         initialize()
         val file = File(directory, "$key.wav")
         if (!file.isFile) return null
-        val info = WavInfo.read(file) ?: run { file.delete(); return null }
+        val info = WavInfo.read(file) ?: run { file.delete(); File(directory, "$key.sha256").delete(); return null }
+        val digestFile = File(directory, "$key.sha256")
+        if (!digestFile.isFile || digestFile.readText() != digest(file)) {
+            file.delete(); digestFile.delete(); return null
+        }
         file.setLastModified(System.currentTimeMillis())
         return Entry(file, info.durationMs)
     }
@@ -90,17 +84,28 @@ class SpeechDiskCache(private val directory: File, private val limitBytes: () ->
         val info = WavInfo.read(temporary) ?: run { temporary.delete(); return null }
         val target = File(directory, "$key.wav")
         if (!temporary.renameTo(target)) { temporary.delete(); return null }
+        val meta = File.createTempFile("digest-", ".part", directory)
+        meta.writeText(digest(target))
+        if (!meta.renameTo(File(directory, "$key.sha256"))) { meta.delete(); target.delete(); return null }
         trim(protect = target.name)
         return Entry(target, info.durationMs)
+    }
+    private fun digest(file: File): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val bytes = ByteArray(16384)
+            while (true) { val n = input.read(bytes); if (n < 0) break; md.update(bytes, 0, n) }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
     }
     fun size(): Long = directory.listFiles()?.sumOf { it.length() } ?: 0
     fun trim(protect: String? = null) {
         val files = directory.listFiles()?.filter { it.extension == "wav" }?.sortedBy { it.lastModified() } ?: return
         var size = files.sumOf { it.length() }
         for (file in files) {
-            if (size <= limitBytes().coerceIn(16L shl 20, 256L shl 20)) break
-            if (file.name != protect) { val n = file.length(); if (file.delete()) size -= n }
+            if (size <= limitBytes().coerceIn(16L shl 20, 2048L shl 20)) break
+            if (file.name != protect) { val n = file.length(); if (file.delete()) { size -= n; File(directory, "${file.nameWithoutExtension}.sha256").delete() } }
         }
     }
-    fun clear() { directory.listFiles()?.filter { it.extension in listOf("wav", "part") }?.forEach { it.delete() } }
+    fun clear() { directory.listFiles()?.filter { it.extension in listOf("wav", "part", "sha256") }?.forEach { it.delete() } }
 }

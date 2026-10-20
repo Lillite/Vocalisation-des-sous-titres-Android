@@ -7,7 +7,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
     enum class Mode { COMFORT, CONTINUOUS, ADAPTIVE }
     enum class ResumePolicy { REPLICA, SEGMENT, EXPLICIT }
     sealed class Effect {
-        data class Speak(val id: String, val text: String) : Effect()
+        data class Speak(val id: String, val text: String, val remainingText: String = "", val deadlineMs: Long? = null, val preview: Boolean = false) : Effect()
         object StopSpeech : Effect()
         data class Video(val playing: Boolean) : Effect()
         data class Duck(val enabled: Boolean) : Effect()
@@ -19,7 +19,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
         val enabled: Boolean, val mode: Mode, val voiceSuspended: Boolean = false
     )
     private data class Job(val text: String, var expired: Boolean = false,
-        val group: Long = 0, val original: String = text)
+        val group: Long = 0, val original: String = text, var deadlineMs: Long? = null)
     private data class Running(val id: String, val job: Job, val preview: Boolean = false)
     private val queue = ArrayDeque<Job>()
     private var current: Running? = null
@@ -80,7 +80,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
             interrupt(keep = false)
             queue.removeIf { it.group == running.job.group }
             SpeechTools.segments(running.job.original).asReversed().forEach {
-                queue.addFirst(Job(it, running.job.expired, running.job.group, running.job.original))
+                queue.addFirst(Job(it, running.job.expired, running.job.group, running.job.original, running.job.deadlineMs))
             }
         } else interrupt(keep = current?.preview != true)
         if (running != null && !running.preview && resumePolicy == ResumePolicy.EXPLICIT) voiceSuspended = true
@@ -107,6 +107,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
     fun setMode(value: Mode): List<Effect> = event {
         if (mode != value) {
             mode = value
+            if (value != Mode.ADAPTIVE) { current?.job?.deadlineMs = null; queue.forEach { it.deadlineMs = null } }
             if (value == Mode.CONTINUOUS) {
                 interrupt(keep = false); queue.clear()
                 enqueue(activeTexts.joinToString("\n"))
@@ -115,7 +116,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
     }
     /** Stable occurrence IDs distinguish restyling from a later identical replica. */
     fun cues(frameTimeUs: Long, texts: List<String>, hasImages: Boolean = false,
-        identities: List<String>? = null): List<Effect> = event {
+        identities: List<String>? = null, deadlinesMs: List<Long?>? = null): List<Effect> = event {
         val clean = texts.map { it.trim() }.filter { it.isNotEmpty() }
         val key = frameTimeUs to clean
         if (key == lastFrameKey && !hasImages) return@event
@@ -129,16 +130,23 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
             interrupt(keep = true)
             effects += Effect.Message("Cette piste contient des sous-titres en images. Leur lecture vocale n’est pas disponible. Choisis une piste texte ou ajoute un fichier SRT, VTT ou ASS.", true)
         }
-        current?.takeUnless { it.preview }?.job?.expired = true
-        queue.forEach { it.expired = true }
+        current?.takeUnless { it.preview || it.job.deadlineMs != null }?.job?.expired = true
+        queue.forEach { if (it.deadlineMs == null) it.expired = true }
         if (mode == Mode.CONTINUOUS) { interrupt(keep = false); queue.clear() }
-        val incoming = if (identities != null && oldIdentities != null && identities.size == clean.size) {
-            clean.filterIndexed { i, t -> identities[i] !in oldIdentities || t !in oldTexts }
-        } else if (clean == oldTexts) clean else {
+        val incomingIndices = if (identities != null && oldIdentities != null && identities.size == clean.size) {
+            clean.indices.filter { i -> identities[i] !in oldIdentities || clean[i] !in oldTexts }
+        } else if (clean == oldTexts) clean.indices.toList() else {
             val remaining = oldTexts.toMutableList()
-            clean.filter { !remaining.remove(it) }
+            clean.indices.filter { !remaining.remove(clean[it]) }
         }
-        enqueue(incoming.joinToString("\n"))
+        incomingIndices.forEach { i -> enqueue(clean[i], if (mode == Mode.ADAPTIVE) deadlinesMs?.getOrNull(i) else null) }
+
+    }
+    fun advance(positionMs: Long): List<Effect> = event {
+        current?.takeUnless { it.preview }?.job?.let { job ->
+            job.deadlineMs?.let { if (positionMs >= it) job.expired = true }
+        }
+        queue.forEach { job -> job.deadlineMs?.let { if (positionMs >= it) job.expired = true } }
     }
     fun speechFinished(id: String): List<Effect> = event { if (current?.id == id) current = null }
     fun speechFailed(id: String, detail: String): List<Effect> = event {
@@ -165,9 +173,9 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
             effects += Effect.Message("Cette phrase est trop longue pour un essai vocal.", true); return@event
         }
         val running = Running(nextId(), Job(text), preview = true)
-        current = running; effects += Effect.Speak(running.id, text)
+        current = running; effects += Effect.Speak(running.id, text, preview = true)
     }
-    private fun enqueue(text: String) {
+    private fun enqueue(text: String, deadlineMs: Long? = null) {
         if (text.isBlank()) return
         val total = queue.sumOf { it.text.length } + (current?.job?.text?.length ?: 0) + text.length
         if (total > maxPendingChars) {
@@ -176,7 +184,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
             return
         }
         val group = ++groupSequence
-        SpeechTools.segments(text).forEach { queue.addLast(Job(it, group = group, original = text)) }
+        SpeechTools.segments(text).forEach { queue.addLast(Job(it, group = group, original = text, deadlineMs = deadlineMs)) }
     }
     private fun interrupt(keep: Boolean) {
         val running = current ?: return
@@ -190,7 +198,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
         if (current == null && !voiceSuspended && enabled && speechReady && mediaReady && wantsPlayback && queue.isNotEmpty()) {
             val job = queue.removeFirst(); val running = Running(nextId(), job)
             current = running; lastSpokenText = job.original; lastSpokenGroup = job.group
-            effects += Effect.Speak(running.id, job.text)
+            effects += Effect.Speak(running.id, job.text, queue.filter { it.group == job.group }.joinToString(" ") { it.text }, job.deadlineMs)
         }
         val video = wantsPlayback && !mustHold() && current?.preview != true
         val duck = current != null

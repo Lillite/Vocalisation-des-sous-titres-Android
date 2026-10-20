@@ -454,7 +454,7 @@ class MainActivity : ComponentActivity() {
         AdvancedSettings(this, session, prefs).populate(column)
         val dialog = AlertDialog.Builder(this).setTitle("Voix et confort")
             .setView(ScrollView(this).apply { addView(column) }).setPositiveButton("Appliquer et fermer") { _, _ -> }.create()
-        dialog.setOnDismissListener { if (!closed) { session.refreshSettings(); applyCaptionStyle(); applyWindowMode() } }
+        dialog.setOnDismissListener { if (!closed) { if (!session.isPreparing) session.refreshSettings(); applyCaptionStyle(); applyWindowMode() } }
         dialog.show()
     }
     private fun voiceDialog() {

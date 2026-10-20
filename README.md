@@ -1,41 +1,29 @@
-# Sous-titres en voix — édition Cinéma 0.2
+# Sous-titres en voix — Cinéma 0.3 (test)
 
-Cette branche `cinema-0.2` est une édition de test distincte. La branche `main` et l’application 0.1 restent intactes. L’identifiant `fr.soustitresvoix.player.cinema` permet l’installation à côté de la version initiale ; ses préférences sont séparées.
+Édition parallèle à 0.2 : application `fr.soustitresvoix.player.cinema3`, branche `cinema-0.3`. Conserver l’ancienne application. Le workflow Cinema 0.3 ne publie l’APK qu’après compilation, lint, contrôle du manifeste, signature et tests sur Android 36 réussis. Les résultats exécutés restent dans Actions ; aucune promesse zéro bug.
 
-## Installer et utiliser
+## Premier essai
 
-Le workflow **Cinema - verifier et compiler** publie `SousTitresVoix-Cinema-APK` uniquement après réussite des contrôles, du lint, de la compilation et des tests instrumentés. Consulter l’exécution correspondante dans Actions. Extraire l’APK de l’artefact puis l’installer sur Android. Ne pas désactiver Play Protect.
+Choisir une voix, ouvrir la démonstration, activer « Plein écran cinéma », puis « Étirement intégral ». Le zoom est remis à 100 %, les proportions changent, aucun recadrage automatique. Dans Image / zoom, les modes sont explicitement distingués et les transformations accidentelles verrouillées. L’analyse des marges encodées est facultative, avec aperçu et confirmation avant traitement. Les filtres visuels SDR sont facultatifs et comparables à l’original.
 
-Dans l’application : ouvrir une vidéo, choisir ses sous-titres textuels, choisir une voix de même langue, puis Lire et **Plein écran cinéma**. Un toucher affiche les commandes superposées. Retour déverrouille d’abord, puis quitte le plein écran ; il ne ferme pas immédiatement la vidéo.
+Dans Voix / écran : choisir Adaptatif, vitesse de base 100 %, plafond 180 % comme point de départ, tolérance 600 ms. Le mode estime la durée même sans cache ; il utilise des mesures lorsqu’un WAV est préparé. Si le délai ne suffit pas, le film attend encore plutôt que perdre des mots. Préparer cinq minutes ou toute la vidéo est une opération explicite, annulable ; lecture en pause pendant la préparation. Le cache reste limité et ne garantit pas la conservation de toute une œuvre trop volumineuse.
 
-## Fonctionnalités de cette branche
+## Documents
 
-- Plein écran immersif, commandes superposées, masquage réglable (0 = jamais), orientation système/paysage/verrouillée et zones sûres pour les boutons et sous-titres.
-- Adapter (image entière), Remplir (recadrage), Étirer (déformation), zoom et recentrage. Gestes facultatifs et boutons équivalents ; désactivation des gestes personnalisés avec l’exploration tactile TalkBack.
-- Réglages rapides des volumes sans pause de la vidéo. La voix en cours garde son volume jusqu’au prochain segment.
-- Moteur de synthèse vocale choisi uniquement pour cette application, sans changement des paramètres de TalkBack ; choix parmi les voix locales installées.
-- Modes Confort et Continu conservés ; mode Adaptatif avec accélération plafonnée lorsque durée audio et intervalle du sous-titre sont connus. Sinon, vitesse normale et pause de confort. Aucun résumé ni suppression automatique du dialogue.
-- Préparation par `synthesizeToFile` des sous-titres déjà chargés, cache local de 16 à 256 Mio, 1 à 12 segments anticipés. Synthèse directe prioritaire et repli direct si le moteur ne fournit pas un WAV compatible. Il ne s’agit pas d’une préparation garantie de tout le film.
-- Reprise de la réplique entière, du segment interrompu ou par commande explicite. Répétition sans conserver un doublon dans la file.
-- Baisse du son du film : profondeur, durée de baisse, remontée et délai entre répliques réglables.
-- Filtres facultatifs des crochets, étiquettes de locuteur en majuscules, lignes musicales explicitement marquées, notes de traduction explicites. Aperçu original/texte vocalisé ; le texte affiché reste intact.
-- Identités temporelles de sous-titres lorsque disponibles, pour distinguer la présentation répétée de la même occurrence et une réplique identique plus tard. Limites explicites de mémoire pour l’index anticipé.
-- Diagnostic local : décodeur choisi, images abandonnées, CPU et mémoire du processus du lecteur, température de batterie et état thermique Android, temps de synthèse et cache. Les mesures n’incluent pas automatiquement un moteur vocal externe. Aucun accès NPU/GPU vocal n’est présumé.
+- `docs/REVISION_03.md` : changements exacts, limites et périmètre de validation.
+- `docs/VOIX_CATALOGUE_2026.md` : catalogue documentaire de moteurs, modèles et passerelles, liens primaires, dates et tailles connues.
+- `docs/ETUDE_ACCELERATION.md` : GPU/NPU, preuves nécessaires et fonctions non intégrées.
+- `docs/TESTS_TELEPHONE.md` : parcours d’essai initial, à compléter par les scénarios 0.3.
 
-## Voix et téléchargements
+## Compilation
 
-SherpaTTS : https://f-droid.org/packages/org.woheller69.ttsengine/
+Java 17, Gradle 8.13, SDK 36, Build Tools 36.0.0, Kotlin 2.2.21, AGP 8.11.1, Media3 1.11.1. FFmpeg ne sert qu’à générer la démonstration synthétique sur le serveur de compilation.
 
-Acapela TTS Voices (éditeur) : https://www.acapela-group.com/fr/solutions/acapela-tts-voices-for-google-play/
+```
+gradle --no-daemon :core:test :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+gradle --no-daemon :app:connectedDebugAndroidTest
+```
 
-Synthèse Google : https://play.google.com/store/apps/details?id=com.google.android.tts
+Les tests de la 0.2 sont conservés. Nouveaux contrôles : ponctuation, échéances et répétitions, persistance et intégrité du cache, détection prudente des marges, indexation MKV/SRT, vitesse transmise au vrai service TTS de test, verrouillage du cadrage, effets SDR et traitement audio PCM. Les voix externes réelles, TalkBack complet, HDR et performances du OnePlus restent à mesurer sur l’appareil. Pas de nouveau modèle vocal neuronal ou backend NPU intégré.
 
-Installer le moteur, ouvrir celui-ci et télécharger une voix française, puis revenir dans **Réglages de la voix et du confort → Choisir le moteur vocal de CE lecteur → Actualiser les moteurs et les voix → Choisir une voix hors ligne**. SherpaTTS propose la gestion de langues et des modèles Piper/Coqui. Un modèle ONNX isolé n’est pas directement importable par ce lecteur. La qualité sonore doit être comparée à l’écoute sur le téléphone cible.
-
-## Tests et limites
-
-Les tests de régression du noyau initial sont conservés. La suite Cinéma ajoute 31 contrôles : segmentation/reprise, filtres, identités, plafonnement adaptatif, WAV et éviction du cache. Les tests Android ajoutent la géométrie réelle du plein écran, les barres système en paysage, la conservation du lecteur, la prélecture MKV, les réglages rapides et un service TTS de test qui produit un PCM synthétique. Ce dernier prouve le chemin synthèse/cache/lecture, pas la qualité d’une voix naturelle. Les résultats effectivement exécutés sont dans les rapports de chaque workflow.
-
-Ni OCR, ni traduction, ni LibVLC, ni envoi de films sur Internet. Pas de lecture en arrière-plan dans cette version. Les sous-titres en images/incrustés et les codecs non disponibles restent des limites. Le fonctionnement complet avec TalkBack, la consommation et la qualité des moteurs vocaux du OnePlus doivent être évalués sur ce téléphone, pas déduits d’un émulateur.
-
-Signature debug pour essais privés : aucune clé privée n’est versionnée. La clé peut changer entre builds. Ne pas présenter cette édition comme une version de production. Prévoir une signature stable hors du dépôt avant des mises à jour suivies.
+Le lecteur ne demande ni Internet, ni microphone, ni caméra, ni permission générale de stockage. Les pages du catalogue ne s’ouvrent dans le navigateur que sur demande. Un moteur vocal externe peut avoir ses propres permissions. Version debug pour essais privés, aucune clé privée dans le dépôt.

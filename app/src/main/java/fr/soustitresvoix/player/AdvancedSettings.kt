@@ -58,26 +58,36 @@ class AdvancedSettings(private val activity: Activity, private val session: Play
                 .onFailure { notice("Ouvre le moteur vocal depuis la liste des applications Android.") }
         })
         column.addView(button("Actualiser les moteurs et les voix") { session.pause(); session.speech.retry() })
-        column.addView(button("Télécharger d’autres moteurs : sources officielles") {
-            val labels = arrayOf("SherpaTTS — F-Droid (modèles locaux Piper/Coqui)",
-                "Acapela TTS Voices — éditeur (voix payantes possibles)", "Synthèse vocale Google — Google Play")
-            val links = arrayOf("https://f-droid.org/packages/org.woheller69.ttsengine/",
-                "https://www.acapela-group.com/fr/solutions/acapela-tts-voices-for-google-play/",
-                "https://play.google.com/store/apps/details?id=com.google.android.tts")
-            AlertDialog.Builder(activity).setTitle("Ouvre le navigateur ; aucun téléchargement automatique")
-                .setItems(labels) { _, index -> runCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(links[index]))) } }
-                .setNegativeButton("Fermer", null).show()
-        })
+        column.addView(button("Catalogue des moteurs et modèles — sources vérifiées") { VoiceCatalogue.show(activity) })
+        column.addView(button("Décodeurs disponibles / secours logiciel") { CodecTools.show(activity, session) })
         column.addView(text("Télécharge une voix DANS son moteur, puis choisis ce moteur ici et une voix hors ligne. Un fichier de modèle isolé ne s’installe pas directement dans ce lecteur. La qualité et l’accélération CPU/GPU/NPU dépendent du moteur choisi."))
         column.addView(text("Adaptation, préparation et reprise"))
-        number(column, "Accélération maximale du mode adaptatif", "adaptiveMax", 125, 100, 160, 5, "%")
-        column.addView(text("Le mode adaptatif utilise la durée de l’audio préparé quand elle est disponible. Sinon, il conserve la vitesse normale et la pause de confort. Aucun mot n’est résumé ou supprimé."))
+        number(column, "Accélération maximale du mode adaptatif", "adaptiveMax", 180, 100, 250, 5, "%")
+        column.addView(text("Adaptatif : durée mesurée pour le cache ; estimation calibrée en lecture directe. Budget partagé entre les segments, accélération plafonnée et retard maximal choisi. Les pauses de ponctuation ne sont pas supprimées. Une pause reste possible au-delà du plafond."))
         check(column, "Préparer les prochaines phrases dans un cache local", "cache", true)
-        number(column, "Limite du cache", "cacheMiB", 128, 16, 256, 16, "Mio")
-        number(column, "Segments préparés à l’avance", "lookAheadCount", 6, 1, 12, 1, "segments")
-        column.addView(button("Préparation étendue : 256 Mio et 12 segments") {
-            prefs.putInt("cacheMiB", 256); prefs.putInt("lookAheadCount", 12); prefs.putBool("cache", true)
-            notice("Préparation étendue enregistrée. Les tâches anticipées restent suspendues en cas d’état thermique sévère. Rouvre les réglages pour actualiser les valeurs affichées.")
+        number(column, "Limite du cache", "cacheMiB", 256, 16, 2048, 64, "Mio")
+        number(column, "Segments préparés à l’avance", "lookAheadCount", 64, 1, 512, 16, "segments")
+        number(column, "Budget d’audio anticipé estimé", "lookAheadSeconds", 45, 5, 600, 5, "s")
+        number(column, "Retard vocal maximal après le sous-titre", "allowedLagMs", 600, 0, 2000, 100, "ms")
+        column.addView(button("Préparer les 5 prochaines minutes") { session.prepareRange(300) })
+        column.addView(button("Indexer et préparer toute la vidéo") {
+            AlertDialog.Builder(activity).setTitle("Préparation locale complète")
+                .setMessage("La vidéo sera mise en pause. Une lecture séquentielle du fichier est nécessaire pour indexer les pistes intégrées, sans décoder la vidéo. Le cache reste limité : s’il est trop petit, les anciens segments sont évincés. L’écran doit rester ouvert. Aucun fichier personnel n’est envoyé.")
+                .setPositiveButton("Lancer") { _, _ -> session.prepareRange(null) }.setNegativeButton("Annuler",null).show()
+        })
+        column.addView(button("État de l’indexation et de la préparation") { notice("${session.indexingStatus}\n${session.speech.preparationStatus}") })
+        column.addView(button("Annuler la préparation") { session.cancelPreparation() })
+        column.addView(button("Choisir le profil de préparation") {
+            AlertDialog.Builder(activity).setTitle("Paramètres réels — aucun NPU activé artificiellement")
+                .setItems(arrayOf("Économie : 15 s, 64 Mio, 32 segments max", "Équilibré : 45 s, 256 Mio, 128 segments max", "Intensive : 180 s, 1 024 Mio, 512 segments max")) { _, i ->
+                    prefs.putInt("performanceProfile",i); prefs.putBool("cache",true)
+                    prefs.putInt("lookAheadSeconds",intArrayOf(15,45,180)[i]); prefs.putInt("cacheMiB",intArrayOf(64,256,1024)[i])
+                    prefs.putInt("lookAheadCount",intArrayOf(32,128,512)[i]); notice("Profil enregistré. Rouvre ce panneau pour actualiser les nombres. Le traitement vocal externe et ses processeurs restent gérés par ce moteur.")
+                }.setNegativeButton("Fermer",null).show()
+        })
+        column.addView(button("Modèle du moteur mis à jour : invalider les anciennes voix préparées") {
+            prefs.putInt("modelRevision",prefs.int("modelRevision",0,0,99999)+1); session.refreshSettings()
+            notice("Nouvelle identité de cache. À utiliser lorsqu’un modèle est remplacé DANS un moteur sans mise à jour de son application ; Android ne fournit pas forcément l’identité de ce modèle interne.")
         })
         column.addView(button("Vider le cache vocal") { session.pause(); session.speech.clearCache(); notice("Nettoyage du cache demandé. Les vidéos originales ne sont pas modifiées.") })
         column.addView(button("Choisir la reprise après Pause") {
@@ -90,6 +100,8 @@ class AdvancedSettings(private val activity: Activity, private val session: Play
         number(column, "Durée de baisse du film", "duckAttack", 160, 0, 2000, 40, "ms")
         number(column, "Durée de remontée du film", "duckRelease", 500, 0, 2000, 100, "ms")
         number(column, "Attente avant remontée entre deux répliques", "duckHold", 350, 0, 2000, 50, "ms")
+        check(column, "Expérimental : atténuer surtout la bande 250–3 200 Hz du film pendant la voix (PCM16)", "spectralDucking")
+        column.addView(text("Ce filtre modifie aussi la musique : ce n’est pas une séparation des dialogues. Désactivé par défaut. Comparer à la baisse uniforme avant de le garder."))
         column.addView(text("Filtres facultatifs — l’affichage original reste intact"))
         check(column, "Ignorer les étiquettes MAJUSCULES suivies de deux-points", "skipSpeakers")
         check(column, "Ignorer les lignes commençant par ♪ ou ♫", "skipSongs")
@@ -108,6 +120,13 @@ class AdvancedSettings(private val activity: Activity, private val session: Play
         check(column, "Glissement vertical : luminosité à gauche, son du film à droite", "gestureLevels", true)
         check(column, "Pincement pour zoomer, puis glissement pour déplacer l’image", "gestureZoom", true)
         column.addView(text("Avec l’exploration tactile TalkBack, ces gestes sont désactivés et les commandes ne disparaissent pas automatiquement. Retour déverrouille d’abord, puis quitte le plein écran. Le mode Adapter conserve l’image entière."))
+        check(column, "Adapter la cadence d’affichage si transition sans coupure disponible", "matchFrameRate", true)
+        column.addView(button("Banc d’essai local : six extraits reproductibles") { session.benchmark() })
+        column.addView(button("Copier le diagnostic complet") {
+            val clipboard=activity.getSystemService(android.content.ClipboardManager::class.java)
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Diagnostic local",session.diagnostics()))
+            notice("Diagnostic copié à ta demande ; aucun dialogue ou nom de fichier inclus.")
+        })
         column.addView(button("Mesures réelles de cette session") { showDiagnostics() })
     }
     private fun notice(message: String) {

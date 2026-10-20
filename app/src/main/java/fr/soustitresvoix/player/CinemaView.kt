@@ -100,6 +100,7 @@ class CinemaView(
         tools.addView(button("Reprendre la voix") { session.resumeVoice() })
         tools.addView(button("Sous-titres") { subtitles() })
         tools.addView(button("Audio") { audioTracks() })
+        tools.addView(button("Étirement intégral") { setFramingMode(2); tell("Image entière étirée — recadrage accidentel bloqué") })
         tools.addView(button("Image / zoom") { imageDialog() })
         tools.addView(button("Volumes rapides") { QuickMixDialog.show(activity, session, prefs) })
         tools.addView(button("Voix / écran") { settings() })
@@ -129,10 +130,12 @@ class CinemaView(
         }
         val scale = ScaleGestureDetector(activity, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
-                scaling = true; dragSeek = null; return !locked && prefs.bool("gestureZoom", true) && !accessibility.isTouchExplorationEnabled
+                scaling = true; dragSeek = null
+                if (prefs.protectFrame) { tell("Recadrage protégé : zoom bloqué"); return false }
+                return !locked && prefs.bool("gestureZoom", true) && !accessibility.isTouchExplorationEnabled
             }
             override fun onScale(detector: ScaleGestureDetector): Boolean {
-                zoom = (zoom * detector.scaleFactor).coerceIn(1f, 4f); applyImage(); tell("Zoom ${"%.1f".format(zoom)}×"); return true
+                setImageZoom(zoom * detector.scaleFactor); tell("Zoom ${"%.1f".format(zoom)}×"); return true
             }
         })
         val gesture = GestureDetector(activity, object : GestureDetector.SimpleOnGestureListener() {
@@ -183,6 +186,11 @@ class CinemaView(
                 MotionEvent.ACTION_CANCEL -> { dragSeek = null; touchActive = false; scheduleHide() }
             }
             scale.onTouchEvent(event); gesture.onTouchEvent(event); true
+        }
+        session.media?.let { media ->
+            val key = fr.soustitresvoix.core.SpeechTools.key("framing", media.uri)
+            val savedMode = prefs.int("frame-$key", prefs.int("imageMode", 0, 0, 2), 0, 2)
+            prefs.putInt("imageMode", savedMode)
         }
         applyImage(); refresh(); scheduleHide()
         addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateCaptionPosition() }
@@ -246,7 +254,24 @@ class CinemaView(
         main.removeCallbacks(clearFeedback); main.postDelayed(clearFeedback, 1000)
     }
     private val clearFeedback = Runnable { feedback.visibility = View.GONE }
+    internal fun setFramingMode(value: Int, authorizeCrop: Boolean = false): Boolean {
+        if (value !in 0..2) return false
+        if (value == 1 && prefs.protectFrame && !authorizeCrop) return false
+        prefs.putBool("protectFrame", value != 1)
+        prefs.putInt("imageMode", value); zoom=1f; dx=0f; dy=0f
+        session.media?.let { prefs.putInt("frame-${fr.soustitresvoix.core.SpeechTools.key("framing", it.uri)}", value) }
+        applyImage(); return true
+    }
+    internal fun setImageZoom(value: Float) {
+        if (prefs.protectFrame) { zoom=1f; dx=0f; dy=0f; tell("Protection active : aucune partie du cadre ne doit sortir de l’écran") }
+        else zoom=if (value.isFinite()) value.coerceIn(1f,4f) else 1f
+        applyImage()
+    }
     private fun applyImage() {
+        if (prefs.protectFrame) {
+            zoom=1f; dx=0f; dy=0f
+            if (prefs.int("imageMode",0,0,2)==1) prefs.putInt("imageMode",0)
+        }
         video.resizeMode = when (prefs.int("imageMode", 0, 0, 2)) {
             1 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
             2 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
@@ -258,10 +283,41 @@ class CinemaView(
     }
     fun imageDialog() {
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
-        fun mode(label: String, value: Int) { column.addView(button(label) { prefs.putInt("imageMode", value); zoom = 1f; dx = 0f; dy = 0f; applyImage() }) }
-        mode("Adapter : image entière", 0); mode("Remplir : recadrage", 1); mode("Étirer : proportions modifiées", 2)
-        column.addView(button("Zoom +") { zoom = (zoom + 0.25f).coerceAtMost(4f); applyImage() })
-        column.addView(button("Zoom −") { zoom = (zoom - 0.25f).coerceAtLeast(1f); applyImage() })
+        fun mode(label: String, value: Int) { column.addView(button(label) {
+            if (!setFramingMode(value)) AlertDialog.Builder(activity).setTitle("Autoriser la perte d’une partie du cadre ?")
+                .setMessage("Le mode recadré remplit l’écran en coupant une partie de l’image. Cela désactive la protection contre le recadrage accidentel.")
+                .setPositiveButton("Autoriser le recadrage") { _, _ -> setFramingMode(value, true) }
+                .setNegativeButton("Garder l’image entière",null).show()
+        }) }
+        mode("Image entière, proportions originales", 0)
+        mode("Tout l’écran — image entière étirée", 2)
+        mode("Tout l’écran, image recadrée", 1)
+        column.addView(CheckBox(activity).apply {
+            text="Protéger le cadre : bloquer zoom et déplacements accidentels"; textSize=17f; minHeight=dp(56); isChecked=prefs.protectFrame
+            setOnCheckedChangeListener { _, checked -> prefs.putBool("protectFrame", checked); applyImage() }
+        })
+        column.addView(button("Diagnostic du cadrage et des bandes noires") {
+            val format=session.player.videoFormat; val size=session.player.videoSize
+            val message="Vidéo codée : ${format?.width ?: 0} × ${format?.height ?: 0} pixels\n"+
+                "Vidéo déclarée : ${size.width} × ${size.height} ; rapport des pixels ${size.pixelWidthHeightRatio}\n"+
+                "Surface disponible : ${width} × ${height} pixels\nMode : ${prefs.int("imageMode",0,0,2)} (0 original, 1 recadré, 2 étiré), zoom ${zoom}×\n"+
+                "Protection : ${prefs.protectFrame} ; marges validées : ${session.visual.margins}\n"+
+                "Les bandes encodées font partie des images. Le poinçon et les coins physiques peuvent masquer de petites zones. Analyse facultative séparée, jamais automatique."
+            AlertDialog.Builder(activity).setTitle("Diagnostic de l’image").setMessage(message).setPositiveButton("Fermer",null).show()
+        })
+        column.addView(button("Analyser les marges encodées — aperçu obligatoire") { session.visual.showAnalysis(activity) { applyImage() } })
+        column.addView(button("Annuler toute suppression de marges") { session.visual.crop(fr.soustitresvoix.core.BlackBars.Margins()); applyImage() })
+        column.addView(button("Contraste léger + / original (SDR seulement)") {
+            if (session.visual.hdr) tell("HDR : traitement désactivé")
+            else session.visual.adjust(if (session.visual.contrast==0f) .12f else 0f,session.visual.brightness)
+        })
+        column.addView(button("Éclaircir légèrement / original (SDR seulement)") {
+            if (session.visual.hdr) tell("HDR : traitement désactivé")
+            else session.visual.adjust(session.visual.contrast,if (session.visual.brightness==0f) .06f else 0f)
+        })
+        column.addView(button("Comparer : tous les effets / image originale") { session.visual.toggleComparison(); tell(if (session.visual.bypass) "Image originale" else "Effets rétablis") })
+        column.addView(button("Zoom +") { setImageZoom(zoom + .25f) })
+        column.addView(button("Zoom −") { setImageZoom(zoom - .25f) })
         column.addView(button("Recentrer / réinitialiser") { zoom = 1f; dx = 0f; dy = 0f; applyImage() })
         column.addView(button("Déplacer l’image à gauche") { dx -= dp(40); applyImage() })
         column.addView(button("Déplacer l’image à droite") { dx += dp(40); applyImage() })

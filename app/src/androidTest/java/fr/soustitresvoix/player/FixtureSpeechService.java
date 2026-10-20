@@ -36,6 +36,10 @@ public final class FixtureSpeechService extends TextToSpeechService {
     @Override public int onLoadVoice(String name) { return onIsValidVoiceName(name); }
     @Override protected void onSynthesizeText(SynthesisRequest request, SynthesisCallback callback) {
         cancelled = false;
+        // The 0.3 direct-path regression requires the rate to reach the actual service,
+        // not merely a UI field. This check exists only in the instrumentation APK.
+        if (request.getCharSequenceText().toString().startsWith("Cette longue phrase doit accélérer sans cache")
+                && request.getSpeechRate() < 175) { callback.error(); return; }
         if (callback.start(16000, AudioFormat.ENCODING_PCM_16BIT, 1) != TextToSpeech.SUCCESS) return;
         byte[] silence = new byte[Math.max(2, callback.getMaxBufferSize())];
         int remaining = 32000;

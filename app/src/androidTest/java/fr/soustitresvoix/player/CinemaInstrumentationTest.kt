@@ -96,7 +96,7 @@ class CinemaInstrumentationTest {
         }
         try {
             waitFor("Fixture TTS service did not initialize") { speech!!.isReady }
-            instrument.runOnMainSync { speech!!.prepareAhead(listOf("Bonjour. Ceci est un test.")) }
+            instrument.runOnMainSync { speech!!.clearCache(); speech!!.prepareAhead(listOf("Bonjour. Ceci est un test.")) }
             waitFor("synthesizeToFile did not produce a validated WAV") { speech!!.preparedCount >= 1 }
             instrument.runOnMainSync { speech!!.speak("fixture-play", "Bonjour. Ceci est un test.", 100, true) }
             assertTrue("Cached audio did not complete", done.await(15, TimeUnit.SECONDS))
@@ -160,7 +160,7 @@ class CinemaInstrumentationTest {
         }
         try {
             waitFor("Fixture did not initialize") { speech!!.isReady }
-            instrument.runOnMainSync { speech!!.prepareAhead(listOf("Bonjour.")) }
+            instrument.runOnMainSync { speech!!.clearCache(); speech!!.prepareAhead(listOf("Bonjour.")) }
             waitFor("Fixture did not produce cached audio") { speech!!.preparedCount > 0 }
             instrument.runOnMainSync {
                 speech!!.speak("old", "Bonjour."); speech!!.stop(); speech!!.speak("new", "Bonjour.")

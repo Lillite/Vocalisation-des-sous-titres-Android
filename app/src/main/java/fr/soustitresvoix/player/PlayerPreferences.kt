@@ -45,11 +45,14 @@ class PlayerPreferences(context: Context) {
     fun putInt(key: String, value: Int) { p.edit().putInt(key, value).apply() }
     fun bool(key: String, default: Boolean = false) = p.getBoolean(key, default)
     fun putBool(key: String, value: Boolean) { p.edit().putBoolean(key, value).apply() }
-    val adaptiveMax get() = int("adaptiveMax", 125, 100, 160) / 100f
+    val adaptiveMax get() = int("adaptiveMax", 180, 100, 250) / 100f
     val resumePolicy get() = NarrationMachine.ResumePolicy.values()[int("resumePolicy", 0, 0, 2)]
     val cacheEnabled get() = bool("cache", true)
-    val cacheBytes get() = int("cacheMiB", 128, 16, 256).toLong() * 1024 * 1024
-    val lookAheadCount get() = int("lookAheadCount", 6, 1, 12)
+    val cacheBytes get() = int("cacheMiB", 256, 16, 2048).toLong() * 1024 * 1024
+    val lookAheadCount get() = int("lookAheadCount", 64, 1, 512)
+    val lookAheadSeconds get() = int("lookAheadSeconds", 45, 5, 600)
+    val allowedLagMs get() = int("allowedLagMs", 600, 0, 2000)
+    val protectFrame get() = bool("protectFrame", true)
     val filters get() = fr.soustitresvoix.core.SpeechTools.Filters(skipDescriptions,
         bool("skipSpeakers"), bool("skipSongs"), bool("skipNotes"))
     fun lastMedia(): SavedMedia? {

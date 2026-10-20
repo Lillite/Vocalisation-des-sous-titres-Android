@@ -1,0 +1,213 @@
+{
+  "verified": "2026-10-20",
+  "scope": "Catalogue documentaire étendu, non exhaustif. Provenance primaire consultée ; moteurs externes non essayés sur le OnePlus. Les rubriques historiques, passerelles, sources et modèles ne sont pas comptées comme moteurs directement compatibles.",
+  "entries": [
+    {
+      "name": "SherpaTTS",
+      "kind": "Moteur Android — local",
+      "languages": "Français et autres langues selon modèle",
+      "status": "APK F-Droid ; modèles à télécharger dans Manage Languages",
+      "size": "APK F-Droid 3.4 : 86 Mio ; modèles supplémentaires variables",
+      "url": "https://f-droid.org/packages/org.woheller69.ttsengine/",
+      "notes": "Piper/Coqui via sherpa-onnx. Télécharger une voix dans le moteur, puis sélectionner ce moteur dans CE lecteur. La qualité dépend du modèle ; non testé ici sur OnePlus."
+    },
+    {
+      "name": "Sherpa-ONNX TTS Engine — Miro high",
+      "kind": "Moteur Android avec voix intégrée",
+      "languages": "Français (Miro)",
+      "status": "La page distingue explicitement Android TTS Engine APK et archive du modèle",
+      "size": "Taille variable : consulter le téléchargement arm64-v8a",
+      "url": "https://k2-fsa.github.io/sherpa/onnx/tts/all/French/vits-piper-fr_FR-miro-high.html",
+      "notes": "Choisir Android APK, arm64-v8a, Download. Le .tar.bz2 est un modèle, pas une application. Des APK différents peuvent partager un identifiant : ne pas présumer leur coexistence."
+    },
+    {
+      "name": "Sherpa-ONNX — catalogue de moteurs APK",
+      "kind": "Famille de moteurs Android — local",
+      "languages": "Nombreuses langues et modèles, dont français",
+      "status": "Index officiel de moteurs APK par modèle",
+      "size": "Dépend du modèle ; vérifier chaque fichier",
+      "url": "https://k2-fsa.github.io/sherpa/onnx/tts/apk-engine.html",
+      "notes": "Utiliser les APK de moteur TTS, pas les démonstrations ASR ou TTS. La famille n’est pas comptée comme des centaines de moteurs indépendants. Un changement d’APK peut remplacer le modèle précédent."
+    },
+    {
+      "name": "Synthèse vocale Google",
+      "kind": "Moteur Android — local ou réseau selon voix",
+      "languages": "Français et autres langues",
+      "status": "Distribution Google Play ; disponibilité selon appareil",
+      "size": "Taille et packs déterminés par Google Play",
+      "url": "https://play.google.com/store/apps/details?id=com.google.android.tts",
+      "notes": "Installer les données vocales françaises dans les réglages du moteur. Le lecteur ne sélectionne que les voix déclarées installées et utilisables sans réseau. Ce filtre n’est pas un audit du moteur externe."
+    },
+    {
+      "name": "Acapela TTS Voices",
+      "kind": "Moteur Android — voix locales payantes",
+      "languages": "Français et autres langues du catalogue",
+      "status": "Google Play ; essais et achats intégrés selon offre",
+      "size": "Application et données variables selon voix",
+      "url": "https://play.google.com/store/apps/details?id=com.acapelagroup.android.tts",
+      "notes": "Écouter la voix Android avant achat. Une démonstration Web peut différer de la version Android. Aucun achat automatique ; compatibilité réelle à vérifier sur le téléphone."
+    },
+    {
+      "name": "Vocalizer TTS — Code Factory",
+      "kind": "Moteur Android — voix locales payantes",
+      "languages": "Français France/Canada et autres langues",
+      "status": "Google Play ; vérifier l’essai et la compatibilité affichés",
+      "size": "Packs variables selon voix",
+      "url": "https://play.google.com/store/apps/details?id=es.codefactory.vocalizertts",
+      "notes": "Choisir une voix française et tester avant paiement. La présence sur Google Play ne prouve pas le fonctionnement de toutes les versions sur Android 16."
+    },
+    {
+      "name": "eSpeak NG / eSpeak Android",
+      "kind": "Moteur Android — local",
+      "languages": "Français et nombreuses autres langues",
+      "status": "APK F-Droid ; synthèse compacte, non comparable à une voix neuronale expressive",
+      "size": "F-Droid 1.52.0 : 9 Mio",
+      "url": "https://f-droid.org/packages/com.reecedunn.espeak/",
+      "notes": "Moteur de secours compact. Préférer une version arm64 récente plutôt que d’anciens APK uniquement 32 bits. Intelligibilité et naturalité sont deux critères distincts."
+    },
+    {
+      "name": "RHVoice",
+      "kind": "Moteur Android — local",
+      "languages": "Catalogue multilingue ; français à vérifier, ne pas le supposer",
+      "status": "Projet officiel avec distribution Android",
+      "size": "Variable selon voix",
+      "url": "https://github.com/RHVoice/RHVoice",
+      "notes": "Consulter les langues et le guide Android officiels. Installer le moteur puis les données de la langue. Ne pas choisir pour des sous-titres français sans voix française effectivement proposée."
+    },
+    {
+      "name": "NekoSpeak",
+      "kind": "Moteur Android — modèles locaux",
+      "languages": "Dépend des modèles Piper, Kokoro, Kitten, Pocket",
+      "status": "APK de l’auteur ; projet communautaire",
+      "size": "L’auteur indique 88 Mo arm64 pour 1.4.2, hors modèles optionnels ; version à vérifier",
+      "url": "https://github.com/siva-sub/NekoSpeak",
+      "notes": "Utiliser les Releases du projet. Choisir une voix française compatible ; les familles de modèles ne parlent pas toutes les mêmes langues. Ni qualité ni accélération NPU garanties."
+    },
+    {
+      "name": "HayaiTTS",
+      "kind": "Moteur Android — modèles locaux",
+      "languages": "Dépend du modèle ; catalogue multilingue",
+      "status": "APK dans les Releases de l’auteur",
+      "size": "Variable selon APK et modèles choisis",
+      "url": "https://github.com/HayaiApp/HayaiTTS",
+      "notes": "Gestion de plusieurs familles de modèles. Télécharger une voix puis vérifier qu’elle apparaît dans la liste des voix locales du lecteur. Projet communautaire non certifié pour notre appareil."
+    },
+    {
+      "name": "Kokoly",
+      "kind": "Moteur Android — Kokoro local",
+      "languages": "Multilingue, dont français selon modèle fourni",
+      "status": "APK de l’auteur ; arm64",
+      "size": "L’auteur annonce environ 450 Mio de modèles ; téléchargement exact à vérifier",
+      "url": "https://github.com/loom7/kokoly",
+      "notes": "Choisir le moteur après l’installation des données. Les limites du modèle subsistent ; ne pas supposer qu’un fichier ONNX arbitraire peut être importé."
+    },
+    {
+      "name": "Supertonic for Android — DevGitPit",
+      "kind": "Moteur Android — local",
+      "languages": "Selon la version du modèle et les langues proposées",
+      "status": "L’auteur fournit des liens F-Droid et Google Play",
+      "size": "Variable selon version et modèles",
+      "url": "https://github.com/DevGitPit/supertonic-android",
+      "notes": "Implémentation TTS système documentée. La distribution F-Droid est arm64. Vérifier une voix française dans la version installée avant de remplacer la voix habituelle."
+    },
+    {
+      "name": "Piper Android — piper-tts-apps",
+      "kind": "Projet de moteur Android — local",
+      "languages": "Langues des modèles Piper, dont français selon voix",
+      "status": "Projet et service TTS documentés ; vérifier les APK effectivement publiés",
+      "size": "Non confirmé ; consulter Releases",
+      "url": "https://github.com/piper-tts-apps/piper-app-android/",
+      "notes": "Ne pas confondre le projet Android avec la commande Piper pour ordinateur. Un dépôt source n’est pas une garantie qu’un APK prêt à installer existe pour chaque version."
+    },
+    {
+      "name": "Maise",
+      "kind": "Projet de moteur Android — Kokoro local",
+      "languages": "Catalogue comprenant une voix française selon le projet",
+      "status": "Sources officielles ; vérifier la disponibilité des Releases",
+      "size": "Non confirmé ; modèles supplémentaires",
+      "url": "https://github.com/Mobile-Artificial-Intelligence/maise",
+      "notes": "Source identifiée ; installation prête à l’emploi non certifiée dans cet audit. Ne pas télécharger un APK d’un miroir inconnu pour compenser l’absence de Release."
+    },
+    {
+      "name": "Kokoro Offline TTS — expérimentation QNN",
+      "kind": "Moteur Android expérimental — local",
+      "languages": "Anglais ; ce n’est pas la recommandation pour le français",
+      "status": "APK / sources de l’auteur ; accélération testée par l’auteur sur un autre téléphone",
+      "size": "L’auteur annonce environ 1,4 Gio pour une édition avec contextes",
+      "url": "https://github.com/cedgeremek/kokoro-offline-tts-android",
+      "notes": "QNN ciblé notamment sur Galaxy S24 Ultra / Snapdragon 8 Gen 3 / HTP v75. Cela ne valide PAS le NPU du OnePlus 15. Ne pas importer un contexte compilé pour un autre matériel en supposant sa compatibilité."
+    },
+    {
+      "name": "Supertonic TTS — chukfinley",
+      "kind": "Prototype de moteur Android — sources",
+      "languages": "Selon modèle Supertonic",
+      "status": "Projet source ; ne pas présenter comme un APK certifié",
+      "size": "Dépend des modèles et de la compilation",
+      "url": "https://github.com/chukfinley/supertonic-tts",
+      "notes": "Alternative de développement, pas un moteur à recommander sans vérifier les Releases, signatures et la compatibilité. Ne pas confondre ses versions avec celles de DevGitPit."
+    },
+    {
+      "name": "Flite TTS Engine for Android",
+      "kind": "Moteur historique / sources",
+      "languages": "Principalement voix du catalogue Flite ; français non confirmé",
+      "status": "Ancien projet ; compatibilité Android récent et arm64 non confirmée",
+      "size": "Variable / non confirmé",
+      "url": "https://github.com/happyalu/Flite-TTS-Engine-for-Android",
+      "notes": "Référence historique, pas un premier choix pour OnePlus 15. Éviter les APK reconditionnés et ne pas désactiver les protections du téléphone."
+    },
+    {
+      "name": "ChineseTtsTflite",
+      "kind": "Projet Android spécialisé — local",
+      "languages": "Chinois ; pas de français annoncé ici",
+      "status": "Sources et anciennes Releases ; compatibilité actuelle non confirmée",
+      "size": "Variable / non confirmé",
+      "url": "https://github.com/benjaminwan/ChineseTtsTflite",
+      "notes": "Projet spécialisé, à distinguer d’un moteur multilingue. La présence de TensorFlow Lite ne prouve pas un calcul GPU ou NPU effectif."
+    },
+    {
+      "name": "Hear2Read",
+      "kind": "Moteur Android spécialisé",
+      "languages": "Langues indiennes",
+      "status": "Guide officiel Android ; disponibilité actuelle de la distribution à vérifier",
+      "size": "Variable selon voix",
+      "url": "https://hear2read.org/solution-android",
+      "notes": "Moteur et packs de langues séparés. Non recommandé pour le français. Distribution actuelle non suffisamment confirmée pour promettre une installation immédiate."
+    },
+    {
+      "name": "TTS Server Android — jing332",
+      "kind": "Passerelle Android, pas une voix autonome",
+      "languages": "Dépend du fournisseur et de la configuration",
+      "status": "Projet Android ; peut appeler des services réseau",
+      "size": "Variable ; modèles ou services externes",
+      "url": "https://github.com/jing332/tts-server-android",
+      "notes": "Des sous-titres pourraient être envoyés à un fournisseur. Ne pas importer de script inconnu ni de clés dans le lecteur. Une passerelle déclarée locale n’est pas nécessairement réellement hors ligne."
+    },
+    {
+      "name": "TalkifyTTS",
+      "kind": "Passerelle / moteur hybride Android",
+      "languages": "Dépend des services et modèles configurés",
+      "status": "Projet communautaire avec intégrations locales ou distantes",
+      "size": "Variable ; éventuels services payants",
+      "url": "https://github.com/LonePheasantWarrior/TalkifyTTS",
+      "notes": "Distinguer traitement local et distant avant utilisation. Pas de clé ni d’abonnement fourni. Le lecteur reste sans permission Internet ; cela ne bloque pas le réseau d’un moteur externe."
+    },
+    {
+      "name": "CerePlay / CereProc",
+      "kind": "Application vocale — intégration système à confirmer",
+      "languages": "Selon catalogue CereProc",
+      "status": "Application officielle Android ; ne pas la présenter sans preuve comme un moteur système",
+      "size": "Variable selon application et voix",
+      "url": "https://app.cereproc.com/cereplay/",
+      "notes": "La page consultée confirme une application vocale, pas à elle seule sa disponibilité dans le sélecteur TTS Android. Les anciennes voix CereProc en applications séparées sont distinctes. Tester sans achat d’abord."
+    },
+    {
+      "name": "Piper / Kokoro / Coqui / Supertonic : fichiers modèles",
+      "kind": "Modèles — pas des APK installables",
+      "languages": "Dépend du modèle exact",
+      "status": "À télécharger seulement via le moteur compatible ou le projet officiel",
+      "size": "De quelques dizaines à plusieurs centaines de Mo, parfois davantage ; exact non établi",
+      "url": "https://k2-fsa.github.io/sherpa/onnx/tts/index.html",
+      "notes": "Un .onnx, .bin, .tar.bz2 ou .zip de poids ne s’installe pas comme une application Android. Vérifier modèle, phonémiseur, tokens, licence et version du moteur. Le lecteur n’importe pas de modèle brut."
+    }
+  ]
+}

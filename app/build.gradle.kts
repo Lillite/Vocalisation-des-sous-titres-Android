@@ -25,11 +25,11 @@ android {
     compileSdk = 36
     buildToolsVersion = "36.0.0"
     defaultConfig {
-        applicationId = "fr.soustitresvoix.player.cinema"
+        applicationId = "fr.soustitresvoix.player.cinema3"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0-cinema-test"
+        versionCode = 3
+        versionName = "0.3.0-cinema-test"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets.getByName("main").res.srcDir(demoResources)
@@ -47,6 +47,7 @@ dependencies {
     implementation("androidx.activity:activity:1.11.0")
     implementation("androidx.media3:media3-exoplayer:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
+    implementation("androidx.media3:media3-effect:1.11.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test:core:1.6.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
