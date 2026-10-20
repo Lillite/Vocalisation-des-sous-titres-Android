@@ -29,7 +29,23 @@ class PlayerInstrumentationTest {
     }
     @Test fun labelledOpenControlIsVisibleAndLarge() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            onView(withId(R.id.open_video)).perform(scrollTo()).check(matches(isDisplayed()))
+            try {
+                onView(withId(R.id.open_video)).perform(scrollTo()).check(matches(isDisplayed()))
+            } catch (failure: Throwable) {
+                // Collect the actual focused window before ActivityScenario closes.
+                // This does not retry the interaction or change its assertions.
+                val instrument = InstrumentationRegistry.getInstrumentation()
+                runCatching {
+                    val command = "dumpsys window windows"
+                    val dump = android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                        instrument.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readText() }
+                    dump.lineSequence().filter { it.contains("Focus", true) || it.contains("Window #") ||
+                        it.contains("isOnScreen") || it.contains("mViewVisibility") }.forEach {
+                        android.util.Log.e("WindowFocusDiagnostic", it)
+                    }
+                }
+                throw failure
+            }
             scenario.onActivity { activity ->
                 val button = activity.findViewById<Button>(R.id.open_video)
                 assertEquals("Ouvrir une vidéo", button.text.toString())

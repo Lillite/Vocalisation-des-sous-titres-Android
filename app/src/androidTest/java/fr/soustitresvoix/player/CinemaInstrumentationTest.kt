@@ -27,11 +27,12 @@ class CinemaInstrumentationTest {
         fail(label)
     }
     private fun screenshot(name: String) {
-        val output = java.io.File(instrument.targetContext.getExternalFilesDir(null), "screenshots").apply { mkdirs() }
-        instrument.uiAutomation.takeScreenshot()?.let { bitmap ->
-            java.io.File(output, "$name.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
-            bitmap.recycle()
-        }
+        // The shell-owned directory survives the Gradle test APK uninstall.
+        // It is used only on the disposable emulator, never in production.
+        require(name.matches(Regex("[a-z-]+")))
+        val command = "mkdir -p /sdcard/Download/cinema03-tests; screencap -p /sdcard/Download/cinema03-tests/$name.png"
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(
+            instrument.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
     }
     @Test fun fullscreenReallyFillsContentAndControlsAreOverlays() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
