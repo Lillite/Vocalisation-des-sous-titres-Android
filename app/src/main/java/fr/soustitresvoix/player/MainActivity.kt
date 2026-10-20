@@ -192,6 +192,7 @@ class MainActivity : ComponentActivity() {
         // The preview must never inherit a crop chosen in the cinema view.
         // CinemaView restores the explicit per-video choice when entered again.
         playerView.resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+        session.visual.setFramingMode(0)
         playerView.subtitleView?.setPadding(0, 0, 0, 0)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(18, 18, 18)); setPadding(dp(8), dp(8), dp(8), dp(8))

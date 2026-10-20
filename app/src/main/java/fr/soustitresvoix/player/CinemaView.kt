@@ -320,6 +320,7 @@ class CinemaView(
             2 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
             else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
         }
+        session.visual.setFramingMode(prefs.int("imageMode", 0, 0, 2))
         dx = dx.coerceIn(-width * (zoom - 1) / 2, width * (zoom - 1) / 2)
         dy = dy.coerceIn(-height * (zoom - 1) / 2, height * (zoom - 1) / 2)
         video.videoSurfaceView?.apply { scaleX = zoom; scaleY = zoom; translationX = dx; translationY = dy }
@@ -345,10 +346,21 @@ class CinemaView(
         column.addView(label("Les deux modes « image entière » annulent aussi les marges précédemment retirées. Une nouvelle analyse peut ensuite proposer des marges à valider."))
         column.addView(button("Diagnostic du cadrage et des bandes noires") {
             val format=session.player.videoFormat; val size=session.player.videoSize
-            val ratio=if (size.height > 0) String.format(Locale.FRANCE,"%.3f",size.width * size.pixelWidthHeightRatio / size.height) else "inconnu"
+            // videoSize describes the processed output when effects are active.
+            // Keep source metadata separate so stretching cannot disguise its ratio.
+            val sourceWidth = format?.width ?: 0
+            val sourceHeight = format?.height ?: 0
+            val pixelRatio = format?.pixelWidthHeightRatio ?: 1f
+            val rotation = format?.rotationDegrees ?: 0
+            val sourceRatio = if (sourceWidth > 0 && sourceHeight > 0 && pixelRatio > 0f) {
+                val unrotated = sourceWidth * pixelRatio / sourceHeight
+                if (rotation == 90 || rotation == 270) 1f / unrotated else unrotated
+            } else null
+            val ratio = sourceRatio?.let { String.format(Locale.FRANCE,"%.3f",it) } ?: "inconnu"
             val framing=arrayOf("Image entière, proportions originales","Tout l’écran, image recadrée","Tout l’écran — image entière étirée")[prefs.int("imageMode",0,0,2)]
-            val message="Vidéo codée : ${format?.width ?: 0} × ${format?.height ?: 0} pixels\n"+
-                "Vidéo déclarée : ${size.width} × ${size.height} ; rapport des pixels ${size.pixelWidthHeightRatio} ; rapport d’affichage $ratio\n"+
+            val message="Vidéo codée : $sourceWidth × $sourceHeight pixels\n"+
+                "Proportions déclarées : rapport des pixels $pixelRatio ; rotation $rotation° ; rapport d’affichage $ratio\n"+
+                "Sortie du traitement vidéo : ${size.width} × ${size.height} pixels\n"+
                 "Surface disponible : ${width} × ${height} pixels\nMode : $framing ; zoom ${zoom}×\n"+
                 "Protection : ${prefs.protectFrame} ; marges validées : ${session.visual.margins}\n"+
                 "Les bandes encodées font partie des images. Le poinçon et les coins physiques peuvent masquer de petites zones. Analyse facultative séparée, jamais automatique."

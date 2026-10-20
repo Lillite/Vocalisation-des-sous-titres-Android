@@ -223,15 +223,27 @@ class Revision03AndroidTest {
             }
             // Read the composed screen, not merely SurfaceView's source buffer:
             // the latter could still contain pixels cropped off the display.
-            val image = requireNotNull(instrument.uiAutomation.takeScreenshot())
+            var image = requireNotNull(instrument.uiAutomation.takeScreenshot())
             try {
-                assertTrue(bounds.left >= 0 && bounds.top >= 0 && bounds.right <= image.width && bounds.bottom <= image.height)
+                fun isWithinScreen() = bounds.left >= 0 && bounds.top >= 0 &&
+                    bounds.right <= image.width && bounds.bottom <= image.height
                 fun colorAt(x: Float, y: Float) = image.getPixel(
                     bounds.left + (bounds.width() * x).toInt(), bounds.top + (bounds.height() * y).toInt())
                 fun red(c: Int) = Color.red(c) > 170 && Color.green(c) < 100 && Color.blue(c) < 100
                 fun green(c: Int) = Color.green(c) > 170 && Color.red(c) < 100 && Color.blue(c) < 100
                 fun blue(c: Int) = Color.blue(c) > 170 && Color.red(c) < 100 && Color.green(c) < 100
                 fun yellow(c: Int) = Color.red(c) > 170 && Color.green(c) > 170 && Color.blue(c) < 100
+                fun allCornersVisible() = isWithinScreen() && red(colorAt(.05f, .05f)) &&
+                    green(colorAt(.95f, .05f)) && blue(colorAt(.05f, .95f)) && yellow(colorAt(.95f, .95f))
+                // The decoder's first frame can precede the coalesced layout/effect update.
+                // Wait for its actual composed result; a fixed sleep would hide a stuck pipeline.
+                val deadline = android.os.SystemClock.elapsedRealtime() + 20_000
+                while (!allCornersVisible() && android.os.SystemClock.elapsedRealtime() < deadline) {
+                    image.recycle()
+                    Thread.sleep(80)
+                    image = requireNotNull(instrument.uiAutomation.takeScreenshot())
+                }
+                assertTrue(isWithinScreen())
                 assertTrue("Upper-left red marker was cropped or not rendered", red(colorAt(.05f, .05f)))
                 assertTrue("Upper-right green marker was cropped or not rendered", green(colorAt(.95f, .05f)))
                 assertTrue("Lower-left blue marker was cropped or not rendered", blue(colorAt(.05f, .95f)))
@@ -275,17 +287,32 @@ class Revision03AndroidTest {
                 waitFor("The external subtitle track was not selected") {
                     current!!.session.selectedTextId() == "external-subtitle" && current!!.session.speech.isReady
                 }
+                waitFor("The external track did not provide look-ahead under its canonical identity") {
+                    current!!.session.ahead.selected("external-subtitle").any { it.raw == "Une seule réplique externe." }
+                }
                 scenario.onActivity { a ->
+                    val selectedExternal = a.session.player.currentTracks.groups.first { group ->
+                        group.type == C.TRACK_TYPE_TEXT && (0 until group.length).any { group.isTrackSelected(it) }
+                    }
+                    val selectedIndex = (0 until selectedExternal.length).first { selectedExternal.isTrackSelected(it) }
+                    assertEquals("1:external-subtitle", selectedExternal.getTrackFormat(selectedIndex).id)
                     val internal = a.session.player.currentTracks.groups.first { group ->
                         group.type == C.TRACK_TYPE_TEXT && (0 until group.length).any { index ->
-                            group.isTrackSupported(index) && group.getTrackFormat(index).id != "external-subtitle"
+                            group.isTrackSupported(index) && !a.session.isExternalSubtitle(group.getTrackFormat(index))
                         }
                     }
-                    val index = (0 until internal.length).first { internal.isTrackSupported(it) && internal.getTrackFormat(it).id != "external-subtitle" }
-                    internalId = requireNotNull(internal.getTrackFormat(index).id)
+                    val index = (0 until internal.length).first {
+                        internal.isTrackSupported(it) && !a.session.isExternalSubtitle(internal.getTrackFormat(it))
+                    }
+                    assertEquals("0:3", internal.getTrackFormat(index).id)
+                    internalId = requireNotNull(a.session.subtitleIndexId(internal.getTrackFormat(index)))
+                    assertEquals("3", internalId)
                     a.session.selectTrack(C.TRACK_TYPE_TEXT, internal, index)
                 }
                 waitFor("The internal subtitle track was not selected") { current!!.session.selectedTextId() == internalId }
+                waitFor("The internal track did not provide look-ahead under its canonical identity") {
+                    current!!.session.ahead.selected(internalId).isNotEmpty()
+                }
                 scenario.onActivity { it.session.prepareRange(null) }
                 waitFor("Preparing the internal track indexed the attached sidecar instead") {
                     current!!.session.indexingStatus.startsWith("Indexation terminée") &&
@@ -293,9 +320,13 @@ class Revision03AndroidTest {
                 }
                 scenario.onActivity { a ->
                     val externalGroup = a.session.player.currentTracks.groups.first { group ->
-                        group.type == C.TRACK_TYPE_TEXT && (0 until group.length).any { group.getTrackFormat(it).id == "external-subtitle" }
+                        group.type == C.TRACK_TYPE_TEXT && (0 until group.length).any {
+                            a.session.isExternalSubtitle(group.getTrackFormat(it))
+                        }
                     }
-                    val index = (0 until externalGroup.length).first { externalGroup.getTrackFormat(it).id == "external-subtitle" }
+                    val index = (0 until externalGroup.length).first {
+                        a.session.isExternalSubtitle(externalGroup.getTrackFormat(it))
+                    }
                     a.session.selectTrack(C.TRACK_TYPE_TEXT, externalGroup, index)
                 }
                 waitFor("Could not return to the external track") { current!!.session.selectedTextId() == "external-subtitle" }
@@ -708,7 +739,54 @@ class Revision03AndroidTest {
     @Test fun gpuEffectsCanBeAppliedAndBypassedOnSdrVideo() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             var a:MainActivity?=null
-            scenario.onActivity{activity->a=activity;activity.session.prefs.narration=false;activity.session.refreshSettings();activity.session.open(SavedMedia("android.resource://${activity.packageName}/${R.raw.demonstration}","SDR"))}
+            scenario.onActivity { activity ->
+                a = activity
+                activity.session.player.addAnalyticsListener(androidx.media3.exoplayer.util.EventLogger())
+                activity.session.prefs.narration = false
+                activity.session.prefs.putInt("orientation", 0)
+                activity.session.refreshSettings()
+                activity.session.open(SavedMedia("android.resource://${activity.packageName}/${R.raw.demonstration}", "SDR"))
+                activity.setFullscreen(true)
+            }
+            fun frameBrightness(): Double {
+                val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+                val copied = CountDownLatch(1)
+                val result = java.util.concurrent.atomic.AtomicInteger(-1)
+                try {
+                    scenario.onActivity { activity ->
+                        val video = activity.findViewById<CinemaView>(R.id.cinema_root).getChildAt(0) as PlayerView
+                        val surface = video.videoSurfaceView as android.view.SurfaceView
+                        android.view.PixelCopy.request(surface, bitmap, { status ->
+                            result.set(status); copied.countDown()
+                        }, android.os.Handler(android.os.Looper.getMainLooper()))
+                    }
+                    assertTrue("The rendered surface could not be copied", copied.await(5, TimeUnit.SECONDS))
+                    assertEquals(android.view.PixelCopy.SUCCESS, result.get())
+                    var total = 0L
+                    for (y in 24 until 40) for (x in 24 until 40) {
+                        val pixel = bitmap.getPixel(x, y)
+                        total += Color.red(pixel) + Color.green(pixel) + Color.blue(pixel)
+                    }
+                    return total / (16.0 * 16 * 3)
+                } finally { bitmap.recycle() }
+            }
+            fun awaitChangedFrame(previous: Double, message: String): Double {
+                val end = android.os.SystemClock.elapsedRealtime() + 20_000
+                var latest = previous
+                var previousMatch: Double? = null
+                while (android.os.SystemClock.elapsedRealtime() < end) {
+                    latest = frameBrightness()
+                    // A black intermediate buffer is not a successful comparison.
+                    // Require two consecutive stable, non-black copies of the new image.
+                    if (latest > 8.0 && kotlin.math.abs(latest - previous) > 3.0) {
+                        if (previousMatch != null && kotlin.math.abs(latest - previousMatch) <= 1.0) return latest
+                        previousMatch = latest
+                    } else previousMatch = null
+                    Thread.sleep(80)
+                }
+                fail("$message (previous brightness=$previous, latest=$latest)")
+                return latest
+            }
             waitFor("SDR video not ready"){a!!.session.player.playbackState==Player.STATE_READY}
             scenario.onActivity { activity ->
                 val visual = activity.session.visual
@@ -717,15 +795,54 @@ class Revision03AndroidTest {
                 assertTrue(visual.detailedScalingActive)
                 visual.adjust(.12f,.06f); activity.session.play()
             }
-            waitFor("Video did not advance with effect pipeline"){a!!.session.player.currentPosition>1500}
+            try {
+                waitFor("Video did not advance with effect pipeline") { a!!.session.player.currentPosition > 1500 }
+            } catch (failure: AssertionError) {
+                var state = ""
+                scenario.onActivity { activity ->
+                    val player = activity.session.player
+                    state = "position=${player.currentPosition}, buffered=${player.bufferedPosition}, " +
+                        "state=${player.playbackState}, playWhenReady=${player.playWhenReady}, " +
+                        "error=${player.playerError}, machine=${activity.session.machine.snapshot()}"
+                }
+                throw AssertionError("The effect pipeline did not advance: $state", failure)
+            }
+            val processedBrightness = frameBrightness()
+            var pausedPosition = 0L
             scenario.onActivity { activity ->
+                activity.session.pause()
+                pausedPosition = activity.session.player.currentPosition
                 val visual = activity.session.visual
                 visual.toggleComparison()
                 assertFalse(visual.detailedScalingActive)
+            }
+            // The fixture is a static chart: a changed image here must come from
+            // the effect update, and cannot be explained by the movie advancing.
+            val originalBrightness = awaitChangedFrame(processedBrightness, "Bypass did not redraw the paused frame")
+            scenario.onActivity { activity ->
+                assertEquals(pausedPosition, activity.session.player.currentPosition)
+                assertFalse(activity.session.player.playWhenReady)
+                assertFalse(activity.session.machine.snapshot().wantsPlayback)
+                val visual = activity.session.visual
                 assertNull(activity.session.player.playerError)
                 visual.setRenderSize(7680, 4320); assertEquals("3840 × 2160", visual.scalingTarget)
                 visual.setRenderSize(4320, 7680); assertEquals("2160 × 3840", visual.scalingTarget)
                 visual.setRenderSize(0, 0); assertEquals("2160 × 3840", visual.scalingTarget)
+                visual.setRenderSize(1280, 720)
+                visual.adjust(-.08f, .12f)
+                visual.toggleComparison()
+                assertTrue(visual.detailedScalingActive)
+            }
+            awaitChangedFrame(originalBrightness, "New effects did not redraw the paused frame")
+            scenario.onActivity { activity ->
+                assertEquals(pausedPosition, activity.session.player.currentPosition)
+                assertFalse(activity.session.player.playWhenReady)
+                assertFalse(activity.session.machine.snapshot().wantsPlayback)
+                assertNull(activity.session.player.playerError)
+                activity.session.play()
+            }
+            waitFor("Playback did not resume after changing paused-frame effects") {
+                a!!.session.player.currentPosition > pausedPosition + 1000
             }
         }
     }

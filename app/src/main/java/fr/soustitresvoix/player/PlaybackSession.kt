@@ -24,8 +24,12 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
+import androidx.media3.exoplayer.video.VideoRendererEventListener
 import fr.soustitresvoix.core.NarrationMachine
 import fr.soustitresvoix.core.SpeechTools
 import fr.soustitresvoix.core.PlaybackBenchmark
@@ -85,6 +89,24 @@ class PlaybackSession(
     private var appliedFilters = prefs.filters
     val player: ExoPlayer = ExoPlayer.Builder(context,
         object : DefaultRenderersFactory(context) {
+            override fun buildVideoRenderers(
+                context: Context, extensionRendererMode: Int,
+                mediaCodecSelector: MediaCodecSelector, enableDecoderFallback: Boolean,
+                eventHandler: Handler, eventListener: VideoRendererEventListener,
+                allowedVideoJoiningTimeMs: Long, out: ArrayList<Renderer>
+            ) {
+                // This factory uses the default extension mode (OFF). The builder's
+                // AV1 parsing and frame scheduling defaults match Media3 1.11.1's
+                // DefaultRenderersFactory; retain its configured codec components.
+                out.add(CinemaVideoRenderer(MediaCodecVideoRenderer.Builder(context)
+                    .setCodecAdapterFactory(getCodecAdapterFactory())
+                    .setMediaCodecSelector(mediaCodecSelector)
+                    .setEnableDecoderFallback(enableDecoderFallback)
+                    .setAllowedJoiningTimeMs(allowedVideoJoiningTimeMs)
+                    .setEventHandler(eventHandler)
+                    .setEventListener(eventListener)
+                    .setMaxDroppedFramesToNotify(DefaultRenderersFactory.MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY)))
+            }
             override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioOutputPlaybackParams: Boolean): androidx.media3.exoplayer.audio.AudioSink =
                 androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(context)
                     .setAudioProcessors(arrayOf(bandProcessor)).build()
@@ -98,6 +120,7 @@ class PlaybackSession(
     private var fade: Runnable? = null
     private var lastCue: CueGroup? = null
     private var trackReset = false
+    private var hasAttachedSubtitle = false
     private var selectExternalWhenAvailable = false
     var media: SavedMedia? = null; private set
     private var focusHeld = false
@@ -175,7 +198,7 @@ class PlaybackSession(
                     for (group in tracks.groups) {
                         if (group.type != C.TRACK_TYPE_TEXT) continue
                         for (i in 0 until group.length) {
-                            if (group.getTrackFormat(i).id == "external-subtitle" && group.isTrackSupported(i)) {
+                            if (isExternalSubtitle(group.getTrackFormat(i)) && group.isTrackSupported(i)) {
                                 selectExternalWhenAvailable = false
                                 player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
                                     .clearOverridesOfType(C.TRACK_TYPE_TEXT)
@@ -214,8 +237,10 @@ class PlaybackSession(
         media = saved
         val item = MediaItem.Builder().setUri(Uri.parse(saved.uri))
         val path = saved.subtitlePath
-        selectExternalWhenAvailable = path != null
-        if (path != null && saved.subtitleMime != null && File(path).isFile) {
+        hasAttachedSubtitle = path != null && saved.subtitleMime != null && File(path).isFile
+        selectExternalWhenAvailable = hasAttachedSubtitle
+        if (hasAttachedSubtitle) {
+            checkNotNull(path)
             val sidecar = MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(File(path)))
                 .setMimeType(saved.subtitleMime).setLabel("Fichier de sous-titres ajouté")
                 .setSelectionFlags(C.SELECTION_FLAG_DEFAULT).setId("external-subtitle").build()
@@ -272,9 +297,24 @@ class PlaybackSession(
     }
     internal fun selectedTextId(): String? {
         for (group in player.currentTracks.groups) if (group.type == C.TRACK_TYPE_TEXT)
-            for (i in 0 until group.length) if (group.isTrackSelected(i)) return group.getTrackFormat(i).id
+            for (i in 0 until group.length) if (group.isTrackSelected(i)) return subtitleIndexId(group.getTrackFormat(i))
         return null
     }
+    /** IDs in the extractor index precede the outer sidecar merge performed by Media3. */
+    internal fun subtitleIndexId(format: Format): String? {
+        val id = format.id ?: return null
+        if (!hasAttachedSubtitle) return id
+        // Media3 1.11.1 MergingMediaPeriod prefixes Format.id as "childIndex:id".
+        // Our DefaultMediaSourceFactory has the container at 0 and one sidecar at 1.
+        // Strip only that known outer layer; a colon inside a container ID is data.
+        return when {
+            isExternalSubtitle(format) -> "external-subtitle"
+            id.startsWith("0:") -> id.substring(2).ifEmpty { null }
+            else -> id
+        }
+    }
+    internal fun isExternalSubtitle(format: Format): Boolean =
+        hasAttachedSubtitle && format.id == "1:external-subtitle"
     fun prepareTick() {
         if (closed || SystemClock.elapsedRealtime() - lastPreparationTick < 1000) return
         lastPreparationTick = SystemClock.elapsedRealtime()
@@ -624,6 +664,6 @@ class PlaybackSession(
         if (closed) return
         pause(); cancelIndexing(); indexingWorker.shutdownNow(); closed = true; mediaEpoch++; handler.removeCallbacksAndMessages(null)
         try { context.unregisterReceiver(noisy) } catch (_: IllegalArgumentException) { }
-        speech.close(); player.release()
+        visual.close(); speech.close(); player.release()
     }
 }

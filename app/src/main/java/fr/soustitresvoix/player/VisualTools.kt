@@ -16,6 +16,7 @@ import androidx.media3.effect.Brightness
 import androidx.media3.effect.Contrast
 import androidx.media3.effect.Crop
 import androidx.media3.effect.LanczosResample
+import androidx.media3.effect.Presentation
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -32,6 +33,22 @@ class VisualTools(private val session: PlaybackSession) {
     var detailedScaling = false; private set
     private var renderWidth = 0
     private var renderHeight = 0
+    private var framingMode = 0
+    private var closed = false
+    private val effectsHandler = Handler(Looper.getMainLooper())
+    private data class RenderPlan(
+        val margins: BlackBars.Margins = BlackBars.Margins(),
+        val contrast: Float = 0f,
+        val brightness: Float = 0f,
+        val scalingWidth: Int = 0,
+        val scalingHeight: Int = 0,
+        val framingMode: Int = 0,
+        val outputWidth: Int = 0,
+        val outputHeight: Int = 0
+    )
+    // The player is initialized with an empty effect list before prepare().
+    private var appliedPlan = RenderPlan()
+    private val updateEffects = Runnable { if (!closed) applyPendingEffects() }
     val detailedScalingActive: Boolean get() = detailedScaling && !hdr && !bypass && renderWidth > 0 && renderHeight > 0
     val scalingTarget: String get() = if (renderWidth > 0 && renderHeight > 0) "$renderWidth × $renderHeight" else "surface non mesurée"
     private var observedFormat: Format? = null
@@ -42,7 +59,11 @@ class VisualTools(private val session: PlaybackSession) {
         internal fun isHdrFormat(format: Format?): Boolean = format?.colorInfo?.colorTransfer in
             listOf(C.COLOR_TRANSFER_ST2084, C.COLOR_TRANSFER_HLG) || format?.sampleMimeType == "video/dolby-vision"
     }
-    fun reset() { observedFormat=null; margins = BlackBars.Margins(); contrast=0f; brightness=0f; bypass=false; detailedScaling=false; apply() }
+    fun reset() {
+        effectsHandler.removeCallbacks(updateEffects)
+        observedFormat=null; margins = BlackBars.Margins(); contrast=0f; brightness=0f; bypass=false; detailedScaling=false
+        apply()
+    }
     fun onInputFormatChanged(format: Format) { observedFormat = format; apply() }
     fun crop(value: BlackBars.Margins) {
         require(value.safe()); session.finishPlaybackBenchmark("Marges modifiées : essai interrompu")
@@ -60,6 +81,11 @@ class VisualTools(private val session: PlaybackSession) {
         session.finishPlaybackBenchmark("Redimensionnement graphique modifié : essai interrompu")
         detailedScaling = enabled; apply()
     }
+    internal fun setFramingMode(mode: Int) {
+        require(mode in 0..2)
+        if (framingMode == mode) return
+        framingMode = mode; apply()
+    }
     fun setRenderSize(width: Int, height: Int) {
         if (width <= 0 || height <= 0) return
         // Use the displayed area, not a fixed oversized buffer. The cap also
@@ -69,17 +95,51 @@ class VisualTools(private val session: PlaybackSession) {
         val nextHeight = (height / reduction).toInt().coerceAtLeast(1)
         if (nextWidth == renderWidth && nextHeight == renderHeight) return
         renderWidth = nextWidth; renderHeight = nextHeight
-        if (detailedScaling) apply()
+        if (detailedScaling || framingMode != 0) apply()
     }
     fun apply() {
+        if (closed) return
+        // A settings gesture or layout pass can change several values together.
+        // Only the final values are sent to the video thread, never stale plans.
+        effectsHandler.removeCallbacks(updateEffects)
+        effectsHandler.postDelayed(updateEffects, 32)
+    }
+    private fun applyPendingEffects() {
+        val adjustments = !hdr && !bypass
+        val sized = renderWidth > 0 && renderHeight > 0
+        val scale = adjustments && detailedScaling && sized
+        val frame = if (sized) framingMode else 0
+        val plan = RenderPlan(
+            margins = if (adjustments) margins else BlackBars.Margins(),
+            contrast = if (adjustments) contrast else 0f,
+            brightness = if (adjustments) brightness else 0f,
+            scalingWidth = if (scale) renderWidth else 0,
+            scalingHeight = if (scale) renderHeight else 0,
+            framingMode = frame,
+            outputWidth = if (frame != 0) renderWidth else 0,
+            outputHeight = if (frame != 0) renderHeight else 0
+        )
+        if (plan == appliedPlan) return
         val effects = mutableListOf<Effect>()
-        if (!hdr && !bypass) {
-            if (margins.nonzero()) effects += Crop(-1f+2*margins.left, 1f-2*margins.right, -1f+2*margins.bottom, 1f-2*margins.top)
-            if (contrast != 0f) effects += Contrast(contrast)
-            if (brightness != 0f) effects += Brightness(brightness)
-            if (detailedScalingActive) effects += LanczosResample.scaleToFit(renderWidth, renderHeight)
+        val crop = plan.margins
+        if (crop.nonzero()) effects += Crop(-1f+2*crop.left, 1f-2*crop.right, -1f+2*crop.bottom, 1f-2*crop.top)
+        if (plan.contrast != 0f) effects += Contrast(plan.contrast)
+        if (plan.brightness != 0f) effects += Brightness(plan.brightness)
+        if (plan.scalingWidth > 0) effects += LanczosResample.scaleToFit(plan.scalingWidth, plan.scalingHeight)
+        if (plan.framingMode != 0) {
+            // Media3's effect pipeline always fits its final output to the surface.
+            // Give it the requested geometry explicitly, including during bypass:
+            // PlayerView.RESIZE_MODE_FILL alone still produces letterboxing here.
+            effects += Presentation.createForWidthAndHeight(plan.outputWidth, plan.outputHeight,
+                if (plan.framingMode == 2) Presentation.LAYOUT_STRETCH_TO_FIT
+                else Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
         }
         session.player.setVideoEffects(effects)
+        appliedPlan = plan
+    }
+    fun close() {
+        closed = true
+        effectsHandler.removeCallbacksAndMessages(null)
     }
     fun showAnalysis(activity: Activity, updated: () -> Unit) {
         if (activity.isFinishing || activity.isDestroyed) return
