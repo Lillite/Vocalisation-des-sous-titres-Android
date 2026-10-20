@@ -1,27 +1,27 @@
 package fr.soustitresvoix.player
 
-import android.content.Context
 import androidx.media3.common.Effect
+import androidx.media3.common.Format
 import androidx.media3.common.VideoFrameProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
-import androidx.media3.exoplayer.video.PlaybackVideoGraphWrapper
-import androidx.media3.exoplayer.video.VideoFrameReleaseControl
+import androidx.media3.exoplayer.video.VideoSink
 
 /** Keeps effect changes from waiting for frames that cannot drain while paused. */
 @UnstableApi
 internal class CinemaVideoRenderer(builder: MediaCodecVideoRenderer.Builder) : MediaCodecVideoRenderer(builder) {
-    private var playbackVideoGraph: PlaybackVideoGraphWrapper? = null
+    private var inputSink: VideoSink? = null
     private var appliedEffects: List<Effect>? = null
 
-    override fun createPlaybackVideoGraphWrapper(
-        context: Context,
-        videoFrameReleaseControl: VideoFrameReleaseControl
-    ): PlaybackVideoGraphWrapper =
-        // Preserve Media3's clock, playlist mode, frame dropping and cache defaults.
-        super.createPlaybackVideoGraphWrapper(context, videoFrameReleaseControl).also {
-            playbackVideoGraph = it
-        }
+    override fun changeVideoSinkInputStream(
+        videoSink: VideoSink, inputType: Int, format: Format,
+        firstFrameReleaseInstruction: Int
+    ) {
+        // This public VideoSink is supplied through Media3's supported subclass
+        // hook. The renderer retains it across resets and owns its release.
+        inputSink = videoSink
+        super.changeVideoSinkInputStream(videoSink, inputType, format, firstFrameReleaseInstruction)
+    }
 
     override fun setVideoEffects(effects: List<Effect>) {
         // REDRAW is a command, not an effect list to register or deduplicate.
@@ -31,7 +31,7 @@ internal class CinemaVideoRenderer(builder: MediaCodecVideoRenderer.Builder) : M
         }
         if (effects == appliedEffects) return
 
-        val sink = playbackVideoGraph?.getSink(0)
+        val sink = inputSink
         if (sink?.isInitialized == true) {
             // Media3 1.11.1 registers a new input stream for a changed effect list.
             // Flush its queued output before registering: while paused those frames
@@ -44,5 +44,13 @@ internal class CinemaVideoRenderer(builder: MediaCodecVideoRenderer.Builder) : M
         val immutableEffects = effects.toList()
         super.setVideoEffects(immutableEffects)
         appliedEffects = immutableEffects
+    }
+
+    override fun onRelease() {
+        try {
+            super.onRelease()
+        } finally {
+            inputSink = null
+        }
     }
 }
