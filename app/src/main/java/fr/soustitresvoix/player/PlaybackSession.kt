@@ -53,6 +53,9 @@ class PlaybackSession(
     private var holdStarted = 0L
     val holdLatency = fr.soustitresvoix.core.LatencyWindow(2048)
     val playbackBenchmark = PlaybackBenchmark()
+    // Read the actual view only when starting a measurement. Preferences alone
+    // cannot describe the library preview, its zoom, or its translated surface.
+    internal var renderConfiguration: () -> List<String> = { listOf("surface non attachée") }
     private val benchmarkStorage = context.getSharedPreferences("playback-measurements", Context.MODE_PRIVATE)
     private val playbackTick = object : Runnable {
         override fun run() {
@@ -155,7 +158,10 @@ class PlaybackSession(
             override fun onPlaybackStateChanged(state: Int) {
                 apply(machine.setMediaReady(state == Player.STATE_READY || state == Player.STATE_ENDED))
                 if (state == Player.STATE_ENDED) {
-                    if (playbackBenchmark.active && playbackBenchmark.tick(benchmarkCounters())) saveBenchmarkReport()
+                    if (playbackBenchmark.active && playbackBenchmark.tick(benchmarkCounters())) {
+                        saveBenchmarkReport()
+                        pause()
+                    }
                     else finishPlaybackBenchmark("Fin du fichier avant la durée cible de l’essai")
                     apply(machine.cues(Long.MAX_VALUE, emptyList()))
                     onMessage("Fin de la vidéo.", false)
@@ -394,7 +400,8 @@ class PlaybackSession(
             prefs.bool("matchFrameRate",true).toString(), prefs.bool("preferSoftware").toString(),
             prefs.int("imageMode",0,0,2).toString(), visual.margins.toString(), visual.contrast.toString(),
             visual.brightness.toString(), visual.bypass.toString(), visual.detailedScaling.toString(),
-            visual.scalingTarget, player.playbackParameters.toString()) + tracks)
+            visual.scalingTarget, player.playbackParameters.toString(),
+            prefs.showSubtitles.toString(), prefs.subtitleSp.toString()) + tracks + renderConfiguration())
     }
     fun startPlaybackBenchmark(seconds: Int) {
         if (media == null || player.playbackState != Player.STATE_READY) {
@@ -580,7 +587,10 @@ class PlaybackSession(
             NarrationMachine.Effect.StopSpeech -> speech.stop()
             is NarrationMachine.Effect.Video -> player.playWhenReady = effect.playing
             is NarrationMachine.Effect.Duck -> setDucked(effect.enabled)
-            is NarrationMachine.Effect.Message -> onMessage(effect.text, effect.error)
+            is NarrationMachine.Effect.Message -> {
+                if (effect.error && !machine.snapshot().wantsPlayback) finishPlaybackBenchmark(effect.text)
+                onMessage(effect.text, effect.error)
+            }
         }
         onChanged()
     }

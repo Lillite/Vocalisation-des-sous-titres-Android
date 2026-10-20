@@ -26,10 +26,15 @@ class SpeechBandProcessor : BaseAudioProcessor() {
         return input
     }
     override fun queueInput(inputBuffer: ByteBuffer) {
+        // Media3 polls processors with the shared EMPTY_BUFFER, including before
+        // the first audio frame. replaceOutputBuffer(0) can return that same
+        // sentinel: copying it onto itself would throw even though it is empty.
+        if (!inputBuffer.hasRemaining()) return
         val channels = inputAudioFormat.channelCount
         val frameBytes = channels * 2
         // Leave an incomplete frame with the caller; never drop its remaining bytes.
         val bytes = inputBuffer.remaining() / frameBytes * frameBytes
+        if (bytes == 0) return
         val out = replaceOutputBuffer(bytes)
         val target=if (enabled && speaking) amount.coerceIn(0f,.65f) else 0f
         if (target == 0f && gain <= 0.000001f) {

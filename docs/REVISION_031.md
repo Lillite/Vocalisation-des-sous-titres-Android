@@ -36,9 +36,13 @@ Un état thermique Android sévère annule également l’indexation, pas seulem
 
 Le banc de lecture propose deux minutes et trente minutes à partir de la position courante. La durée cible suit la progression de la vidéo ; le temps réel inclut les attentes. Les résultats présentent les latences p50, p95, p99 et maximales, les attentes vocales, les accès au cache et les images abandonnées rapportées par le décodeur. Le temps CPU est celui du lecteur : il n’inclut pas le processus d’un moteur vocal externe.
 
-Un changement de fichier, de position, de réglage ou de disposition interrompt la mesure avec sa raison. Le rapport reste consultable après recréation de l’activité. Le retour au début de l’extrait n’entraîne pas de lecture automatique. Les identités du fichier et des réglages permettent de contrôler la comparaison, sans assimiler une même taille de cache à un contenu identique. Les mesures restent locales et l’envoi des diagnostics de lecture Media3 à la plateforme est désactivé.
+L’empreinte de comparaison inclut le cadrage réellement affiché, la taille de la surface, son zoom et ses déplacements, ainsi que l’affichage et la taille des sous-titres. Elle distingue donc une prévisualisation en proportions originales d’un plein écran ou de deux zooms différents, même lorsque certaines préférences enregistrées restent identiques.
+
+Un changement de fichier, de position, de réglage ou de disposition interrompt la mesure avec sa raison. Un arrêt interne du lecteur, notamment pour des sous-titres en images non vocalisables, clôture également la mesure. Si la durée cible coïncide avec la fin du fichier, la voix s’arrête avec l’extrait mesuré. Le rapport reste consultable après recréation de l’activité. Le retour au début de l’extrait n’entraîne pas de lecture automatique. Les identités du fichier et des réglages permettent de contrôler la comparaison, sans assimiler une même taille de cache à un contenu identique. Les mesures restent locales et l’envoi des diagnostics de lecture Media3 à la plateforme est désactivé.
 
 L’atténuation de bande vocale conserve sa sortie progressive. Une fois inactive, le PCM est recopié exactement, sans exécuter le filtre échantillon par échantillon. Le changement de format audio est appliqué au vidage approprié du processeur, pour ne pas utiliser les paramètres du format suivant sur les derniers buffers de l’ancien.
+
+La chaîne Media3 peut interroger ce processeur avec sa sentinelle audio vide avant la première trame. Cette entrée, ainsi qu’un fragment ne contenant aucune trame complète, est laissée intacte. Une régression exécutée avec le véritable `AudioProcessingPipeline` couvre ces appels : recopier la sentinelle sur elle-même provoquait une exception et arrêtait la vidéo.
 
 ## Catalogue
 
@@ -51,6 +55,8 @@ Une première passe locale avec Kotlin 2.2.21 a réussi 54 scénarios initiaux, 
 Le workflow exécute séparément les tests Gradle, Lint, la compilation des deux APK, les contrôles du manifeste et de la signature, puis les tests instrumentés. Il utilise un émulateur AOSP API 36, conserve les rapports XML, les captures et les diagnostics, et refuse une exécution vide ou des tests ignorés. La capture `stretch-four-corners.png` accompagne un test des pixels de l’image composée après un ancien zoom et recadrage.
 
 Les résultats Android doivent être lus dans [l’exécution associée au commit livré](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/cinema3.yml?query=branch%3Acinema-0.3.1) ; ce document ne les préjuge pas. Les preuves comprennent `source-commit.txt`, `build-console.txt`, `android-test-summary.json`, `signature.txt` et `apk-sha256.txt`. L’ancienne exécution 0.3 avait échoué avec une fenêtre ANR de SystemUI. Le premier candidat 0.3.1 avait ensuite été arrêté avant les tests par une condition de démarrage incompatible avec l’option sans animation ; elle accepte maintenant la propriété d’animation absente, tout en exigeant Android démarré, un service de paquets réactif et une fenêtre focalisée sans ANR. Aucun test n’a été supprimé ou ignoré pour contourner ces échecs.
+
+Une passe intermédiaire a exécuté 48 tests Android : 37 réussis et 11 échecs, sans test ignoré. Dix de ces échecs découlaient de l’exception du processeur audio vide ; une perte de focus après rotation restait distincte. Le harnais prévalide désormais le seul écran d’accueil immersif du système sur l’émulateur jetable et conserve aussi les sorties de diagnostic supplémentaires d’Espresso. Les assertions de rotation, de fermeture du dialogue et de lecture restent exécutées ; aucune fenêtre d’erreur ou d’ANR n’est fermée automatiquement. Seule la nouvelle passe complète permet de qualifier ces corrections.
 
 ## Limites à conserver dans toute présentation
 

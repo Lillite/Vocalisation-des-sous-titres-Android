@@ -592,6 +592,47 @@ class Revision03AndroidTest {
         processor.enabled=true;processor.speaking=true;input.clear();repeat(200){input.putShort((it*100-10000).toShort())};input.flip()
         processor.queueInput(input);assertEquals(400,processor.output.remaining());processor.reset()
     }
+    @Test fun speechBandPipelineHandlesEmptyPollsAndIncompleteFrames() {
+        val processor = SpeechBandProcessor()
+        val pipeline = androidx.media3.common.audio.AudioProcessingPipeline(
+            com.google.common.collect.ImmutableList.of<AudioProcessor>(processor))
+        pipeline.configure(AudioProcessor.AudioFormat(48_000, 2, C.ENCODING_PCM_16BIT))
+        pipeline.flush(AudioProcessor.StreamMetadata.DEFAULT)
+        try {
+            assertTrue(pipeline.isOperational)
+            // getOutput polls the processor with Media3's shared EMPTY_BUFFER.
+            // This must work before any real buffer has ever been allocated.
+            assertFalse(pipeline.output.hasRemaining())
+            pipeline.queueInput(AudioProcessor.EMPTY_BUFFER)
+            assertFalse(pipeline.output.hasRemaining())
+            pipeline.queueInput(ByteBuffer.allocateDirect(0).order(ByteOrder.nativeOrder()))
+            assertFalse(pipeline.output.hasRemaining())
+            assertEquals(0L, processor.processedSamples)
+
+            val partial = ByteBuffer.allocateDirect(3).order(ByteOrder.nativeOrder())
+                .apply { put(byteArrayOf(1, 2, 3)); flip() }
+            pipeline.queueInput(partial)
+            assertFalse(pipeline.output.hasRemaining())
+            assertEquals(0, partial.position())
+            assertEquals(3, partial.limit())
+            assertEquals(0L, processor.processedSamples)
+
+            val expected = byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8)
+            val input = ByteBuffer.allocateDirect(expected.size).order(ByteOrder.nativeOrder())
+                .apply { put(expected); flip() }
+            pipeline.queueInput(input)
+            val output = pipeline.output
+            val actual = ByteArray(output.remaining()).also { output.get(it) }
+            assertArrayEquals(expected, actual)
+            assertEquals(0, input.remaining())
+            assertEquals(4L, processor.processedSamples)
+            repeat(3) { assertFalse(pipeline.output.hasRemaining()) }
+            assertEquals(4L, processor.processedSamples)
+            pipeline.queueEndOfStream()
+            assertFalse(pipeline.output.hasRemaining())
+            assertTrue(pipeline.isEnded)
+        } finally { pipeline.reset() }
+    }
     @Test fun speechBandReleaseIsGradualThenReturnsToExactPcmBypass() {
         val format = AudioProcessor.AudioFormat(48_000, 2, C.ENCODING_PCM_16BIT)
         fun input(frames: Int): ByteBuffer = ByteBuffer.allocateDirect(frames * 4).order(ByteOrder.nativeOrder()).apply {
@@ -751,6 +792,72 @@ class Revision03AndroidTest {
             }
         }
     }
+    @Test fun benchmarkSettingsFingerprintIncludesTheActualSurfaceZoom() {
+        val context = instrument.targetContext
+        PlayerPreferences(context).apply {
+            enginePackage = instrument.context.packageName
+            narration = false
+            putInt("orientation", 0)
+        }
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                var current: MainActivity? = null
+                var first: fr.soustitresvoix.core.PlaybackBenchmark.Snapshot? = null
+                scenario.onActivity { a ->
+                    current = a
+                    a.session.open(SavedMedia("android.resource://${a.packageName}/${R.raw.demonstration}", "Même extrait, zoom différent"))
+                    a.setFullscreen(true)
+                    a.findViewById<CinemaView>(R.id.cinema_root).apply {
+                        assertTrue(setFramingMode(0))
+                        setFrameProtection(false)
+                        setImageZoom(1f)
+                    }
+                }
+                waitFor("The benchmark surface and voice configuration were not ready") {
+                    val a = current!!
+                    val cinema = a.findViewById<CinemaView>(R.id.cinema_root)
+                    val surface = (cinema.getChildAt(0) as PlayerView).videoSurfaceView
+                    val insets = a.window.decorView.rootWindowInsets
+                    a.session.player.playbackState == Player.STATE_READY && a.session.speech.isReady &&
+                        surface != null && surface.width > 0 && surface.height > 0 &&
+                        insets != null && !insets.isVisible(android.view.WindowInsets.Type.systemBars())
+                }
+                instrument.waitForIdleSync()
+                scenario.onActivity { a ->
+                    val video = a.findViewById<CinemaView>(R.id.cinema_root).getChildAt(0) as PlayerView
+                    assertEquals(AspectRatioFrameLayout.RESIZE_MODE_FIT, video.resizeMode)
+                    assertEquals(1f, video.videoSurfaceView!!.scaleX, 0f)
+                    a.session.startPlaybackBenchmark(120)
+                    assertTrue(a.session.playbackBenchmark.active)
+                    first = a.session.playbackBenchmark.snapshot()
+                    a.session.stopPlaybackBenchmark()
+                    a.session.seek(0)
+                }
+                waitFor("The identical benchmark start position was not ready") {
+                    current!!.session.player.playbackState == Player.STATE_READY &&
+                        current!!.session.player.currentPosition == 0L
+                }
+                scenario.onActivity { a ->
+                    val cinema = a.findViewById<CinemaView>(R.id.cinema_root)
+                    cinema.setImageZoom(2f)
+                    val video = cinema.getChildAt(0) as PlayerView
+                    assertEquals(AspectRatioFrameLayout.RESIZE_MODE_FIT, video.resizeMode)
+                    assertEquals(2f, video.videoSurfaceView!!.scaleX, 0f)
+                    assertEquals(2f, video.videoSurfaceView!!.scaleY, 0f)
+                    a.session.startPlaybackBenchmark(120)
+                    assertTrue(a.session.playbackBenchmark.active)
+                    val second = requireNotNull(a.session.playbackBenchmark.snapshot())
+                    a.session.stopPlaybackBenchmark()
+                    val original = requireNotNull(first)
+                    assertEquals(0L, original.initialPositionMs)
+                    assertEquals(original.initialPositionMs, second.initialPositionMs)
+                    assertEquals(original.identity.mediaFingerprint, second.identity.mediaFingerprint)
+                    assertNotEquals("Two different rendered zooms must not look like identical benchmark settings",
+                        original.identity.settingsFingerprint, second.identity.settingsFingerprint)
+                }
+            }
+        } finally { PlayerPreferences(context).enginePackage = "" }
+    }
     @Test fun startingBenchmarkFromSettingsSurvivesDialogDismissal() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             var current: MainActivity? = null
@@ -779,6 +886,106 @@ class Revision03AndroidTest {
                 a.session.stopPlaybackBenchmark()
             }
         }
+    }
+    @Test fun anActualOversizedSubtitleStopsTheBenchmarkWithItsErrorReason() {
+        val context = instrument.targetContext
+        val external = java.io.File(context.cacheDir, "benchmark-overflow.srt")
+        external.writeText("1\n00:00:00,100 --> 00:00:03,000\n" + "texte ".repeat(5000) + "\n")
+        PlayerPreferences(context).apply {
+            enginePackage = instrument.context.packageName; narration = true; putBool("cache", false)
+        }
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                var current: MainActivity? = null
+                scenario.onActivity { a ->
+                    current = a
+                    a.session.open(SavedMedia("android.resource://${a.packageName}/${R.raw.demonstration}", "Limite de texte",
+                        subtitlePath = external.path, subtitleMime = "application/x-subrip"))
+                }
+                waitFor("Overflow fixture was not ready") {
+                    current!!.session.player.playbackState == Player.STATE_READY && current!!.session.speech.isReady &&
+                        current!!.session.selectedTextId() == "external-subtitle"
+                }
+                scenario.onActivity { a -> a.session.startPlaybackBenchmark(120); assertTrue(a.session.playbackBenchmark.active) }
+                waitFor("An internal subtitle error left the benchmark active") {
+                    val result = current!!.session.playbackBenchmark.snapshot()
+                    result != null && !result.active && result.reason.contains("Trop de texte")
+                }
+                scenario.onActivity { a ->
+                    assertFalse(a.session.playbackBenchmark.snapshot()!!.completed)
+                    assertFalse(a.session.machine.snapshot().wantsPlayback)
+                    assertFalse(a.session.player.playWhenReady)
+                    assertTrue(a.session.playbackBenchmarkReport().contains("Trop de texte"))
+                }
+            }
+        } finally { external.delete(); PlayerPreferences(context).enginePackage = "" }
+    }
+    @Test fun benchmarkFinishingAtFileEndStopsAnOngoingCachedReply() {
+        val context = instrument.targetContext
+        val external = java.io.File(context.cacheDir, "benchmark-end-reply.srt")
+        val text = "La réplique reste en cours quand cet extrait atteint la fin."
+        PlayerPreferences(context).apply {
+            enginePackage = instrument.context.packageName; narration = true; putBool("cache", true)
+            setMode(fr.soustitresvoix.core.NarrationMachine.Mode.ADAPTIVE)
+        }
+        var sawVoiceBeforeEnd = false
+        var stateAtEnd: fr.soustitresvoix.core.NarrationMachine.Snapshot? = null
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                var current: MainActivity? = null
+                var duration = 0L
+                scenario.onActivity { a ->
+                    current = a
+                    a.session.open(SavedMedia("android.resource://${a.packageName}/${R.raw.demonstration}", "Fin avec voix"))
+                }
+                waitFor("End-of-video fixture was not ready") {
+                    current!!.session.player.playbackState == Player.STATE_READY && current!!.session.speech.isReady
+                }
+                scenario.onActivity { duration = it.session.player.duration }
+                assertTrue(duration > 1000)
+                fun timestamp(ms: Long) = String.format(java.util.Locale.ROOT, "%02d:%02d:%02d,%03d",
+                    ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000)
+                external.writeText("1\n${timestamp(duration - 400)} --> ${timestamp(duration + 3000)}\n$text\n")
+                scenario.onActivity { it.session.attachSubtitle(external.path, "application/x-subrip") }
+                waitFor("The final subtitle was not selected") {
+                    current!!.session.player.playbackState == Player.STATE_READY &&
+                        current!!.session.selectedTextId() == "external-subtitle"
+                }
+                scenario.onActivity { a -> a.session.speech.clearCache(); a.session.speech.prepareAhead(listOf(text)) }
+                waitFor("The one-second fixture WAV was not prepared") { current!!.session.speech.preparedCount > 0 }
+                scenario.onActivity { it.session.seek(duration - 1000) }
+                waitFor("Seeking to the final second did not complete") { current!!.session.player.playbackState == Player.STATE_READY }
+                scenario.onActivity { a ->
+                    a.session.player.addListener(object : Player.Listener {
+                        override fun onCues(cues: androidx.media3.common.text.CueGroup) {
+                            if (cues.cues.any { it.text?.toString() == text } && a.session.machine.snapshot().speakingId != null)
+                                sawVoiceBeforeEnd = true
+                        }
+                        override fun onPlaybackStateChanged(state: Int) {
+                            if (state == Player.STATE_ENDED) stateAtEnd = a.session.machine.snapshot()
+                        }
+                    })
+                    a.session.startPlaybackBenchmark(1)
+                }
+                waitFor("The final video excerpt did not finish") {
+                    if (current!!.session.machine.snapshot().speakingId != null) sawVoiceBeforeEnd = true
+                    current!!.session.playbackBenchmark.snapshot()?.completed == true
+                }
+                scenario.onActivity { a ->
+                    assertTrue("No voice ran before the final frame", sawVoiceBeforeEnd)
+                    assertTrue("This test must play a real cached WAV", a.session.speech.hits > 0)
+                    assertFalse(a.session.playbackBenchmark.active)
+                    assertFalse(a.session.machine.snapshot().wantsPlayback)
+                    assertNull(a.session.machine.snapshot().speakingId)
+                    // A tick may win the race and pause just before ENDED. If
+                    // ENDED wins, inspect that callback's immediate state too.
+                    stateAtEnd?.let { ended ->
+                        assertFalse("ENDED published completion but kept playback intent", ended.wantsPlayback)
+                        assertNull("ENDED left its cached reply running", ended.speakingId)
+                    }
+                }
+            }
+        } finally { external.delete(); PlayerPreferences(context).enginePackage = "" }
     }
     @Test fun allNewCoreRegressionsAlsoExecuteOnAndroidIcu() {
         assertEquals(listOf("M. Dupont arrive.","Il repart."),SpeechTools.segments("M. Dupont arrive. Il repart."))

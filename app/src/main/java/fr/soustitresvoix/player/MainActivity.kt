@@ -176,6 +176,13 @@ class MainActivity : ComponentActivity() {
                 if (!closed) session.visual.setRenderSize(right - left, bottom - top)
             }
         }
+        session.renderConfiguration = {
+            val surface = playerView.videoSurfaceView
+            listOf("plein écran=$fullscreen", "cadrage=${playerView.resizeMode}",
+                "vue=${playerView.width}x${playerView.height}", "surface=${surface?.width}x${surface?.height}",
+                "échelle=${surface?.scaleX},${surface?.scaleY}",
+                "déplacement=${surface?.translationX},${surface?.translationY}")
+        }
         applyWindowMode(); applyCaptionStyle()
         if (fullscreen) {
             cinema = CinemaView(this, session, prefs, playerView, { setFullscreen(false) },

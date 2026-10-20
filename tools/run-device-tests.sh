@@ -43,6 +43,17 @@ adb -s "$device" shell svc power stayon true >/dev/null
 adb -s "$device" shell settings put system screen_off_timeout 1800000
 adb -s "$device" shell input keyevent KEYCODE_WAKEUP
 adb -s "$device" shell wm dismiss-keyguard
+# Complete only Android's one-time fullscreen tutorial on this disposable
+# emulator. Its focusable SystemUI window can otherwise cover the activity
+# after a delayed rotation; ANRs and application dialogs remain test failures.
+# AOSP ImmersiveModeConfirmation observes this setting while SystemUI runs.
+adb -s "$device" shell settings put secure immersive_mode_confirmations confirmed || exit 2
+confirmation=$(adb -s "$device" shell settings get secure immersive_mode_confirmations | tr -d '\r')
+printf 'immersive_mode_confirmations=%s\n' "$confirmation" >> build/verification/boot-readiness.txt
+if [[ "$confirmation" != confirmed ]]; then
+  echo 'The emulator fullscreen tutorial precondition was not applied.' >&2
+  exit 2
+fi
 focused=false
 for attempt in {1..30}; do
   adb -s "$device" shell dumpsys window > build/verification/windows-before-tests.txt

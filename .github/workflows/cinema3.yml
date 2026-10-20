@@ -86,6 +86,7 @@ jobs:
             core/build/test-results/
             app/build/reports/
             app/build/outputs/androidTest-results/
+            app/build/outputs/connected_android_test_additional_output/
           retention-days: 14
           if-no-files-found: warn
       - name: APK seulement apres tous les tests
