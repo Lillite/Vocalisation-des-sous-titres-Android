@@ -12,6 +12,7 @@ Dans Voix / écran : choisir Adaptatif, vitesse de base 100 %, plafond 180 % com
 
 - `docs/REVISION_03.md` : changements exacts, limites et périmètre de validation.
 - `docs/REVISION_031.md` : corrections supplémentaires issues de la relecture et contrôles de livraison.
+- `docs/COUVERTURE_DEMANDES_031.md` : correspondance détaillée avec chaque demande, fonctions intégrées et limites.
 - `docs/VOIX_CATALOGUE_2026.md` : catalogue documentaire de moteurs, modèles et passerelles, liens primaires, dates et tailles connues.
 - `docs/ETUDE_ACCELERATION.md` : GPU/NPU, preuves nécessaires et fonctions non intégrées.
 - `docs/TESTS_TELEPHONE.md` : parcours d’essai initial, à compléter par les scénarios 0.3.

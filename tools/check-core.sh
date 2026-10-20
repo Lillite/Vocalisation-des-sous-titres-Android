@@ -8,7 +8,9 @@ kotlinc "${sources[@]}" \
   core/src/test/kotlin/fr/soustitresvoix/core/CoreChecks.kt \
   core/src/test/kotlin/fr/soustitresvoix/core/CinemaChecks.kt \
   core/src/test/kotlin/fr/soustitresvoix/core/Revision03Checks.kt \
+  core/src/test/kotlin/fr/soustitresvoix/core/PlaybackBenchmarkChecks.kt \
   -include-runtime -d build/checks/core-checks.jar
 java -cp build/checks/core-checks.jar fr.soustitresvoix.core.CoreChecks "$@"
 java -cp build/checks/core-checks.jar fr.soustitresvoix.core.CinemaChecks
 java -cp build/checks/core-checks.jar fr.soustitresvoix.core.Revision03Checks "$@"
+java -cp build/checks/core-checks.jar fr.soustitresvoix.core.PlaybackBenchmarkChecks

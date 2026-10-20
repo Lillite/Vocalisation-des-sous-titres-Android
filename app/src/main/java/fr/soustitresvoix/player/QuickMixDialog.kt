@@ -28,7 +28,9 @@ object QuickMixDialog {
         }
         level("Volume du film", 0, { prefs.movieVolume }) { prefs.movieVolume = it; session.updateMix() }
         level("Son du film pendant la voix", 0, { prefs.duckVolume }) { prefs.duckVolume = it; session.updateMix() }
-        level("Volume de la voix — prochain segment", 10, { prefs.voiceVolume }) { prefs.voiceVolume = it }
+        level("Volume de la voix — prochain segment", 10, { prefs.voiceVolume }) {
+            session.finishPlaybackBenchmark("Volume vocal modifié : essai interrompu"); prefs.voiceVolume = it
+        }
         column.addView(TextView(activity).apply { text = "Ces réglages ne mettent pas le film en pause."; textSize = 16f; setTextColor(Color.WHITE) })
         val dialog = AlertDialog.Builder(activity).setTitle("Volumes rapides")
             .setView(ScrollView(activity).apply { addView(column) }).setPositiveButton("Fermer", null).create()

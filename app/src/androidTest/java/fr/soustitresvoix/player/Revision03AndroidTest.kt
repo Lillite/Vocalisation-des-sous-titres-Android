@@ -34,6 +34,7 @@ class Revision03AndroidTest {
     private val instrument get()=InstrumentationRegistry.getInstrumentation()
     @Before fun clearPreferences() {
         instrument.targetContext.getSharedPreferences("player", 0).edit().clear().commit()
+        instrument.targetContext.getSharedPreferences("playback-measurements", 0).edit().clear().commit()
     }
     private fun waitFor(message: String, predicate: ()->Boolean) {
         val end=System.currentTimeMillis()+20000
@@ -95,6 +96,72 @@ class Revision03AndroidTest {
                 val protectedAgain = open(cropped)
                 assertTrue(a.session.prefs.protectFrame)
                 assertEquals(AspectRatioFrameLayout.RESIZE_MODE_FIT, (protectedAgain.getChildAt(0) as PlayerView).resizeMode)
+            }
+        }
+    }
+    @Test fun leavingCinemaRestoresTheEntireImageBeforeOpeningAnotherVideo() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { a ->
+                a.session.prefs.narration = false
+                a.session.prefs.putInt("orientation", 0)
+                a.session.refreshSettings()
+                a.session.open(SavedMedia("android.resource://${a.packageName}/${R.raw.demonstration}", "Premier cadre"))
+                a.setFullscreen(true)
+                val cinema = a.findViewById<CinemaView>(R.id.cinema_root)
+                val video = cinema.getChildAt(0) as PlayerView
+                assertTrue(cinema.setFramingMode(1, true))
+                cinema.setImageZoom(3f)
+                video.videoSurfaceView!!.translationX = 20f
+                video.videoSurfaceView!!.translationY = 30f
+                a.setFullscreen(false)
+                fun assertEntireFrame() {
+                    assertEquals(AspectRatioFrameLayout.RESIZE_MODE_FIT, video.resizeMode)
+                    assertEquals(1f, video.videoSurfaceView!!.scaleX, 0f)
+                    assertEquals(1f, video.videoSurfaceView!!.scaleY, 0f)
+                    assertEquals(0f, video.videoSurfaceView!!.translationX, 0f)
+                    assertEquals(0f, video.videoSurfaceView!!.translationY, 0f)
+                }
+                assertEntireFrame()
+                a.session.open(SavedMedia("android.resource://${a.packageName}/raw/demonstration", "Autre vidéo"))
+                assertEntireFrame()
+            }
+        }
+    }
+    @Test fun replacingCinemaDismissesItsImageDialogAndIgnoresStaleZoom() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            var old: CinemaView? = null
+            var current: MainActivity? = null
+            scenario.onActivity { a ->
+                current = a
+                a.session.prefs.narration = false
+                a.session.prefs.putInt("orientation", 0)
+                a.session.refreshSettings()
+                a.setFullscreen(true)
+                old = a.findViewById(R.id.cinema_root)
+                old!!.setFramingMode(1, true)
+                old!!.imageDialog()
+            }
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText("Image et cadrage"))
+                .check(androidx.test.espresso.assertion.ViewAssertions.matches(androidx.test.espresso.matcher.ViewMatchers.isDisplayed()))
+            scenario.onActivity { a ->
+                val portrait = a.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+                a.requestedOrientation = if (portrait) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                    else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            }
+            waitFor("A real orientation change did not replace the cinema view") {
+                current!!.findViewById<CinemaView>(R.id.cinema_root) !== old
+            }
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText("Image et cadrage"))
+                .check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+            scenario.onActivity { a ->
+                val replacement = a.findViewById<CinemaView>(R.id.cinema_root)
+                replacement.setFramingMode(2)
+                old!!.setImageZoom(4f)
+                assertFalse("A detached view must not accept framing changes", old!!.setFramingMode(1, true))
+                val video = replacement.getChildAt(0) as PlayerView
+                assertEquals(AspectRatioFrameLayout.RESIZE_MODE_FILL, video.resizeMode)
+                assertEquals(1f, video.videoSurfaceView!!.scaleX, 0f)
+                assertEquals(1f, video.videoSurfaceView!!.scaleY, 0f)
             }
         }
     }
@@ -191,6 +258,88 @@ class Revision03AndroidTest {
             assertEquals(2,i.count);assertEquals(4000L,i.windowEnd("external-subtitle","M. Dupont arrive ; vraiment !",1500,SpeechTools.Filters()))
         } finally { f.delete() }
     }
+    @Test fun completePreparationIndexesTheSelectedInternalOrExternalTrack() {
+        val context = instrument.targetContext
+        val external = java.io.File(context.cacheDir, "selected-track-fixture.srt")
+        external.writeText("1\n00:00:01,000 --> 00:00:03,000\nUne seule réplique externe.\n")
+        PlayerPreferences(context).enginePackage = instrument.context.packageName
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                var current: MainActivity? = null
+                var internalId: String? = null
+                scenario.onActivity { a ->
+                    current = a
+                    a.session.open(SavedMedia("android.resource://${a.packageName}/${R.raw.demonstration}", "Deux pistes",
+                        subtitlePath = external.path, subtitleMime = "application/x-subrip"))
+                }
+                waitFor("The external subtitle track was not selected") {
+                    current!!.session.selectedTextId() == "external-subtitle" && current!!.session.speech.isReady
+                }
+                scenario.onActivity { a ->
+                    val internal = a.session.player.currentTracks.groups.first { group ->
+                        group.type == C.TRACK_TYPE_TEXT && (0 until group.length).any { index ->
+                            group.isTrackSupported(index) && group.getTrackFormat(index).id != "external-subtitle"
+                        }
+                    }
+                    val index = (0 until internal.length).first { internal.isTrackSupported(it) && internal.getTrackFormat(it).id != "external-subtitle" }
+                    internalId = requireNotNull(internal.getTrackFormat(index).id)
+                    a.session.selectTrack(C.TRACK_TYPE_TEXT, internal, index)
+                }
+                waitFor("The internal subtitle track was not selected") { current!!.session.selectedTextId() == internalId }
+                scenario.onActivity { it.session.prepareRange(null) }
+                waitFor("Preparing the internal track indexed the attached sidecar instead") {
+                    current!!.session.indexingStatus.startsWith("Indexation terminée") &&
+                        current!!.session.ahead.selected(internalId).size == 8
+                }
+                scenario.onActivity { a ->
+                    val externalGroup = a.session.player.currentTracks.groups.first { group ->
+                        group.type == C.TRACK_TYPE_TEXT && (0 until group.length).any { group.getTrackFormat(it).id == "external-subtitle" }
+                    }
+                    val index = (0 until externalGroup.length).first { externalGroup.getTrackFormat(it).id == "external-subtitle" }
+                    a.session.selectTrack(C.TRACK_TYPE_TEXT, externalGroup, index)
+                }
+                waitFor("Could not return to the external track") { current!!.session.selectedTextId() == "external-subtitle" }
+                scenario.onActivity { it.session.prepareRange(null) }
+                waitFor("Changing track reused an index from the wrong source") {
+                    current!!.session.indexingStatus.startsWith("Indexation terminée") &&
+                        current!!.session.ahead.selected("external-subtitle").singleOrNull()?.raw == "Une seule réplique externe."
+                }
+                scenario.onActivity { assertEquals(1, it.session.ahead.count) }
+            }
+        } finally { external.delete(); PlayerPreferences(context).enginePackage = "" }
+    }
+    @Test fun manualPreparationCompletesWhileNarrationIsDisabled() {
+        val context = instrument.targetContext
+        val external = java.io.File(context.cacheDir, "manual-preparation-narration-off.srt")
+        external.writeText("1\n00:00:01,000 --> 00:00:04,000\nPréparation explicite avec narration désactivée.\n")
+        PlayerPreferences(context).apply {
+            enginePackage = instrument.context.packageName; narration = false; putBool("cache", true)
+        }
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                var current: MainActivity? = null
+                scenario.onActivity { a ->
+                    current = a
+                    a.session.open(SavedMedia("android.resource://${a.packageName}/${R.raw.demonstration}", "Préparation manuelle",
+                        subtitlePath = external.path, subtitleMime = "application/x-subrip"))
+                }
+                waitFor("Fixture voice and external subtitle were not ready") {
+                    current!!.session.speech.isReady && current!!.session.selectedTextId() == "external-subtitle"
+                }
+                scenario.onActivity { a -> a.session.speech.clearCache(); a.session.prepareRange(null) }
+                // This prefix takes 1.5 seconds in the real test TTS service,
+                // spanning the Activity's one-second preparation maintenance.
+                waitFor("Narration-off maintenance cancelled an explicitly requested preparation") {
+                    current!!.session.speech.preparedCount == 1 && !current!!.session.speech.bulkPreparation
+                }
+                scenario.onActivity { a ->
+                    assertFalse(a.session.prefs.narration)
+                    assertFalse(a.session.machine.snapshot().wantsPlayback)
+                    assertFalse(a.session.player.isPlaying)
+                }
+            }
+        } finally { external.delete(); PlayerPreferences(context).enginePackage = "" }
+    }
     @Test fun cancellationPreventsCompleteIndexPublication() {
         val task=FullSubtitleIndexer(instrument.targetContext);task.cancel()
         try {task.scan(SavedMedia("android.resource://${instrument.targetContext.packageName}/${R.raw.demonstration}","demo")){};fail("Cancelled indexing unexpectedly succeeded")}
@@ -286,6 +435,104 @@ class Revision03AndroidTest {
             // The test-only service returns an error unless this specific request arrives >=175%.
         }finally{instrument.runOnMainSync{speech?.close();PlayerPreferences(instrument.targetContext).enginePackage=""}}
     }
+    @Test fun changedSpeechRateCancelsPendingPreparationAndNewCacheUsesTheAppliedRate() {
+        val done = CountDownLatch(1)
+        val failure = AtomicReference<String?>(null)
+        val prefs = PlayerPreferences(instrument.targetContext)
+        var speech: AndroidSpeech? = null
+        var initialFingerprint = ""
+        var changedFingerprint = ""
+        val text = "Réglage vérifié à cent cinquante pour cent, après modification."
+        fun create() {
+            speech = AndroidSpeech(instrument.targetContext, prefs, { _, _ -> },
+                { done.countDown() }, { _, message -> failure.set(message); done.countDown() })
+        }
+        instrument.runOnMainSync {
+            prefs.enginePackage = instrument.context.packageName; prefs.putBool("cache", true); create()
+        }
+        try {
+            waitFor("Fixture TTS not ready") { speech!!.isReady }
+            instrument.runOnMainSync {
+                initialFingerprint = speech!!.cacheConfigurationFingerprint
+                speech!!.clearCache()
+                speech!!.prepareBatch(listOf("Ancien réglage en attente.", "Seconde ancienne phrase."))
+                prefs.speechRate = 1.5f // No pending main-loop cache callback can run before this mutation.
+            }
+            waitFor("A changed rate did not stop the old batch") {
+                !speech!!.bulkPreparation && speech!!.preparationStatus.contains("réglages vocaux modifiés")
+            }
+            instrument.runOnMainSync {
+                assertEquals(0, speech!!.preparedCount)
+                speech!!.applyPreferences()
+                changedFingerprint = speech!!.cacheConfigurationFingerprint
+                assertNotEquals(initialFingerprint, changedFingerprint)
+                speech!!.prepareBatch(listOf(text))
+            }
+            waitFor("The applied 150% rate did not produce validated audio") {
+                speech!!.preparedCount == 1 && !speech!!.bulkPreparation
+            }
+            // The service rejects this prefix unless the real SynthesisRequest rate is 150.
+            instrument.runOnMainSync { speech!!.close(); create() }
+            waitFor("Recreated fixture TTS not ready") { speech!!.isReady }
+            instrument.runOnMainSync {
+                assertEquals(changedFingerprint, speech!!.cacheConfigurationFingerprint)
+                speech!!.speak("changed-settings-cache", text)
+            }
+            assertTrue(done.await(15, TimeUnit.SECONDS)); assertNull(failure.get())
+            instrument.runOnMainSync { assertEquals(1, speech!!.hits); assertEquals(0, speech!!.misses) }
+        } finally { instrument.runOnMainSync { speech?.close(); prefs.enginePackage = "" } }
+    }
+    @Test fun changedGenerationDuringLookupDoesNotBlockTheReplacementBatch() {
+        var speech: AndroidSpeech? = null
+        val prefs = PlayerPreferences(instrument.targetContext)
+        instrument.runOnMainSync {
+            prefs.enginePackage = instrument.context.packageName; prefs.putBool("cache", true)
+            speech = AndroidSpeech(instrument.targetContext, prefs, { _, _ -> }, {}, { _, _ -> })
+        }
+        try {
+            waitFor("Fixture TTS not ready") { speech!!.isReady }
+            instrument.runOnMainSync {
+                speech!!.clearCache()
+                speech!!.prepareBatch(listOf("Ancienne génération en attente."))
+                prefs.speechRate = 1.5f
+                speech!!.applyPreferences()
+                speech!!.prepareBatch(listOf("Réglage vérifié à cent cinquante pour cent, génération suivante."))
+            }
+            waitFor("The obsolete lookup blocked the replacement generation") {
+                speech!!.preparedCount == 1 && !speech!!.bulkPreparation
+            }
+        } finally { instrument.runOnMainSync { speech?.close(); prefs.enginePackage = "" } }
+    }
+    @Test fun disablingCacheWhileLookupIsPendingStopsPreparation() {
+        var speech: AndroidSpeech? = null
+        val prefs = PlayerPreferences(instrument.targetContext)
+        instrument.runOnMainSync {
+            prefs.enginePackage = instrument.context.packageName; prefs.putBool("cache", true)
+            speech = AndroidSpeech(instrument.targetContext, prefs, { _, _ -> }, {}, { _, _ -> })
+        }
+        try {
+            waitFor("Fixture TTS not ready") { speech!!.isReady }
+            instrument.runOnMainSync {
+                speech!!.clearCache(); speech!!.prepareBatch(listOf("Cache à désactiver.", "Seconde phrase."))
+                prefs.putBool("cache", false)
+            }
+            waitFor("Cache-off left a batch running") {
+                !speech!!.bulkPreparation && speech!!.preparationStatus.contains("cache vocal désactivé")
+            }
+            instrument.runOnMainSync { assertEquals(0, speech!!.preparedCount) }
+        } finally { instrument.runOnMainSync { speech?.close(); prefs.enginePackage = "" } }
+    }
+    @Test fun audioAndRefreshPreferencesAreAppliedOnActivityCreation() {
+        instrument.targetContext.getSharedPreferences("player", 0).edit()
+            .putBoolean("narration", false).putBoolean("spectralDucking", true)
+            .putBoolean("matchFrameRate", false).commit()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { a ->
+                assertTrue(a.session.bandProcessor.enabled)
+                assertEquals(C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF, a.session.player.videoChangeFrameRateStrategy)
+            }
+        }
+    }
     @Test fun validCacheSurvivesSpeechClientRecreation() {
         val done=CountDownLatch(1);val error=AtomicReference<String?>(null);var speech:AndroidSpeech?=null
         fun create(){val p=PlayerPreferences(instrument.targetContext);p.enginePackage=instrument.context.packageName;p.putBool("cache",true)
@@ -345,6 +592,70 @@ class Revision03AndroidTest {
         processor.enabled=true;processor.speaking=true;input.clear();repeat(200){input.putShort((it*100-10000).toShort())};input.flip()
         processor.queueInput(input);assertEquals(400,processor.output.remaining());processor.reset()
     }
+    @Test fun speechBandReleaseIsGradualThenReturnsToExactPcmBypass() {
+        val format = AudioProcessor.AudioFormat(48_000, 2, C.ENCODING_PCM_16BIT)
+        fun input(frames: Int): ByteBuffer = ByteBuffer.allocateDirect(frames * 4).order(ByteOrder.nativeOrder()).apply {
+            repeat(frames) { frame ->
+                val sample = (16_000 * kotlin.math.sin(2 * Math.PI * 1000 * frame / 48_000)).toInt().toShort()
+                putShort(sample); putShort((-sample).toShort())
+            }
+            flip()
+        }
+        fun read(buffer: ByteBuffer) = ByteArray(buffer.remaining()).also { buffer.get(it) }
+        val processor = SpeechBandProcessor()
+        processor.configure(format); processor.flush(); processor.enabled = true; processor.speaking = true
+        processor.queueInput(input(14_400)); read(processor.output)
+        processor.enabled = false
+        val releasing = input(1024)
+        val original = read(releasing.duplicate())
+        processor.queueInput(releasing)
+        assertFalse("Disabling must preserve the release ramp instead of switching abruptly", original.contentEquals(read(processor.output)))
+        processor.queueInput(input(48_000)); read(processor.output)
+        val bypass = input(1024)
+        val exact = read(bypass.duplicate())
+        processor.queueInput(bypass)
+        assertArrayEquals("The completed release must return to exact PCM", exact, read(processor.output))
+        assertEquals(0, bypass.remaining())
+
+        // Incomplete stereo frames remain available to the upstream caller.
+        val partial = ByteBuffer.allocateDirect(7).order(ByteOrder.nativeOrder())
+        partial.put(byteArrayOf(1, 2, 3, 4, 5, 6, 7)).flip()
+        processor.queueInput(partial)
+        assertArrayEquals(byteArrayOf(1, 2, 3, 4), read(processor.output))
+        assertEquals(4, partial.position()); assertEquals(7, partial.limit())
+        assertArrayEquals(byteArrayOf(5, 6, 7), read(partial))
+
+        processor.enabled = true
+        val fresh = SpeechBandProcessor()
+        fresh.configure(format); fresh.flush(); fresh.enabled = true; fresh.speaking = true
+        processor.queueInput(input(1024)); fresh.queueInput(input(1024))
+        assertArrayEquals("A new ramp must not reuse stale channel-filter memory", read(fresh.output), read(processor.output))
+        processor.reset(); fresh.reset()
+    }
+    @Test fun speechBandReconfigurationDoesNotChangeUndrainedOldFormat() {
+        val processor = SpeechBandProcessor()
+        val reference = SpeechBandProcessor()
+        val stereo = AudioProcessor.AudioFormat(48_000, 2, C.ENCODING_PCM_16BIT)
+        fun input() = ByteBuffer.allocateDirect(800).order(ByteOrder.nativeOrder()).apply {
+            repeat(200) { putShort((it * 70 - 7000).toShort()); putShort((6000 - it * 50).toShort()) }; flip()
+        }
+        fun bytes(buffer: ByteBuffer) = ByteArray(buffer.remaining()).also { buffer.get(it) }
+        for (p in listOf(processor, reference)) {
+            p.configure(stereo); p.flush(); p.enabled = true; p.speaking = true
+            p.queueInput(input()); bytes(p.output)
+        }
+        processor.configure(AudioProcessor.AudioFormat(24_000, 1, C.ENCODING_PCM_16BIT))
+        // Media3 may still drain the stereo stream after configure(), before flush().
+        processor.queueInput(input()); reference.queueInput(input())
+        assertArrayEquals(bytes(reference.output), bytes(processor.output))
+        processor.flush()
+        val mono = ByteBuffer.allocateDirect(6).order(ByteOrder.nativeOrder()).apply {
+            putShort(1000); putShort(-1000); putShort(2000); flip()
+        }
+        processor.queueInput(mono)
+        assertEquals(6, processor.output.remaining()); assertEquals(0, mono.remaining())
+        processor.reset(); reference.reset()
+    }
     @Test fun catalogueSeparatesEnginesFromModelFilesAndGateways() {
         val doc=instrument.targetContext.assets.open("voice-catalogue.json").bufferedReader().use{JSONObject(it.readText())}
         val entries=doc.getJSONArray("entries");assertTrue(entries.length()>=20)
@@ -358,9 +669,23 @@ class Revision03AndroidTest {
             var a:MainActivity?=null
             scenario.onActivity{activity->a=activity;activity.session.prefs.narration=false;activity.session.refreshSettings();activity.session.open(SavedMedia("android.resource://${activity.packageName}/${R.raw.demonstration}","SDR"))}
             waitFor("SDR video not ready"){a!!.session.player.playbackState==Player.STATE_READY}
-            scenario.onActivity { activity -> assertFalse(activity.session.visual.hdr);activity.session.visual.adjust(.12f,.06f);activity.session.play() }
+            scenario.onActivity { activity ->
+                val visual = activity.session.visual
+                assertFalse(visual.hdr)
+                visual.setRenderSize(1280, 720); visual.setDetailedScaling(true)
+                assertTrue(visual.detailedScalingActive)
+                visual.adjust(.12f,.06f); activity.session.play()
+            }
             waitFor("Video did not advance with effect pipeline"){a!!.session.player.currentPosition>1500}
-            scenario.onActivity { activity->activity.session.visual.toggleComparison();assertNull(activity.session.player.playerError) }
+            scenario.onActivity { activity ->
+                val visual = activity.session.visual
+                visual.toggleComparison()
+                assertFalse(visual.detailedScalingActive)
+                assertNull(activity.session.player.playerError)
+                visual.setRenderSize(7680, 4320); assertEquals("3840 × 2160", visual.scalingTarget)
+                visual.setRenderSize(4320, 7680); assertEquals("2160 × 3840", visual.scalingTarget)
+                visual.setRenderSize(0, 0); assertEquals("2160 × 3840", visual.scalingTarget)
+            }
         }
     }
     @Test fun hdrAndDolbyFormatsAreExcludedFromSdrEffects() {
@@ -372,6 +697,88 @@ class Revision03AndroidTest {
             assertTrue(VisualTools.isHdrFormat(format))
         }
         assertTrue(VisualTools.isHdrFormat(androidx.media3.common.Format.Builder().setSampleMimeType("video/dolby-vision").build()))
+    }
+    @Test fun playbackBenchmarkMeasuresRealProgressAndPausesAtTheExcerptEnd() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            var current: MainActivity? = null
+            scenario.onActivity { a ->
+                current = a
+                a.session.prefs.narration = false; a.session.refreshSettings()
+                a.session.open(SavedMedia("android.resource://${a.packageName}/${R.raw.demonstration}", "Banc réel"))
+            }
+            waitFor("Benchmark video was not ready") { current!!.session.player.playbackState == Player.STATE_READY }
+            scenario.onActivity { it.session.startPlaybackBenchmark(1) }
+            waitFor("The real one-second video excerpt did not complete") {
+                current!!.session.playbackBenchmark.snapshot()?.completed == true
+            }
+            scenario.onActivity { a ->
+                val result = requireNotNull(a.session.playbackBenchmark.snapshot())
+                assertFalse(result.active); assertEquals(1000L, result.requestedMs)
+                assertTrue(result.finalPositionMs - result.initialPositionMs >= 1000L)
+                assertTrue(result.elapsedMs > 0)
+                assertFalse(a.session.machine.snapshot().wantsPlayback)
+                assertFalse(a.session.player.playWhenReady)
+                assertEquals(0L, result.latencies.getValue(fr.soustitresvoix.core.PlaybackBenchmark.Metric.FIRST_AUDIO).observed)
+                assertTrue(a.session.playbackBenchmarkReport().contains("CPU du lecteur"))
+            }
+        }
+    }
+    @Test fun interruptedPlaybackBenchmarkKeepsItsReasonAndSurvivesActivityRecreation() {
+        var savedReport = ""
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            var current: MainActivity? = null
+            scenario.onActivity { a ->
+                current = a
+                a.session.prefs.narration = false; a.session.refreshSettings()
+                a.session.open(SavedMedia("android.resource://${a.packageName}/${R.raw.demonstration}", "Banc interrompu"))
+            }
+            waitFor("Benchmark video was not ready") { current!!.session.player.playbackState == Player.STATE_READY }
+            scenario.onActivity { it.session.startPlaybackBenchmark(120) }
+            waitFor("The benchmark did not play actual video") { current!!.session.player.currentPosition >= 1000 }
+            scenario.onActivity { a ->
+                a.session.stopPlaybackBenchmark()
+                val result = requireNotNull(a.session.playbackBenchmark.snapshot())
+                assertFalse(result.active); assertFalse(result.completed)
+                assertTrue(result.reason.contains("explicitement"))
+                assertTrue(result.finalPositionMs > result.initialPositionMs)
+                savedReport = a.session.playbackBenchmarkReport()
+            }
+        }
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { a ->
+                assertEquals(savedReport, a.session.playbackBenchmarkReport())
+                assertFalse(a.session.machine.snapshot().wantsPlayback)
+            }
+        }
+    }
+    @Test fun startingBenchmarkFromSettingsSurvivesDialogDismissal() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            var current: MainActivity? = null
+            scenario.onActivity { a ->
+                current = a
+                a.session.prefs.narration = false; a.session.refreshSettings()
+                a.session.open(SavedMedia("android.resource://${a.packageName}/${R.raw.demonstration}", "Banc par les réglages"))
+            }
+            waitFor("Benchmark video was not ready") { current!!.session.player.playbackState == Player.STATE_READY }
+            fun click(text: String, scroll: Boolean = false) {
+                val interaction = androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(text))
+                if (scroll) interaction.perform(androidx.test.espresso.action.ViewActions.scrollTo())
+                interaction.perform(androidx.test.espresso.action.ViewActions.click())
+            }
+            click("Réglages de la voix et du confort", true)
+            click("Banc d’essai de lecture : 2 ou 30 minutes", true)
+            click("Court : 2 minutes")
+            waitFor("Dismissing settings cancelled the requested benchmark") {
+                current!!.session.playbackBenchmark.active && current!!.session.machine.snapshot().wantsPlayback &&
+                    current!!.session.player.currentPosition >= 1000
+            }
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText("Voix et confort"))
+                .check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+            scenario.onActivity { a ->
+                assertEquals(120_000L, a.session.playbackBenchmark.snapshot()!!.requestedMs)
+                a.session.stopPlaybackBenchmark()
+            }
+        }
     }
     @Test fun allNewCoreRegressionsAlsoExecuteOnAndroidIcu() {
         assertEquals(listOf("M. Dupont arrive.","Il repart."),SpeechTools.segments("M. Dupont arrive. Il repart."))

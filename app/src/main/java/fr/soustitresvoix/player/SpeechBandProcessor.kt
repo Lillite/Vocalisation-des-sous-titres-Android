@@ -21,25 +21,48 @@ class SpeechBandProcessor : BaseAudioProcessor() {
     private var gain = 0f
     override fun onConfigure(input: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         if (input.encoding != C.ENCODING_PCM_16BIT) return AudioProcessor.AudioFormat.NOT_SET
-        low=FloatArray(input.channelCount); high=FloatArray(input.channelCount)
-        aLow=(1-exp(-2*Math.PI*250/input.sampleRate)).toFloat()
-        aHigh=(1-exp(-2*Math.PI*3200/input.sampleRate)).toFloat()
+        // configure() is only pending: the caller may still drain the old format
+        // until flush(). In particular, do not resize its channel state here.
         return input
     }
     override fun queueInput(inputBuffer: ByteBuffer) {
-        val out = replaceOutputBuffer(inputBuffer.remaining())
         val channels = inputAudioFormat.channelCount
-        var channel=0
+        val frameBytes = channels * 2
+        // Leave an incomplete frame with the caller; never drop its remaining bytes.
+        val bytes = inputBuffer.remaining() / frameBytes * frameBytes
+        val out = replaceOutputBuffer(bytes)
         val target=if (enabled && speaking) amount.coerceIn(0f,.65f) else 0f
-        while (inputBuffer.remaining() >= 2) {
-            val sample=inputBuffer.short.toFloat()
-            low[channel]+=aLow*(sample-low[channel]); high[channel]+=aHigh*(sample-high[channel])
-            if (channel == 0) gain += .001f*(target-gain)
-            val filtered=sample-gain*(high[channel]-low[channel])
-            out.putShort(filtered.toInt().coerceIn(-32768,32767).toShort())
-            channel=(channel+1)%channels; processedSamples++
+        if (target == 0f && gain <= 0.000001f) {
+            // The remaining correction is below 0.066 of one PCM16 step, even at
+            // full scale. Finish the release before bypassing; never cut its ramp.
+            gain = 0f; low.fill(0f); high.fill(0f)
+            val limit = inputBuffer.limit()
+            try {
+                inputBuffer.limit(inputBuffer.position() + bytes)
+                out.put(inputBuffer)
+            } finally { inputBuffer.limit(limit) }
+        } else {
+            val end = inputBuffer.position() + bytes
+            while (inputBuffer.position() < end) {
+                gain += .001f*(target-gain)
+                for (channel in 0 until channels) {
+                    val sample=inputBuffer.short.toFloat()
+                    low[channel]+=aLow*(sample-low[channel]); high[channel]+=aHigh*(sample-high[channel])
+                    val filtered=sample-gain*(high[channel]-low[channel])
+                    out.putShort(filtered.toInt().coerceIn(-32768,32767).toShort())
+                }
+            }
         }
+        processedSamples += bytes / 2
         out.flip()
     }
-    override fun onFlush() { low.fill(0f); high.fill(0f); gain=0f }
+    override fun onFlush() {
+        val format = inputAudioFormat
+        low=FloatArray(format.channelCount.coerceAtLeast(0)); high=FloatArray(low.size)
+        if (format.sampleRate > 0) {
+            aLow=(1-exp(-2*Math.PI*250/format.sampleRate)).toFloat()
+            aHigh=(1-exp(-2*Math.PI*3200/format.sampleRate)).toFloat()
+        }
+        gain=0f
+    }
 }

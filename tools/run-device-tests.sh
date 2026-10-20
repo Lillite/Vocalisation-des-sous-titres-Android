@@ -16,19 +16,26 @@ collect_diagnostics() {
 }
 trap collect_diagnostics EXIT
 
-# Boot completion alone can precede the end of the boot animation. Wait for
-# both conditions, and retain any ANR instead of dismissing or retrying it.
+# With -no-boot-anim, an AOSP image may never publish init.svc.bootanim.
+# Require completed boot and a responsive package service, and reject an
+# animation still running. Retain ANRs instead of dismissing or retrying them.
 ready=false
 for attempt in {1..30}; do
   boot=$(adb -s "$device" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
   animation=$(adb -s "$device" shell getprop init.svc.bootanim 2>/dev/null | tr -d '\r')
-  if [[ "$boot" == 1 && "$animation" == stopped ]]; then
+  framework=$(adb -s "$device" shell pm path android 2>/dev/null | tr -d '\r')
+  framework_ready=false
+  if [[ "$framework" == package:* ]]; then framework_ready=true; fi
+  printf 'attempt=%s sys.boot_completed=%q init.svc.bootanim=%q framework_ready=%s\n' \
+    "$attempt" "$boot" "$animation" "$framework_ready" >> build/verification/boot-readiness.txt
+  if [[ "$boot" == 1 && ( "$animation" == stopped || -z "$animation" ) && "$framework_ready" == true ]]; then
     ready=true
     break
   fi
   sleep 2
 done
 if [[ "$ready" != true ]]; then
+  cat build/verification/boot-readiness.txt
   echo 'Emulator did not finish booting; instrumentation was not started.' >&2
   exit 2
 fi
@@ -36,9 +43,21 @@ adb -s "$device" shell svc power stayon true >/dev/null
 adb -s "$device" shell settings put system screen_off_timeout 1800000
 adb -s "$device" shell input keyevent KEYCODE_WAKEUP
 adb -s "$device" shell wm dismiss-keyguard
-adb -s "$device" shell dumpsys window windows > build/verification/windows-before-tests.txt
-if grep -q 'Application Not Responding:' build/verification/windows-before-tests.txt; then
-  echo 'Emulator has an ANR window before instrumentation; inspect the captured diagnostics.' >&2
+focused=false
+for attempt in {1..30}; do
+  adb -s "$device" shell dumpsys window > build/verification/windows-before-tests.txt
+  if grep -q 'Application Not Responding:' build/verification/windows-before-tests.txt; then
+    echo 'Emulator has an ANR window before instrumentation; inspect the captured diagnostics.' >&2
+    exit 2
+  fi
+  if grep -q 'mCurrentFocus=Window{' build/verification/windows-before-tests.txt; then
+    focused=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$focused" != true ]]; then
+  echo 'Emulator has no focused UI window; instrumentation was not started.' >&2
   exit 2
 fi
 

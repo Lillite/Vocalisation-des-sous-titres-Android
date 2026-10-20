@@ -28,6 +28,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import fr.soustitresvoix.core.NarrationMachine
 import fr.soustitresvoix.core.SpeechTools
+import fr.soustitresvoix.core.PlaybackBenchmark
 import java.io.File
 
 @UnstableApi
@@ -47,11 +48,12 @@ class PlaybackSession(
     private var manualPreparation = false
     private var thermalPreparationStopped = false
     val isPreparing: Boolean get() = indexer != null || speech.bulkPreparation || manualPreparation
-    private var indexedUri: String? = null
-    private var lastAdaptiveTick = 0L
+    private data class IndexSource(val uri: String, val subtitlePath: String?, val subtitleMime: String?)
+    private var indexedSource: IndexSource? = null
     private var holdStarted = 0L
     val holdLatency = fr.soustitresvoix.core.LatencyWindow(2048)
-    private val benchmarkStarted = SystemClock.elapsedRealtime()
+    val playbackBenchmark = PlaybackBenchmark()
+    private val benchmarkStorage = context.getSharedPreferences("playback-measurements", Context.MODE_PRIVATE)
     private val playbackTick = object : Runnable {
         override fun run() {
             if (closed) return
@@ -60,6 +62,12 @@ class PlaybackSession(
                 val waiting = machine.snapshot().waitingForSpeech
                 if (waiting && holdStarted == 0L) holdStarted = SystemClock.elapsedRealtime()
                 if (!waiting && holdStarted != 0L) { holdLatency.add(SystemClock.elapsedRealtime()-holdStarted); holdStarted=0 }
+            }
+            if (playbackBenchmark.active && playbackBenchmark.tick(benchmarkCounters())) {
+                // tick ends the measurement; pausing cannot resume narration.
+                saveBenchmarkReport()
+                pause()
+                onMessage("Essai de lecture terminé. Les résultats sont conservés dans Banc d’essai de lecture.", false)
             }
             handler.postDelayed(this, 100)
         }
@@ -80,7 +88,7 @@ class PlaybackSession(
         }.setMediaCodecSelector { mime, secure, tunneling ->
             val infos=androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT.getDecoderInfos(mime,secure,tunneling)
             if(prefs.bool("preferSoftware")) infos.sortedByDescending { it.softwareOnly } else infos
-        }.setEnableDecoderFallback(true)).build()
+        }.setEnableDecoderFallback(true)).setUsePlatformDiagnostics(false).build()
     private val audioManager = requireNotNull(context.getSystemService(AudioManager::class.java))
     private var closed = false
     private var ducked = false
@@ -92,13 +100,19 @@ class PlaybackSession(
     private var focusHeld = false
     val speech = AndroidSpeech(context, prefs,
         onAvailability = { ready, msg ->
-            if (!closed) { apply(machine.setSpeechReady(ready)); onMessage(msg, !ready && prefs.narration); onChanged() }
+            if (!closed) {
+                if (!ready && prefs.narration) finishPlaybackBenchmark("Voix devenue indisponible : essai interrompu")
+                apply(machine.setSpeechReady(ready)); onMessage(msg, !ready && prefs.narration); onChanged()
+            }
         },
         onDone = { if (!closed) {
             apply(machine.speechFinished(it))
             if (player.playbackState == Player.STATE_ENDED && machine.snapshot().speakingId == null && machine.snapshot().pendingCount == 0) pause()
         } },
-        onFailure = { id, msg -> if (!closed) apply(machine.speechFailed(id, msg)) })
+        onFailure = { id, msg -> if (!closed) {
+            finishPlaybackBenchmark("Échec vocal : $msg")
+            apply(machine.speechFailed(id, msg))
+        } })
     private val focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
         .setAudioAttributes(android.media.AudioAttributes.Builder()
             .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
@@ -118,7 +132,12 @@ class PlaybackSession(
     }
     init {
         player.setVideoEffects(emptyList())
-        player.setVideoChangeFrameRateStrategy(C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS)
+        bandProcessor.enabled = prefs.bool("spectralDucking")
+        speech.firstAudioLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.FIRST_AUDIO, it) }
+        speech.synthesisLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.SYNTHESIS, it) }
+        speech.cacheLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.CACHE, it) }
+        holdLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.HOLD, it) }
+        player.setVideoChangeFrameRateStrategy(if (prefs.bool("matchFrameRate", true)) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF)
         handler.post(playbackTick)
         player.addAnalyticsListener(object : AnalyticsListener {
             override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, dropped: Int, elapsedMs: Long) { droppedFrames += dropped }
@@ -136,6 +155,8 @@ class PlaybackSession(
             override fun onPlaybackStateChanged(state: Int) {
                 apply(machine.setMediaReady(state == Player.STATE_READY || state == Player.STATE_ENDED))
                 if (state == Player.STATE_ENDED) {
+                    if (playbackBenchmark.active && playbackBenchmark.tick(benchmarkCounters())) saveBenchmarkReport()
+                    else finishPlaybackBenchmark("Fin du fichier avant la durée cible de l’essai")
                     apply(machine.cues(Long.MAX_VALUE, emptyList()))
                     onMessage("Fin de la vidéo.", false)
                     if (machine.snapshot().speakingId == null && machine.snapshot().pendingCount == 0) pause()
@@ -162,10 +183,12 @@ class PlaybackSession(
                 onChanged()
             }
             override fun onPlayerError(error: PlaybackException) {
+                finishPlaybackBenchmark("Erreur de lecture : ${error.errorCodeName}")
                 apply(machine.fail("Lecture impossible (${error.errorCodeName}). Le fichier, son accès ou son codec n’est peut-être pas pris en charge. Aucun fichier n’a été modifié."))
             }
             override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
                 if (reason != Player.DISCONTINUITY_REASON_SEEK) {
+                    finishPlaybackBenchmark("Discontinuité de lecture : essai interrompu")
                     apply(machine.reset(keepPlaybackIntent = true))
                     apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
                 }
@@ -178,7 +201,8 @@ class PlaybackSession(
         else @Suppress("DEPRECATION") context.registerReceiver(noisy, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
     }
     fun open(saved: SavedMedia) {
-        savePosition(); cancelIndexing(); indexedUri = null; visual.reset()
+        finishPlaybackBenchmark("Changement de vidéo ou de fichier de sous-titres")
+        savePosition(); cancelIndexing(); indexedSource = null; visual.reset()
         val epoch = ++mediaEpoch; lastRawCaption = ""; ahead.clear(); speech.cancelPreparation()
         apply(machine.reset(false)); lastCue = null; onCaption("")
         media = saved
@@ -204,6 +228,7 @@ class PlaybackSession(
     }
     fun play() {
         if (media == null) { onMessage("Ouvre d’abord une vidéo, ou lance l’essai intégré.", false); return }
+        interruptPreparation("Préparation arrêtée : reprise de la lecture. Le cache existant est conservé.")
         if (!requestFocus()) return
         if (player.playbackState == Player.STATE_ENDED) seek(0)
         if (player.playbackState == Player.STATE_IDLE) player.prepare()
@@ -218,19 +243,27 @@ class PlaybackSession(
         focusHeld = true; return true
     }
     fun pause() {
-        apply(machine.pause()); speech.cancelPreparation()
+        finishPlaybackBenchmark("Pause demandée ou application quittée")
+        interruptPreparation("Préparation arrêtée : lecture mise en pause. Le cache existant est conservé.")
+        apply(machine.pause())
         if (focusHeld) { audioManager.abandonAudioFocusRequest(focus); focusHeld = false }
         if (holdStarted != 0L) { holdLatency.add(SystemClock.elapsedRealtime()-holdStarted); holdStarted=0 }
         savePosition()
     }
     fun seek(positionMs: Long) {
-        speech.cancelPreparation()
+        finishPlaybackBenchmark("Position de lecture modifiée : extrait non comparable")
+        interruptPreparation("Préparation arrêtée : position de lecture modifiée. Le cache existant est conservé.")
         apply(machine.reset(keepPlaybackIntent = true)); lastCue = null; onCaption("")
         val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 }
         val position = if (duration != null) positionMs.coerceIn(0, duration) else positionMs.coerceAtLeast(0)
         player.seekTo(position); apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
     }
-    fun resumeVoice() { if (media != null && requestFocus()) apply(machine.resumeVoice()) }
+    fun resumeVoice() {
+        if (media != null && requestFocus()) {
+            interruptPreparation("Préparation arrêtée : reprise de la voix. Le cache existant est conservé.")
+            apply(machine.resumeVoice())
+        }
+    }
     internal fun selectedTextId(): String? {
         for (group in player.currentTracks.groups) if (group.type == C.TRACK_TYPE_TEXT)
             for (i in 0 until group.length) if (group.isTrackSelected(i)) return group.getTrackFormat(i).id
@@ -240,8 +273,8 @@ class PlaybackSession(
         if (closed || SystemClock.elapsedRealtime() - lastPreparationTick < 1000) return
         lastPreparationTick = SystemClock.elapsedRealtime()
         if (stopPreparationForHeat()) return
-        if (!prefs.narration) { cancelIndexing(); speech.cancelPreparation(); return }
         if (manualPreparation) { if (indexer == null && !speech.bulkPreparation) manualPreparation=false; return }
+        if (!prefs.narration) { cancelIndexing(); speech.cancelPreparation(); return }
         if (!machine.snapshot().wantsPlayback) return
         val texts = machine.pendingTexts() + ahead.future(selectedTextId(), player.currentPosition, prefs.filters, prefs.lookAheadCount, 600)
         speech.prepareAhead(texts)
@@ -270,9 +303,17 @@ class PlaybackSession(
     fun prepareRange(seconds: Int?) {
         val saved = media ?: return
         if (stopPreparationForHeat()) return
+        if (player.currentTracks.groups.none { group -> group.type == C.TRACK_TYPE_TEXT &&
+                (0 until group.length).any { group.isTrackSelected(it) } }) {
+            onMessage("Attends le chargement puis choisis une piste de sous-titres textuelle avant la préparation.", true); return
+        }
         refreshSettings(); manualPreparation = true
         val start = if (seconds == null) 0L else player.currentPosition
         val selected = selectedTextId()
+        // An attached sidecar does not replace the container when an embedded
+        // track is selected. Its index must not be reused for the other source.
+        val source = if (selected == "external-subtitle") saved else saved.copy(subtitlePath = null, subtitleMime = null)
+        val origin = IndexSource(source.uri, source.subtitlePath, source.subtitleMime)
         val epoch = mediaEpoch
         fun prepare(index: CueAheadIndex) {
             if (stopPreparationForHeat()) return
@@ -289,18 +330,18 @@ class PlaybackSession(
             speech.prepareBatch(text)
             onMessage("Préparation de ${text.size} segments demandée. Elle reste annulable et limitée par le cache.", false)
         }
-        if (indexedUri == saved.uri) { prepare(ahead); return }
+        if (indexedSource == origin) { prepare(ahead); return }
         indexer?.cancel()
         val task = FullSubtitleIndexer(context); indexer = task
         indexingStatus="Indexation complète en cours ; aucun décodage vidéo pour cet index"
         indexingWorker.execute {
             try {
-                val index = task.scan(saved) { percent -> handler.post {
+                val index = task.scan(source) { percent -> handler.post {
                     if (!closed && epoch == mediaEpoch && indexer === task) indexingStatus = "Indexation ${if (percent >= 0) "$percent %" else "en cours"}"
                 } }
                 handler.post {
                     if (closed || epoch != mediaEpoch || indexer !== task) return@post
-                    indexer=null; ahead=index; indexedUri=saved.uri
+                    indexer=null; ahead=index; indexedSource=origin
                     indexingStatus="Indexation terminée : ${index.count} entrées ; préparation sur la piste choisie"
                     prepare(index)
                 }
@@ -314,6 +355,95 @@ class PlaybackSession(
     }
     fun cancelIndexing() { indexer?.cancel(); indexer=null; manualPreparation=false }
     fun cancelPreparation() { cancelIndexing(); speech.cancelPreparation(); indexingStatus="Préparation annulée ; lecture et cache existant conservés" }
+    private fun interruptPreparation(message: String) {
+        val wasPreparing = isPreparing
+        cancelIndexing(); speech.cancelPreparation()
+        if (wasPreparing) {
+            indexingStatus = message
+            onMessage(message, false); onChanged()
+        }
+    }
+    /** Called before a preference is mutated; applying it still happens after the edit. */
+    fun beforeSettingsChange() {
+        finishPlaybackBenchmark("Réglages modifiés : essai interrompu avant la modification")
+        interruptPreparation("Préparation arrêtée : réglages modifiés. Applique les réglages puis relance la préparation ; le cache existant est conservé.")
+    }
+    private fun benchmarkCounters(): PlaybackBenchmark.Counters {
+        val videoCounters = player.videoDecoderCounters
+        videoCounters?.ensureUpdated()
+        return PlaybackBenchmark.Counters(
+            SystemClock.elapsedRealtime(), android.os.Process.getElapsedCpuTime(), player.currentPosition.coerceAtLeast(0),
+            (videoCounters?.droppedBufferCount ?: droppedFrames).toLong(), speech.hits.toLong(), speech.misses.toLong())
+    }
+    private fun benchmarkMediaFingerprint(): String = PlaybackBenchmark.fingerprint(listOf(
+        media?.uri.orEmpty(), media?.subtitlePath.orEmpty(), media?.subtitleMime.orEmpty(), selectedTextId().orEmpty()))
+    private fun benchmarkSettingsFingerprint(): String {
+        val tracks = player.currentTracks.groups.flatMap { group -> (0 until group.length).mapNotNull { i ->
+            if (!group.isTrackSelected(i)) null else group.getTrackFormat(i).let { f ->
+                "${group.type}:${f.id}:${f.language}:${f.sampleMimeType}:${f.codecs}:${f.width}:${f.height}:${f.frameRate}"
+            }
+        } }
+        return PlaybackBenchmark.fingerprint(listOf(
+            speech.cacheConfigurationFingerprint, prefs.narration.toString(), prefs.mode.name,
+            prefs.speechRate.toString(), prefs.adaptiveMax.toString(), prefs.allowedLagMs.toString(),
+            prefs.filters.toString(), prefs.cacheEnabled.toString(), prefs.cacheBytes.toString(),
+            prefs.lookAheadSeconds.toString(), prefs.lookAheadCount.toString(), prefs.resumePolicy.name,
+            prefs.movieVolume.toString(), prefs.duckVolume.toString(), prefs.voiceVolume.toString(),
+            prefs.int("duckAttack",160,0,2000).toString(), prefs.int("duckRelease",500,0,2000).toString(),
+            prefs.int("duckHold",350,0,2000).toString(), prefs.bool("spectralDucking").toString(),
+            prefs.bool("matchFrameRate",true).toString(), prefs.bool("preferSoftware").toString(),
+            prefs.int("imageMode",0,0,2).toString(), visual.margins.toString(), visual.contrast.toString(),
+            visual.brightness.toString(), visual.bypass.toString(), visual.detailedScaling.toString(),
+            visual.scalingTarget, player.playbackParameters.toString()) + tracks)
+    }
+    fun startPlaybackBenchmark(seconds: Int) {
+        if (media == null || player.playbackState != Player.STATE_READY) {
+            onMessage("Ouvre une vidéo et attends qu’elle soit prête avant l’essai de lecture.", true); return
+        }
+        refreshSettings()
+        if (prefs.narration && !speech.isReady) {
+            onMessage("Choisis d’abord une voix prête, ou désactive la vocalisation pour mesurer seulement la vidéo.", true); return
+        }
+        if (!requestFocus()) return
+        val version = runCatching { context.packageManager.getPackageInfo(context.packageName,0).versionName }.getOrNull() ?: "inconnue"
+        val identity = PlaybackBenchmark.Identity(benchmarkMediaFingerprint(), benchmarkSettingsFingerprint(),
+            "${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE}", speech.engineDiagnosticIdentity,
+            version, speech.cacheSize)
+        playbackBenchmark.start(seconds.coerceIn(1,3600) * 1000L, identity, benchmarkCounters())
+        apply(machine.setMediaReady(true)); apply(machine.resumeVoice())
+        if (!machine.snapshot().wantsPlayback) {
+            finishPlaybackBenchmark("Lecture non démarrée : voix ou reprise explicite en attente"); return
+        }
+        onMessage("Essai de ${seconds.coerceIn(1,3600)} secondes de vidéo lancé à la position actuelle. Les pauses vocales comptent dans le temps réel. Le lecteur s’arrêtera à la fin de l’extrait.", false)
+    }
+    fun replayPlaybackBenchmark() {
+        val previous = playbackBenchmark.snapshot()
+        if (previous == null || previous.active || previous.identity.mediaFingerprint != benchmarkMediaFingerprint()) {
+            onMessage("Pour rejouer le même extrait, conserve la même vidéo et la même piste, puis termine l’essai en cours.", true); return
+        }
+        seek(previous.initialPositionMs)
+        // ExoPlayer may buffer after the seek. Start only after it is ready;
+        // never turn a delayed callback into an unsolicited playback command.
+        onMessage("Retour à la position initiale effectué. Relance l’essai après chargement, avec la même durée (${previous.requestedMs / 1000} secondes).", false)
+    }
+    fun stopPlaybackBenchmark() {
+        finishPlaybackBenchmark("Essai terminé explicitement par l’utilisateur")
+        pause()
+    }
+    fun finishPlaybackBenchmark(reason: String) {
+        if (!playbackBenchmark.active) return
+        if (holdStarted != 0L) { holdLatency.add(SystemClock.elapsedRealtime()-holdStarted); holdStarted=0 }
+        playbackBenchmark.finish(benchmarkCounters(), reason)
+        saveBenchmarkReport()
+    }
+    private fun saveBenchmarkReport() {
+        benchmarkStorage.edit().putString("latest", playbackBenchmark.report()).apply()
+    }
+    fun playbackBenchmarkReport(): String {
+        val current = if (playbackBenchmark.snapshot() != null) playbackBenchmark.report()
+            else benchmarkStorage.getString("latest", null) ?: "Aucun essai de lecture chronométré lancé"
+        return "$current\n\nLes fichiers, positions et réglages sont identifiés pour comparer un même extrait. Seuls les événements terminés pendant l’essai alimentent ses distributions. Le CPU du moteur vocal externe et la charge GPU/NPU ne sont pas mesurés par le lecteur."
+    }
     fun benchmark() {
         if (stopPreparationForHeat()) return
         refreshSettings(); speech.synthesisLatency.clear(); speech.firstAudioLatency.clear(); speech.cacheLatency.clear(); holdLatency.clear()
@@ -348,13 +478,26 @@ class PlaybackSession(
             "Délais synthèse en fichier : ${speech.synthesisLatency.summary()}\n" +
             "Délais lecture du cache : ${speech.cacheLatency.summary()}\n" +
             "Pauses de confort terminées : ${holdLatency.summary()}\n" +
-            "$indexingStatus\nProfil : ${prefs.int("performanceProfile", 1, 0, 2)} ; anticipation ${prefs.lookAheadSeconds} secondes estimées\n" +
+            "$indexingStatus\nPréparation : anticipation ${prefs.lookAheadSeconds} s estimées, ${prefs.lookAheadCount} segments max, cache ${prefs.cacheBytes / 1048576} Mio\n" +
             "Audio expérimental : ${bandProcessor.enabled}; ${bandProcessor.processedSamples} échantillons PCM16 traités (pas de séparation des sources)\n" +
             "Effets GPU : contraste ${visual.contrast}, luminosité ${visual.brightness}, marges validées ${visual.margins.nonzero()}, HDR ${visual.hdr}, comparaison original ${visual.bypass}\n" +
-            "GPU/NPU du moteur vocal : non exposés par l’API TTS Android. Aucun benchmark OnePlus n’est simulé."
+            "Agrandissement détaillé : demandé ${visual.detailedScaling}, actif ${visual.detailedScalingActive}, cible ${visual.scalingTarget}\n" +
+            "GPU/NPU du moteur vocal : non exposés par l’API TTS Android. Aucun benchmark OnePlus n’est simulé.\n\n${playbackBenchmarkReport()}"
     }
-    fun repeatLast() { if (requestFocus()) apply(machine.preview()) }
-    fun previewVoice() { if (requestFocus()) apply(machine.preview("Bonjour. Cette voix lira les sous-titres de votre vidéo. Vous pouvez régler sa vitesse et le volume du film.")) }
+    fun repeatLast() {
+        finishPlaybackBenchmark("Répétition d’une réplique : essai interrompu")
+        if (requestFocus()) {
+            interruptPreparation("Préparation arrêtée : répétition de la réplique. Le cache existant est conservé.")
+            apply(machine.preview())
+        }
+    }
+    fun previewVoice() {
+        finishPlaybackBenchmark("Essai de voix : lecture comparative interrompue")
+        if (requestFocus()) {
+            interruptPreparation("Préparation arrêtée : essai de la voix. Le cache existant est conservé.")
+            apply(machine.preview("Bonjour. Cette voix lira les sous-titres de votre vidéo. Vous pouvez régler sa vitesse et le volume du film."))
+        }
+    }
     fun refreshSettings() {
         pause(); speech.applyPreferences()
         if (appliedFilters != prefs.filters) {
@@ -442,6 +585,7 @@ class PlaybackSession(
         onChanged()
     }
     fun updateMix() {
+        finishPlaybackBenchmark("Mélange sonore modifié : essai interrompu")
         fade?.let { handler.removeCallbacks(it) }
         player.volume = (prefs.movieVolume * if (ducked) prefs.duckVolume else 1f).coerceIn(0f, 1f)
     }

@@ -6,7 +6,7 @@ import kotlin.math.ceil
 
 /** Punctuation is retained for the TTS engine. No silence is removed from audio. */
 object LinguisticSegments {
-    const val VERSION = "fr-boundaries-4"
+    const val VERSION = "fr-boundaries-5"
     private val abbreviations = setOf("m", "mm", "mme", "mmes", "mlle", "dr", "pr", "prof", "st", "ste", "mr", "mrs", "ms", "etc", "cf", "av", "art", "vol", "p", "pp", "fig", "n", "no")
     private val speaker = Regex("^\\s*(?:[-–—]\\s+|[\\p{Lu}][\\p{Lu}\\p{N} _'’.-]{0,35}:\\s+)")
     fun split(text: String): List<String> {
@@ -132,7 +132,19 @@ object AdaptiveTiming {
 class LatencyWindow(private val capacity: Int = 512) {
     init { require(capacity in 1..8192) }
     private val values = ArrayDeque<Long>()
-    @Synchronized fun add(ms: Long) { if (ms >= 0) { if (values.size == capacity) values.removeFirst(); values.addLast(ms) } }
+    @Volatile private var observer: ((Long) -> Unit)? = null
+    fun setObserver(value: ((Long) -> Unit)?) { observer = value }
+    fun add(ms: Long) {
+        if (ms < 0) return
+        val notify = synchronized(this) {
+            if (values.size == capacity) values.removeFirst()
+            values.addLast(ms)
+            observer
+        }
+        // Observers may inspect the window or another recorder. Never call out
+        // while holding this window's lock, and never replace its own history.
+        notify?.invoke(ms)
+    }
     @Synchronized fun clear() = values.clear()
     @Synchronized fun summary(): String {
         if (values.isEmpty()) return "aucune mesure"

@@ -53,8 +53,20 @@ class AndroidSpeech(
     private var activePlanning: ((Long) -> Float)? = null
     private var fileRateAdjustmentRejected = false
     private var synthText = ""
+    private var activeBaseRate = 1f
+    private var synthBaseRate = 1f
+    private data class VoiceSettings(
+        val engine: String, val voice: String, val rate: Float,
+        val filters: SpeechTools.Filters, val modelRevision: Int
+    )
+    private fun voiceSettings() = VoiceSettings(preferences.enginePackage, preferences.voiceName,
+        preferences.speechRate, preferences.filters, preferences.int("modelRevision", 0, 0, 100000))
+    private var configuredSettings: VoiceSettings? = null
     private var configuredEngine = ""
     private var configuration = ""
+    private var engineIdentity = "Voix non configurée"
+    val cacheConfigurationFingerprint: String get() = SpeechTools.key("benchmark-configuration", configuration)
+    val engineDiagnosticIdentity: String get() = engineIdentity
     private var activeId: String? = null
     private var live = false
     private var audio: MediaPlayer? = null
@@ -66,6 +78,7 @@ class AndroidSpeech(
     private var pending = ArrayDeque<String>()
     private var lookup = false
     private var lookupText: String? = null
+    private var publishing = false
     private var preparationEpoch = 0L
     private var lastRequested: List<String> = emptyList()
     var choices: List<Choice> = emptyList(); private set
@@ -84,10 +97,15 @@ class AndroidSpeech(
         Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE), 0).map {
         EngineChoice(it.serviceInfo.packageName, it.loadLabel(context.packageManager).toString())
     }.distinctBy { it.name }.sortedBy { it.label }
+    private fun engineVersion(pkg: String): String = runCatching {
+        val info = context.packageManager.getPackageInfo(pkg, 0)
+        "${info.versionName}:${info.lastUpdateTime}:${if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()}"
+    }.getOrDefault("version indisponible")
     fun retry() { if (!closed) connect() }
     private fun connect() {
         stop(); generation++; initialized = false; isReady = false
-        choices = emptyList(); configuration = ""; preparationDisabled = false
+        choices = emptyList(); configuration = ""; configuredSettings = null; preparationDisabled = false
+        engineIdentity = "Voix non configurée"
         runCatching { engine?.shutdown() }; engine = null
         configuredEngine = preferences.enginePackage
         val ticket = generation
@@ -141,21 +159,27 @@ class AndroidSpeech(
                 isReady = false; onAvailability(false, "Aucune voix locale prête. Ouvre le moteur choisi et télécharge une voix, puis actualise ici."); return
             }
             preferences.voiceName = voice.name; language = voice.locale.language
-            if (tts.setSpeechRate(preferences.speechRate) == TextToSpeech.ERROR) {
+            val settings = voiceSettings()
+            if (tts.setSpeechRate(settings.rate) == TextToSpeech.ERROR) {
                 isReady = false; onAvailability(false, "Le moteur refuse cette vitesse."); return
             }
-            val pkg = configuredEngine.ifEmpty { tts.defaultEngine ?: "default" }
-            val version = runCatching {
-                val info = context.packageManager.getPackageInfo(pkg, 0)
-                "${info.versionName}:${info.lastUpdateTime}:${if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()}"
-            }.getOrNull()
-            val signature = "v3|$pkg|$version|${voice.name}|${voice.locale}|${voice.quality}|${voice.features?.sorted()}|${preferences.speechRate}|${preferences.filters}|${fr.soustitresvoix.core.LinguisticSegments.VERSION}|${preferences.int("modelRevision", 0, 0, 100000)}"
+            val declaredDefault = tts.defaultEngine.orEmpty()
+            val pkg = configuredEngine.ifEmpty { declaredDefault.ifEmpty { "default" } }
+            val version = engineVersion(pkg)
+            // Android may fall back from the requested engine without exposing
+            // its effective package through the public API. Conservatively
+            // invalidate if any possible installed fallback changes version.
+            val inventory = engines().map { it.name }.sorted().joinToString(";") { "$it:${engineVersion(it)}" }
+            val signature = "v3|$pkg|$version|${voice.name}|${voice.locale}|${voice.quality}|${voice.features?.sorted()}|${settings.rate}|${settings.filters}|${fr.soustitresvoix.core.LinguisticSegments.VERSION}|${settings.modelRevision}|default=$declaredDefault|engines=$inventory"
             if (signature != configuration) {
                 stop(); configuration = signature; generation++; preparationDisabled = false
                 durations.clear()
                 // Namespaced keys preserve valid audio across launches. No unconditional purge.
                 io.execute { cache.initialize(); cacheSize = cache.size() }
             }
+            configuredSettings = settings
+            engineIdentity = "Moteur demandé : $pkg ; version : $version ; défaut Android déclaré : ${declaredDefault.ifEmpty { "inconnu" }} ; " +
+                "voix exposée : ${voice.name} (${voice.locale}). Un éventuel moteur de secours Android n’est pas attestable par l’API publique."
             isReady = true; onAvailability(true, "Voix : ${voice.locale.getDisplayName(Locale.FRENCH)}. Moteur demandé : $pkg.")
         } catch (_: RuntimeException) { isReady = false; onAvailability(false, "Le moteur vocal n’a pas fourni ses voix.") }
     }
@@ -164,7 +188,11 @@ class AndroidSpeech(
         if (!isReady || text.length > TextToSpeech.getMaxSpeechInputLength()) {
             main.post { if (!closed) onFailure(id, "voix indisponible ou texte trop long") }; return
         }
+        if (configuredSettings != voiceSettings()) {
+            main.post { if (!closed) onFailure(id, "réglages vocaux modifiés ; applique les réglages puis reprends cette réplique") }; return
+        }
         activeId = id; activeText = text; remainingText = remaining
+        activeBaseRate = requireNotNull(configuredSettings).rate
         activeBudget = budget ?: { availableMs }; activeAdaptive = adaptive; planningFloor = forecast
         activePlanning = planning; fileRateAdjustmentRejected = false
         requestStarted = SystemClock.elapsedRealtime(); audioStarted = 0
@@ -176,6 +204,9 @@ class AndroidSpeech(
             val entry = runCatching { cache.get(key) }.getOrNull()
             main.post {
                 if (closed || generation != ticket || activeId != id) return@post
+                if (configuredSettings != voiceSettings()) {
+                    finish(id, "réglages vocaux modifiés ; applique les réglages puis reprends cette réplique"); return@post
+                }
                 cacheLatency.add(SystemClock.elapsedRealtime() - lookupStarted)
                 if (entry == null) { misses++; direct(id, text) }
                 else { hits++; playFile(id, text, entry, availableMs, adaptive) }
@@ -211,27 +242,30 @@ class AndroidSpeech(
     }
     private fun direct(id: String, text: String) {
         if (activeId != id || closed) return
+        if (configuredSettings != voiceSettings()) {
+            finish(id, "réglages vocaux modifiés ; applique les réglages puis reprends cette réplique"); return
+        }
         cancelPreparation(keepPending = true)
         val tts = engine ?: return finish(id, "moteur indisponible")
         timingSource = "estimation calibrée (lecture directe)"
-        lastFactor = plannedFactor(durations.estimate(text, preferences.speechRate)); live = true
+        lastFactor = plannedFactor(durations.estimate(text, activeBaseRate)); live = true
         try {
-            val resultRate = tts.setSpeechRate((preferences.speechRate * lastFactor).coerceAtMost(5f))
+            val resultRate = tts.setSpeechRate((activeBaseRate * lastFactor).coerceAtMost(5f))
             if (resultRate == TextToSpeech.ERROR) {
                 lastFactor = 1f
-                if (tts.setSpeechRate(preferences.speechRate) == TextToSpeech.ERROR) {
+                if (tts.setSpeechRate(activeBaseRate) == TextToSpeech.ERROR) {
                     finish(id, "le moteur refuse également la vitesse de base"); return
                 }
                 preparationStatus = "Accélération refusée par le moteur ; mode confort conservé"
             }
             val params = Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, preferences.voiceVolume) }
-            arm(id, (text.length * 180.0 / preferences.speechRate + 15_000).toLong())
+            arm(id, (text.length * 180.0 / activeBaseRate + 15_000).toLong())
             if (tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, id) == TextToSpeech.ERROR) finish(id, "phrase refusée")
         } catch (_: RuntimeException) { finish(id, "transmission au moteur impossible") }
     }
     private fun plannedFactor(audioMs: Long): Float {
         if (!activeAdaptive) return 1f
-        val remainingMs = if (remainingText.isBlank()) 0L else durations.estimate(remainingText, preferences.speechRate)
+        val remainingMs = if (remainingText.isBlank()) 0L else durations.estimate(remainingText, activeBaseRate)
         val forecast = activePlanning?.invoke(audioMs) ?: planningFloor
         return maxOf(AdaptiveTiming.factor(audioMs, remainingMs, activeBudget?.invoke(), preferences.adaptiveMax), forecast)
             .coerceIn(1f, preferences.adaptiveMax)
@@ -256,6 +290,7 @@ class AndroidSpeech(
     fun prepareBatch(texts: List<String>) {
         cancelPreparation()
         if (closed || !isReady || !preferences.cacheEnabled || preparationDisabled) { preparationStatus = "Choisis une voix et active le cache avant la préparation"; return }
+        if (!preparationSettingsCurrent()) return
         if (texts.any { it.length > 1000 }) {
             preparationStatus = "Préparation refusée : un segment dépasse la limite vocale. Aucun segment n’a été supprimé silencieusement."; return
         }
@@ -269,25 +304,37 @@ class AndroidSpeech(
         pump()
     }
     fun prepareAhead(texts: List<String>) {
+        if (!preparationSettingsCurrent()) return
         if (bulkPreparation) return
         if (closed || !isReady || !preferences.cacheEnabled || preparationDisabled) return
         var total = 0L
         val requested = texts.asSequence().filter { it.isNotBlank() && it.length <= 1000 }.distinct()
             .take(preferences.lookAheadCount).takeWhile {
                 val keep = total < preferences.lookAheadSeconds * 1000L
-                total += durations.estimate(it, preferences.speechRate); keep
+                total += durations.estimate(it, requireNotNull(configuredSettings).rate); keep
             }.toList()
         if (requested == lastRequested) return
         lastRequested = requested; pending.clear(); pending.addAll(requested); pump()
     }
     private var synthKey = ""
     private var synthStarted = 0L
+    private fun preparationSettingsCurrent(): Boolean {
+        if (closed) return false
+        if (!preferences.cacheEnabled || (isReady && configuredSettings != voiceSettings())) {
+            cancelPreparation()
+            preparationStatus = if (!preferences.cacheEnabled) "Préparation arrêtée : cache vocal désactivé"
+                else "Préparation arrêtée : réglages vocaux modifiés. Applique les réglages et relance la préparation."
+            return false
+        }
+        return true
+    }
     private fun pump() {
-        if (bulkPreparation && pending.isEmpty() && synthId == null && !lookup) {
+        if (!preparationSettingsCurrent()) return
+        if (bulkPreparation && pending.isEmpty() && synthId == null && !lookup && !publishing) {
             bulkPreparation = false
             preparationStatus = "Préparation parcourue ; ${preparedAudioMs / 1000} s nouvellement synthétisées. Cache borné : les plus anciennes peuvent être évincées."
         }
-        if (closed || !isReady || live || (activeId != null && audio == null) || synthId != null || lookup ||
+        if (closed || !isReady || live || (activeId != null && audio == null) || synthId != null || lookup || publishing ||
             preparationDisabled || !preferences.cacheEnabled || pending.isEmpty()) return
         val text = pending.removeFirst(); val ticket = generation; val epoch = preparationEpoch
         val key = SpeechTools.key(configuration, text); lookup = true; lookupText = text
@@ -298,14 +345,18 @@ class AndroidSpeech(
             main.post {
                 lookup = false
                 val ownedText = lookupText; lookupText = null
-                if (!closed && ticket == generation) cacheLatency.add(SystemClock.elapsedRealtime() - lookupStarted)
-                if (closed || ticket != generation || epoch != preparationEpoch || live || (activeId != null && audio == null)) {
+                if (!closed && ticket == generation && epoch == preparationEpoch)
+                    cacheLatency.add(SystemClock.elapsedRealtime() - lookupStarted)
+                val settingsCurrent = preparationSettingsCurrent()
+                if (closed || ticket != generation || epoch != preparationEpoch || !settingsCurrent || live || (activeId != null && audio == null)) {
                     // A foreground request can arrive before its cache lookup completes.
                     // Preserve this pending item; explicit cancellation never restores it.
                     if (!closed && ticket == generation && epoch == preparationEpoch && ownedText != null)
                         pending.addFirst(ownedText)
                     if (!io.isShutdown) file?.let { io.execute { it.delete() } }
-                    if (!closed && ticket == generation) pump()
+                    // A new configuration may already have queued its own lot
+                    // while this old disk lookup was finishing.
+                    if (!closed) pump()
                     return@post
                 }
                 if (exists) { pump(); return@post }
@@ -314,10 +365,13 @@ class AndroidSpeech(
                     return@post
                 }
                 val id = "cache-${++synthSequence}"
-                synthId = id; synthFile = file; synthKey = key; synthText = text; synthStarted = SystemClock.elapsedRealtime()
+                synthId = id; synthFile = file; synthKey = key; synthText = text
+                synthBaseRate = requireNotNull(configuredSettings).rate; synthStarted = SystemClock.elapsedRealtime()
                 preparationStatus = "Préparation locale en cours"
                 try {
-                    engine?.setSpeechRate(preferences.speechRate)
+                    if (engine?.setSpeechRate(synthBaseRate) != TextToSpeech.SUCCESS) {
+                        complete(id, "vitesse de préparation refusée"); return@post
+                    }
                     val result = engine?.synthesizeToFile(text, Bundle(), file, id)
                     if (result != TextToSpeech.SUCCESS) complete(id, "synthèse en fichier refusée")
                     main.postDelayed({ if (synthId == id) {
@@ -332,21 +386,31 @@ class AndroidSpeech(
         if (id == null || closed) return@post
         if (id == synthId) {
             val file = synthFile ?: return@post
-            val key = synthKey; val ticket = generation; val preparedText = synthText
+            val key = synthKey; val ticket = generation; val epoch = preparationEpoch
+            val preparedText = synthText; val preparedRate = synthBaseRate
             synthId = null; synthFile = null
             lastSynthesisMs = SystemClock.elapsedRealtime() - synthStarted; lastAudioMs = 0; synthesisLatency.add(lastSynthesisMs)
             if (error != null) {
                 io.execute { file.delete() }; bulkPreparation = false; preparationDisabled = true
                 preparationStatus = "Préparation indisponible avec ce moteur ; voix directe conservée"
             } else {
+                publishing = true
                 io.execute {
                     val result = runCatching { cache.put(key, file) }.getOrNull(); cacheSize = cache.size()
-                    main.post { if (!closed && ticket == generation) {
-                        if (result != null) { preparedCount++; lastAudioMs = result.durationMs; preparedAudioMs += result.durationMs; durations.observe(preparedText, result.durationMs, preferences.speechRate)
-                            preparationStatus = "$preparedCount segments préparés localement" }
-                        else { bulkPreparation = false; preparationDisabled = true; preparationStatus = "Format audio du moteur non exploitable ; voix directe conservée" }
-                        pump()
-                    } }
+                    main.post {
+                        publishing = false
+                        if (!closed && ticket == generation && epoch == preparationEpoch) {
+                            if (result != null) {
+                                preparedCount++; lastAudioMs = result.durationMs; preparedAudioMs += result.durationMs
+                                durations.observe(preparedText, result.durationMs, preparedRate)
+                                preparationStatus = "$preparedCount segments préparés localement"
+                            } else {
+                                bulkPreparation = false; preparationDisabled = true
+                                preparationStatus = "Format audio du moteur non exploitable ; voix directe conservée"
+                            }
+                        }
+                        if (!closed) pump()
+                    }
                 }
             }
         } else if (id == activeId) finish(id, error)
@@ -363,7 +427,7 @@ class AndroidSpeech(
     private fun finishOnMain(id: String, error: String?) {
         if (closed || activeId != id) return
         if (error == null && live && audioStarted > 0) {
-            durations.observe(activeText, ((SystemClock.elapsedRealtime() - audioStarted) * lastFactor).toLong(), preferences.speechRate)
+            durations.observe(activeText, ((SystemClock.elapsedRealtime() - audioStarted) * lastFactor).toLong(), activeBaseRate)
         }
         activeId = null; live = false; releaseAudio()
         watchdog?.let { main.removeCallbacks(it) }; watchdog = null

@@ -4,6 +4,8 @@
 
 Décodage vidéo via Media3/MediaCodec et ses décodeurs disponibles, sélection normale ou préférence logicielle explicite. Effets graphiques Media3 de recadrage, luminosité et contraste SDR ; leur pipeline peut utiliser OpenGL sur l’appareil. Préparation et hachage WAV hors du thread d’interface ; indexation séquentielle sans décoder une seconde vidéo. Métriques séparant processus lecteur et moteur TTS externe. Le diagnostic ne prétend pas mesurer l’utilisation Adreno ou Hexagon.
 
+La révision 0.3.1 ajoute une mise à l’échelle Lanczos facultative dans le pipeline graphique existant. La cible dépend de la surface affichée, avec un côté maximal de 3 840 pixels ; le redimensionnement conserve les proportions avant le cadrage choisi du lecteur. La comparaison à l’original désactive aussi ce filtre. Les traitements restent exclus pour les transferts HDR/HLG/Dolby Vision reconnus. Un filtre de rééchantillonnage peut améliorer le rendu d’un redimensionnement, mais ne retrouve pas des détails absents du fichier. Son coût et son intérêt visuel doivent être comparés sur le téléphone ; il est désactivé par défaut.
+
 ## Non intégré ni validé sur OnePlus 15
 
 Aucun backend vocal GPU/NPU, modèle ONNX intégré, contexte QNN spécifique OnePlus, benchmark comparatif CPU/GPU/NPU ou nouvelle bibliothèque complète de codecs. Aucun dispositif ne force un moteur externe à utiliser QNN.
@@ -16,6 +18,8 @@ Aucun backend vocal GPU/NPU, modèle ONNX intégré, contexte QNN spécifique On
 - Exemple d’un véritable moteur TTS Android spécialisé QNN : https://github.com/cedgeremek/kokoro-offline-tts-android
 - Ses limites matérielles : https://github.com/cedgeremek/kokoro-offline-tts-android/blob/main/docs/COMPATIBILITY.md
 - Effets vidéo Media3 : https://developer.android.com/reference/androidx/media3/exoplayer/ExoPlayer
+- Lanczos Media3 : https://developer.android.com/reference/androidx/media3/effect/LanczosResample
+- Implémentation exacte de la dépendance 1.11.1 : https://github.com/androidx/media/blob/1.11.1/libraries/effect/src/main/java/androidx/media3/effect/LanczosResample.java
 
 L’exemple Kokoro étudié publie une validation sur Galaxy S24 Ultra / Snapdragon 8 Gen 3 / HTP v75, avec voix anglaises. L’auteur distingue contextes matériels spécifiques et repli CPU. Cela n’est pas une preuve de fonctionnement NPU sur le OnePlus 15 et ne constitue pas une voix française prête à intégrer.
 

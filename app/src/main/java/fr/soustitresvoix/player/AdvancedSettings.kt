@@ -11,7 +11,13 @@ import androidx.media3.common.util.UnstableApi
 import fr.soustitresvoix.core.SpeechTools
 
 @UnstableApi
-class AdvancedSettings(private val activity: Activity, private val session: PlaybackSession, private val prefs: PlayerPreferences) {
+class AdvancedSettings(private val activity: Activity, private val session: PlaybackSession, private val prefs: PlayerPreferences,
+    private val startBenchmark: (Int) -> Unit = { session.startPlaybackBenchmark(it) }) {
+    private fun beforePreferenceChange(key: String) {
+        if (key in setOf("cache", "cacheMiB", "lookAheadCount", "lookAheadSeconds", "skipSpeakers", "skipSongs", "skipNotes")) {
+            session.beforeSettingsChange()
+        }
+    }
     private fun dp(n: Int) = (n * activity.resources.displayMetrics.density).toInt()
     private fun text(value: String) = TextView(activity).apply {
         text = value; textSize = 18f; setTextColor(Color.WHITE); setPadding(dp(8), dp(8), dp(8), dp(8))
@@ -22,7 +28,7 @@ class AdvancedSettings(private val activity: Activity, private val session: Play
     private fun check(column: LinearLayout, label: String, key: String, default: Boolean = false) {
         column.addView(CheckBox(activity).apply {
             text = label; textSize = 18f; minHeight = dp(56); isChecked = prefs.bool(key, default)
-            setOnCheckedChangeListener { _, value -> prefs.putBool(key, value) }
+            setOnCheckedChangeListener { _, value -> beforePreferenceChange(key); prefs.putBool(key, value) }
         })
     }
     private fun number(column: LinearLayout, label: String, key: String, default: Int, min: Int, max: Int, step: Int, unit: String) {
@@ -30,7 +36,12 @@ class AdvancedSettings(private val activity: Activity, private val session: Play
         fun refresh() { caption.text = "$label : ${prefs.int(key, default, min, max)} $unit" }
         val row = LinearLayout(activity)
         fun control(sign: String, delta: Int) {
-            row.addView(button("$sign $step $unit") { prefs.putInt(key, (prefs.int(key, default, min, max) + delta).coerceIn(min, max)); refresh() },
+            row.addView(button("$sign $step $unit") {
+                val current = prefs.int(key, default, min, max)
+                val next = (current + delta).coerceIn(min, max)
+                if (next != current) { beforePreferenceChange(key); prefs.putInt(key, next) }
+                refresh()
+            },
                 LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
         control("−", -step); control("+", step); column.addView(row); refresh()
@@ -47,6 +58,7 @@ class AdvancedSettings(private val activity: Activity, private val session: Play
             val names = arrayOf("Moteur par défaut du téléphone") + engines.map { "${it.label} — ${it.name}" }
             AlertDialog.Builder(activity).setTitle("Ne modifie pas le moteur de TalkBack")
                 .setItems(names) { _, index ->
+                    session.beforeSettingsChange()
                     prefs.enginePackage = if (index == 0) "" else engines[index - 1].name
                     session.refreshSettings()
                 }.setNegativeButton("Annuler", null).show()
@@ -57,7 +69,7 @@ class AdvancedSettings(private val activity: Activity, private val session: Play
             runCatching { activity.startActivity(intent ?: Intent("com.android.settings.TTS_SETTINGS")) }
                 .onFailure { notice("Ouvre le moteur vocal depuis la liste des applications Android.") }
         })
-        column.addView(button("Actualiser les moteurs et les voix") { session.pause(); session.speech.retry() })
+        column.addView(button("Actualiser les moteurs et les voix") { session.beforeSettingsChange(); session.pause(); session.speech.retry() })
         column.addView(button("Catalogue des moteurs et modèles — sources vérifiées") { VoiceCatalogue.show(activity) })
         column.addView(button("Décodeurs disponibles / secours logiciel") { CodecTools.show(activity, session) })
         column.addView(text("Télécharge une voix DANS son moteur, puis choisis ce moteur ici et une voix hors ligne. Un fichier de modèle isolé ne s’installe pas directement dans ce lecteur. La qualité et l’accélération CPU/GPU/NPU dépendent du moteur choisi."))
@@ -80,16 +92,18 @@ class AdvancedSettings(private val activity: Activity, private val session: Play
         column.addView(button("Choisir le profil de préparation") {
             AlertDialog.Builder(activity).setTitle("Paramètres réels — aucun NPU activé artificiellement")
                 .setItems(arrayOf("Économie : 15 s, 64 Mio, 32 segments max", "Équilibré : 45 s, 256 Mio, 128 segments max", "Intensive : 180 s, 1 024 Mio, 512 segments max")) { _, i ->
+                    session.beforeSettingsChange()
                     prefs.putInt("performanceProfile",i); prefs.putBool("cache",true)
                     prefs.putInt("lookAheadSeconds",intArrayOf(15,45,180)[i]); prefs.putInt("cacheMiB",intArrayOf(64,256,1024)[i])
                     prefs.putInt("lookAheadCount",intArrayOf(32,128,512)[i]); notice("Profil enregistré. Rouvre ce panneau pour actualiser les nombres. Le traitement vocal externe et ses processeurs restent gérés par ce moteur.")
                 }.setNegativeButton("Fermer",null).show()
         })
         column.addView(button("Modèle du moteur mis à jour : invalider les anciennes voix préparées") {
+            session.beforeSettingsChange()
             prefs.putInt("modelRevision",prefs.int("modelRevision",0,0,99999)+1); session.refreshSettings()
             notice("Nouvelle identité de cache. À utiliser lorsqu’un modèle est remplacé DANS un moteur sans mise à jour de son application ; Android ne fournit pas forcément l’identité de ce modèle interne.")
         })
-        column.addView(button("Vider le cache vocal") { session.pause(); session.speech.clearCache(); notice("Nettoyage du cache demandé. Les vidéos originales ne sont pas modifiées.") })
+        column.addView(button("Vider le cache vocal") { session.beforeSettingsChange(); session.pause(); session.speech.clearCache(); notice("Nettoyage du cache demandé. Les vidéos originales ne sont pas modifiées.") })
         column.addView(button("Choisir la reprise après Pause") {
             options("Reprise vocale", arrayOf("Reprendre la réplique entière", "Reprendre le segment de phrase interrompu",
                 "Attendre le bouton Reprendre la voix"), "resumePolicy", 0)
@@ -119,9 +133,29 @@ class AdvancedSettings(private val activity: Activity, private val session: Play
         check(column, "Double toucher et glissement horizontal : déplacement temporel", "gestureSeek", true)
         check(column, "Glissement vertical : luminosité à gauche, son du film à droite", "gestureLevels", true)
         check(column, "Pincement pour zoomer, puis glissement pour déplacer l’image", "gestureZoom", true)
-        column.addView(text("Avec l’exploration tactile TalkBack, ces gestes sont désactivés et les commandes ne disparaissent pas automatiquement. Retour déverrouille d’abord, puis quitte le plein écran. Le mode Adapter conserve l’image entière."))
+        column.addView(text("Avec l’exploration tactile TalkBack, ces gestes sont désactivés et les commandes ne disparaissent pas automatiquement. Retour déverrouille d’abord, puis quitte le plein écran. Le mode « Image entière, proportions originales » conserve le cadre."))
         check(column, "Adapter la cadence d’affichage si transition sans coupure disponible", "matchFrameRate", true)
-        column.addView(button("Banc d’essai local : six extraits reproductibles") { session.benchmark() })
+        column.addView(text("Banc d’essai : synthèse et lecture réelle"))
+        column.addView(button("Préparation vocale : six textes reproductibles") { session.benchmark() })
+        column.addView(button("Banc d’essai de lecture : 2 ou 30 minutes") {
+            AlertDialog.Builder(activity).setTitle("Mesurer le même extrait de vidéo")
+                .setMessage("L’essai commence à la position actuelle. Il mesure la lecture réelle avec tes réglages : latences vocales, synthèse, cache, pauses, images abandonnées et CPU du lecteur. Les pauses prolongent le temps réel. Le lecteur s’arrête à la fin de l’extrait. Une pause, un déplacement ou un changement de réglage interrompt l’essai et conserve ses résultats. Pour comparer, utilise le même fichier, la même piste et la même position ; distingue cache froid et cache déjà préparé.")
+                .setPositiveButton("Court : 2 minutes") { _, _ -> startBenchmark(120) }
+                .setNeutralButton("Prolongé : 30 minutes") { _, _ -> startBenchmark(1800) }
+                .setNegativeButton("Annuler", null).show()
+        })
+        column.addView(button("Revenir au début du dernier extrait mesuré") { session.replayPlaybackBenchmark() })
+        column.addView(button("Terminer l’essai et garder ses mesures") { session.stopPlaybackBenchmark() })
+        column.addView(button("Résultats des essais de lecture — copier ou consulter") {
+            val report = session.playbackBenchmarkReport()
+            AlertDialog.Builder(activity).setTitle("Mesures de l’extrait, sans télémétrie")
+                .setView(ScrollView(activity).apply { addView(text(report)) })
+                .setNeutralButton("Copier") { _, _ ->
+                    activity.getSystemService(android.content.ClipboardManager::class.java)
+                        .setPrimaryClip(android.content.ClipData.newPlainText("Essais de lecture", report))
+                    notice("Résultats copiés à ta demande.")
+                }.setPositiveButton("Fermer", null).show()
+        })
         column.addView(button("Copier le diagnostic complet") {
             val clipboard=activity.getSystemService(android.content.ClipboardManager::class.java)
             clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Diagnostic local",session.diagnostics()))

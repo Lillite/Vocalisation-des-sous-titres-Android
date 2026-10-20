@@ -39,6 +39,7 @@ class CinemaView(
     private var locked = false
     private var scrubbing = false
     private var disposed = false
+    private val dialogs = mutableSetOf<AlertDialog>()
     private var zoom = 1f
     private var framingMediaUri: String? = null
     private var framingRestored = false
@@ -62,7 +63,14 @@ class CinemaView(
     private fun button(value: String, action: () -> Unit) = Button(activity).apply {
         text = value; textSize = 16f; isAllCaps = false; minHeight = dp(52)
         setTextColor(Color.WHITE); backgroundTintList = android.content.res.ColorStateList.valueOf(Color.rgb(45, 45, 45))
-        setOnClickListener { action(); scheduleHide() }
+        setOnClickListener { if (!disposed) { action(); scheduleHide() } }
+    }
+    private fun showDialog(builder: AlertDialog.Builder) {
+        if (disposed || activity.isFinishing || activity.isDestroyed) return
+        val dialog = builder.create()
+        dialogs += dialog
+        dialog.setOnDismissListener { dialogs -= dialog }
+        dialog.show()
     }
     init {
         id = R.id.cinema_root; setBackgroundColor(Color.BLACK); clipChildren = true
@@ -225,7 +233,7 @@ class CinemaView(
         if (previousPlaybackIntent && !state.wantsPlayback && state.speakingId == null && !locked && !visibleControls) showControls(true)
         previousPlaybackIntent = state.wantsPlayback
     }
-    private fun hasAccessibleFocus(view: View): Boolean = view.isAccessibilityFocused ||
+    private fun hasAccessibleFocus(view: View): Boolean = view.isAccessibilityFocused || (view.isFocused && !view.isInTouchMode) ||
         (view is ViewGroup && (0 until view.childCount).any { hasAccessibleFocus(view.getChildAt(it)) })
     private fun scheduleHide() {
         main.removeCallbacks(hide)
@@ -238,12 +246,14 @@ class CinemaView(
         }
     }
     fun showControls(show: Boolean) {
+        if (disposed) return
         visibleControls = show; top.visibility = if (show) View.VISIBLE else View.GONE
         bottom.visibility = if (show) View.VISIBLE else View.GONE
         main.removeCallbacks(hide); updateCaptionPosition()
         if (show) scheduleHide()
     }
     private fun updateCaptionPosition() {
+        if (disposed) return
         val space = if (visibleControls && height > 0) (bottom.height.toFloat() / height + 0.02f).coerceIn(0.08f, 0.60f) else 0.08f
         video.subtitleView?.setBottomPaddingFraction(space)
     }
@@ -275,6 +285,7 @@ class CinemaView(
         zoom = 1f; dx = 0f; dy = 0f
     }
     internal fun setFrameProtection(enabled: Boolean) {
+        if (disposed) return
         prefs.putBool("protectFrame", enabled)
         if (enabled) {
             zoom = 1f; dx = 0f; dy = 0f
@@ -283,6 +294,7 @@ class CinemaView(
         applyImage()
     }
     internal fun setFramingMode(value: Int, authorizeCrop: Boolean = false): Boolean {
+        if (disposed) return false
         if (value !in 0..2) return false
         if (value == 1 && prefs.protectFrame && !authorizeCrop) return false
         prefs.putBool("protectFrame", value != 1)
@@ -291,11 +303,14 @@ class CinemaView(
         applyImage(); return true
     }
     internal fun setImageZoom(value: Float) {
+        if (disposed) return
         if (prefs.protectFrame) { zoom=1f; dx=0f; dy=0f; tell("Protection active : aucune partie du cadre ne doit sortir de l’écran") }
         else zoom=if (value.isFinite()) value.coerceIn(1f,4f) else 1f
         applyImage()
     }
     private fun applyImage() {
+        if (disposed) return
+        session.finishPlaybackBenchmark("Cadrage ou zoom modifié : essai interrompu")
         if (prefs.protectFrame) {
             zoom=1f; dx=0f; dy=0f
             if (prefs.int("imageMode",0,0,2)==1) rememberFraming(0)
@@ -310,16 +325,17 @@ class CinemaView(
         video.videoSurfaceView?.apply { scaleX = zoom; scaleY = zoom; translationX = dx; translationY = dy }
     }
     fun imageDialog() {
+        if (disposed) return
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val protection = CheckBox(activity).apply {
             text="Protéger le cadre : bloquer zoom et déplacements accidentels"; textSize=17f; minHeight=dp(56); isChecked=prefs.protectFrame
             setOnCheckedChangeListener { _, checked -> setFrameProtection(checked) }
         }
         fun mode(label: String, value: Int) { column.addView(button(label) {
-            if (!setFramingMode(value)) AlertDialog.Builder(activity).setTitle("Autoriser la perte d’une partie du cadre ?")
+            if (!setFramingMode(value)) showDialog(AlertDialog.Builder(activity).setTitle("Autoriser la perte d’une partie du cadre ?")
                 .setMessage("Le mode recadré remplit l’écran en coupant une partie de l’image. Cela désactive la protection contre le recadrage accidentel.")
                 .setPositiveButton("Autoriser le recadrage") { _, _ -> setFramingMode(value, true); protection.isChecked=prefs.protectFrame }
-                .setNegativeButton("Garder l’image entière",null).show()
+                .setNegativeButton("Garder l’image entière",null))
             else protection.isChecked=prefs.protectFrame
         }) }
         mode("Image entière, proportions originales", 0)
@@ -336,7 +352,7 @@ class CinemaView(
                 "Surface disponible : ${width} × ${height} pixels\nMode : $framing ; zoom ${zoom}×\n"+
                 "Protection : ${prefs.protectFrame} ; marges validées : ${session.visual.margins}\n"+
                 "Les bandes encodées font partie des images. Le poinçon et les coins physiques peuvent masquer de petites zones. Analyse facultative séparée, jamais automatique."
-            AlertDialog.Builder(activity).setTitle("Diagnostic de l’image").setMessage(message).setPositiveButton("Fermer",null).show()
+            showDialog(AlertDialog.Builder(activity).setTitle("Diagnostic de l’image").setMessage(message).setPositiveButton("Fermer",null))
         })
         column.addView(button("Analyser les marges encodées — aperçu obligatoire") { session.visual.showAnalysis(activity) { applyImage() } })
         column.addView(button("Annuler toute suppression de marges") { session.visual.crop(fr.soustitresvoix.core.BlackBars.Margins()); applyImage() })
@@ -348,7 +364,20 @@ class CinemaView(
             if (session.visual.hdr) tell("HDR : traitement désactivé")
             else session.visual.adjust(session.visual.contrast,if (session.visual.brightness==0f) .06f else 0f)
         })
-        column.addView(button("Comparer : tous les effets / image originale") { session.visual.toggleComparison(); tell(if (session.visual.bypass) "Image originale" else "Effets rétablis") })
+        column.addView(CheckBox(activity).apply {
+            text = "Mise à l’échelle détaillée Lanczos — SDR seulement"
+            textSize = 17f; minHeight = dp(56); isChecked = session.visual.detailedScaling
+            isEnabled = !session.visual.hdr
+            setOnCheckedChangeListener { _, checked -> if (!disposed) session.visual.setDetailedScaling(checked) }
+        })
+        column.addView(label("Cette option utilise un filtre graphique pour le redimensionnement, sans inventer de détails. Elle peut augmenter la charge GPU : compare la netteté et la fluidité avec l’original."))
+        column.addView(CheckBox(activity).apply {
+            text = "Comparer à l’original : désactiver les traitements"
+            textSize = 17f; minHeight = dp(56); isChecked = session.visual.bypass
+            setOnCheckedChangeListener { _, checked ->
+                if (!disposed && checked != session.visual.bypass) session.visual.toggleComparison()
+            }
+        })
         column.addView(button("Zoom +") { setImageZoom(zoom + .25f) })
         column.addView(button("Zoom −") { setImageZoom(zoom - .25f) })
         column.addView(button("Recentrer / réinitialiser") { zoom = 1f; dx = 0f; dy = 0f; applyImage() })
@@ -363,12 +392,13 @@ class CinemaView(
             activity.window.attributes = activity.window.attributes.apply { screenBrightness = ((screenBrightness.takeIf { it >= 0 } ?: 0.5f) - 0.1f).coerceIn(0.01f, 1f) }
         })
         column.addView(button("Luminosité automatique du système") { activity.window.attributes = activity.window.attributes.apply { screenBrightness = -1f } })
-        AlertDialog.Builder(activity).setTitle("Image et cadrage").setView(ScrollView(activity).apply { addView(column) })
-            .setPositiveButton("Fermer", null).show()
+        showDialog(AlertDialog.Builder(activity).setTitle("Image et cadrage").setView(ScrollView(activity).apply { addView(column) })
+            .setPositiveButton("Fermer", null))
     }
     fun close() {
         prefs.putInt("zoomPercent", (zoom * 100).toInt())
         disposed = true; main.removeCallbacksAndMessages(null)
+        dialogs.toList().forEach { it.dismiss() }; dialogs.clear()
         video.videoSurfaceView?.apply { scaleX = 1f; scaleY = 1f; translationX = 0f; translationY = 0f }
         video.subtitleView?.setBottomPaddingFraction(0.08f)
     }

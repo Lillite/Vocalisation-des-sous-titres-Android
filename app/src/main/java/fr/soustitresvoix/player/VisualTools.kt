@@ -15,6 +15,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.Brightness
 import androidx.media3.effect.Contrast
 import androidx.media3.effect.Crop
+import androidx.media3.effect.LanczosResample
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -28,6 +29,11 @@ class VisualTools(private val session: PlaybackSession) {
     var contrast = 0f; private set
     var brightness = 0f; private set
     var bypass = false; private set
+    var detailedScaling = false; private set
+    private var renderWidth = 0
+    private var renderHeight = 0
+    val detailedScalingActive: Boolean get() = detailedScaling && !hdr && !bypass && renderWidth > 0 && renderHeight > 0
+    val scalingTarget: String get() = if (renderWidth > 0 && renderHeight > 0) "$renderWidth × $renderHeight" else "surface non mesurée"
     private var observedFormat: Format? = null
     val hdr: Boolean get() = isHdrFormat(observedFormat ?: session.player.videoFormat) || session.player.currentTracks.groups.any { group ->
         group.type == C.TRACK_TYPE_VIDEO && (0 until group.length).any { group.isTrackSelected(it) && isHdrFormat(group.getTrackFormat(it)) }
@@ -36,17 +42,42 @@ class VisualTools(private val session: PlaybackSession) {
         internal fun isHdrFormat(format: Format?): Boolean = format?.colorInfo?.colorTransfer in
             listOf(C.COLOR_TRANSFER_ST2084, C.COLOR_TRANSFER_HLG) || format?.sampleMimeType == "video/dolby-vision"
     }
-    fun reset() { observedFormat=null; margins = BlackBars.Margins(); contrast=0f; brightness=0f; bypass=false; apply() }
+    fun reset() { observedFormat=null; margins = BlackBars.Margins(); contrast=0f; brightness=0f; bypass=false; detailedScaling=false; apply() }
     fun onInputFormatChanged(format: Format) { observedFormat = format; apply() }
-    fun crop(value: BlackBars.Margins) { require(value.safe()); margins=value; apply() }
-    fun adjust(c: Float, b: Float) { contrast=c.coerceIn(-.3f,.3f); brightness=b.coerceIn(-.2f,.2f); apply() }
-    fun toggleComparison() { bypass=!bypass; apply() }
+    fun crop(value: BlackBars.Margins) {
+        require(value.safe()); session.finishPlaybackBenchmark("Marges modifiées : essai interrompu")
+        margins=value; apply()
+    }
+    fun adjust(c: Float, b: Float) {
+        session.finishPlaybackBenchmark("Traitements d’image modifiés : essai interrompu")
+        contrast=c.coerceIn(-.3f,.3f); brightness=b.coerceIn(-.2f,.2f); apply()
+    }
+    fun toggleComparison() {
+        session.finishPlaybackBenchmark("Comparaison d’image modifiée : essai interrompu")
+        bypass=!bypass; apply()
+    }
+    fun setDetailedScaling(enabled: Boolean) {
+        session.finishPlaybackBenchmark("Redimensionnement graphique modifié : essai interrompu")
+        detailedScaling = enabled; apply()
+    }
+    fun setRenderSize(width: Int, height: Int) {
+        if (width <= 0 || height <= 0) return
+        // Use the displayed area, not a fixed oversized buffer. The cap also
+        // bounds temporary GPU textures when connected to a very large screen.
+        val reduction = maxOf(width, height).toDouble().div(3840).coerceAtLeast(1.0)
+        val nextWidth = (width / reduction).toInt().coerceAtLeast(1)
+        val nextHeight = (height / reduction).toInt().coerceAtLeast(1)
+        if (nextWidth == renderWidth && nextHeight == renderHeight) return
+        renderWidth = nextWidth; renderHeight = nextHeight
+        if (detailedScaling) apply()
+    }
     fun apply() {
         val effects = mutableListOf<Effect>()
         if (!hdr && !bypass) {
             if (margins.nonzero()) effects += Crop(-1f+2*margins.left, 1f-2*margins.right, -1f+2*margins.bottom, 1f-2*margins.top)
             if (contrast != 0f) effects += Contrast(contrast)
             if (brightness != 0f) effects += Brightness(brightness)
+            if (detailedScalingActive) effects += LanczosResample.scaleToFit(renderWidth, renderHeight)
         }
         session.player.setVideoEffects(effects)
     }

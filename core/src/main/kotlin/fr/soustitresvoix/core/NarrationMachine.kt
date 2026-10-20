@@ -37,6 +37,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
     private var requestedDuck = false
     private var lastFrameKey: Pair<Long, List<String>>? = null
     private var activeTexts: List<String> = emptyList()
+    private var activeDeadlines: List<Long?> = emptyList()
     private var lastSpokenText = ""
     private var lastSpokenGroup = -1L
     private var warnedImages = false
@@ -94,7 +95,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
     fun reset(keepPlaybackIntent: Boolean = false): List<Effect> = event {
         val oldIntent = wantsPlayback
         interrupt(keep = false); queue.clear()
-        activeTexts = emptyList(); activeIdentities = null; voiceSuspended = false
+        activeTexts = emptyList(); activeDeadlines = emptyList(); activeIdentities = null; voiceSuspended = false
         lastFrameKey = null; lastSpokenText = ""; lastSpokenGroup = -1L
         warnedImages = false; mediaReady = false
         wantsPlayback = keepPlaybackIntent && oldIntent
@@ -104,7 +105,9 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
             enabled = value; voiceSuspended = false
             interrupt(keep = false); queue.clear()
             if (value) {
-                enqueue(activeTexts.joinToString("\n"))
+                activeTexts.forEachIndexed { index, text ->
+                    enqueue(text, if (mode == Mode.ADAPTIVE) activeDeadlines.getOrNull(index) else null)
+                }
                 if (!speechReady) wantsPlayback = false
             }
         }
@@ -115,7 +118,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
             if (value != Mode.ADAPTIVE) { current?.job?.deadlineMs = null; queue.forEach { it.deadlineMs = null } }
             if (value == Mode.CONTINUOUS) {
                 interrupt(keep = false); queue.clear()
-                enqueue(activeTexts.joinToString("\n"))
+                activeTexts.forEach { enqueue(it) }
             }
         }
     }
@@ -129,6 +132,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
         val oldIdentities = activeIdentities
         if (!hasImages && identities != null && identities == oldIdentities && clean == oldTexts) return@event
         activeIdentities = identities; lastFrameKey = key; activeTexts = clean
+        activeDeadlines = deadlinesMs.orEmpty()
         if (!enabled) return@event
         if (hasImages && !warnedImages) {
             warnedImages = true; wantsPlayback = false
@@ -166,17 +170,20 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
     /** Repeating a whole replica consumes its pending segments, not other replicas. */
     fun preview(text: String = lastSpokenText): List<Effect> = event {
         wantsPlayback = false
+        val refusal = when {
+            !speechReady -> Effect.Message("Aucune voix disponible. Ouvre les réglages vocaux Android.", true)
+            text.isBlank() -> Effect.Message("Aucune phrase à répéter.")
+            text.length > 3_000 -> Effect.Message("Cette phrase est trop longue pour un essai vocal.", true)
+            else -> null
+        }
+        if (refusal != null) {
+            // Refusing a preview must not consume the interrupted film replica.
+            interrupt(keep = true); effects += refusal; return@event
+        }
         val repeatGroup = if (text == lastSpokenText) lastSpokenGroup else -1L
         interrupt(keep = current?.job?.group != repeatGroup)
         if (repeatGroup >= 0) queue.removeIf { it.group == repeatGroup }
         voiceSuspended = false
-        if (!speechReady) {
-            effects += Effect.Message("Aucune voix disponible. Ouvre les réglages vocaux Android.", true); return@event
-        }
-        if (text.isBlank()) { effects += Effect.Message("Aucune phrase à répéter."); return@event }
-        if (text.length > 3_000) {
-            effects += Effect.Message("Cette phrase est trop longue pour un essai vocal.", true); return@event
-        }
         val running = Running(nextId(), Job(text), preview = true)
         current = running; effects += Effect.Speak(running.id, text, preview = true)
     }

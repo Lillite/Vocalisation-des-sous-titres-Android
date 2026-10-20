@@ -93,7 +93,10 @@ class MainActivity : ComponentActivity() {
         rememberPermission(uri, intent.flags); openVideo(uri); return true
     }
     override fun onResume() {
-        super.onResume(); stopped = false; applyWindowMode()
+        super.onResume(); stopped = false
+        // External engines can update their package or voice data while this
+        // activity is paused. Revalidate before allowing the next playback.
+        session.refreshSettings(); applyWindowMode()
         main.removeCallbacks(ticker); main.post(ticker)
     }
     override fun onPause() {
@@ -163,11 +166,15 @@ class MainActivity : ComponentActivity() {
         setPadding(dp(8), dp(8), dp(8), dp(8)); setOnClickListener { action() }
     }
     private fun buildUi() {
+        session.finishPlaybackBenchmark("Disposition de l’écran modifiée : essai interrompu")
         cinema?.close(); cinema = null
         if (::playerView.isInitialized) (playerView.parent as? ViewGroup)?.removeView(playerView)
         else playerView = PlayerView(this).apply {
             useController = false; player = session.player
             isFocusable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ ->
+                if (!closed) session.visual.setRenderSize(right - left, bottom - top)
+            }
         }
         applyWindowMode(); applyCaptionStyle()
         if (fullscreen) {
@@ -175,6 +182,10 @@ class MainActivity : ComponentActivity() {
                 { settingsDialog() }, { chooseTrack(C.TRACK_TYPE_TEXT) }, { chooseTrack(C.TRACK_TYPE_AUDIO) })
             setContentView(cinema); cinema?.requestApplyInsets(); refreshUi(); return
         }
+        // The preview must never inherit a crop chosen in the cinema view.
+        // CinemaView restores the explicit per-video choice when entered again.
+        playerView.resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+        playerView.subtitleView?.setPadding(0, 0, 0, 0)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(18, 18, 18)); setPadding(dp(8), dp(8), dp(8), dp(8))
         }
@@ -403,6 +414,8 @@ class MainActivity : ComponentActivity() {
     }
     private fun settingsDialog() {
         session.pause()
+        var pendingBenchmarkSeconds: Int? = null
+        lateinit var dialog: AlertDialog
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8)) }
         fun check(label: String, value: Boolean, change: (Boolean) -> Unit) {
             column.addView(CheckBox(this).apply {
@@ -410,18 +423,18 @@ class MainActivity : ComponentActivity() {
                 setOnCheckedChangeListener { _, checked -> change(checked) }
             })
         }
-        check("Vocaliser les sous-titres", prefs.narration) { prefs.narration = it }
+        check("Vocaliser les sous-titres", prefs.narration) { session.beforeSettingsChange(); prefs.narration = it }
         val modeButton = button("Mode vocal : ${prefs.mode}") { }
         modeButton.setOnClickListener {
             AlertDialog.Builder(this).setTitle("Synchronisation de la voix")
                 .setItems(arrayOf("Confort : phrases complètes", "Continu : peut couper les phrases", "Adaptatif : accélération plafonnée puis pause")) { _, index ->
-                    prefs.setMode(NarrationMachine.Mode.values()[index]); session.refreshSettings(); modeButton.text = "Mode vocal : ${prefs.mode}"
+                    session.beforeSettingsChange(); prefs.setMode(NarrationMachine.Mode.values()[index]); session.refreshSettings(); modeButton.text = "Mode vocal : ${prefs.mode}"
                 }.show()
         }
         column.addView(modeButton)
         column.addView(text("Confort et Adaptatif conservent les phrases complètes. Le mode Continu peut couper les phrases trop longues.", 16f))
         check("Afficher aussi les sous-titres à l’écran", prefs.showSubtitles) { prefs.showSubtitles = it }
-        check("Ne pas lire les indications entre crochets, par exemple [musique]", prefs.skipDescriptions) { prefs.skipDescriptions = it }
+        check("Ne pas lire les indications entre crochets, par exemple [musique]", prefs.skipDescriptions) { session.beforeSettingsChange(); prefs.skipDescriptions = it }
         fun slider(label: String, from: Int, to: Int, value: Int, unit: String, change: (Int) -> Unit) {
             val caption = text("$label : $value$unit", 18f); column.addView(caption)
             column.addView(SeekBar(this).apply {
@@ -437,7 +450,7 @@ class MainActivity : ComponentActivity() {
                 })
             })
         }
-        slider("Vitesse de la voix", 60, 200, (prefs.speechRate * 100).toInt(), " %") { prefs.speechRate = it / 100f }
+        slider("Vitesse de la voix", 60, 200, (prefs.speechRate * 100).toInt(), " %") { session.beforeSettingsChange(); prefs.speechRate = it / 100f }
         slider("Volume de la voix", 10, 100, (prefs.voiceVolume * 100).toInt(), " %") { prefs.voiceVolume = it / 100f }
         slider("Volume habituel du film", 0, 100, (prefs.movieVolume * 100).toInt(), " %") { prefs.movieVolume = it / 100f }
         slider("Son du film conservé pendant la voix", 0, 100, (prefs.duckVolume * 100).toInt(), " %") { prefs.duckVolume = it / 100f }
@@ -451,10 +464,19 @@ class MainActivity : ComponentActivity() {
         column.addView(button("Retirer le fichier de sous-titres ajouté") {
             session.attachSubtitle(null, null); showMessage("Fichier ajouté retiré. Les pistes intégrées restent disponibles.", false)
         })
-        AdvancedSettings(this, session, prefs).populate(column)
-        val dialog = AlertDialog.Builder(this).setTitle("Voix et confort")
+        AdvancedSettings(this, session, prefs) { seconds ->
+            pendingBenchmarkSeconds = seconds
+            dialog.dismiss()
+        }.populate(column)
+        dialog = AlertDialog.Builder(this).setTitle("Voix et confort")
             .setView(ScrollView(this).apply { addView(column) }).setPositiveButton("Appliquer et fermer") { _, _ -> }.create()
-        dialog.setOnDismissListener { if (!closed) { if (!session.isPreparing) session.refreshSettings(); applyCaptionStyle(); applyWindowMode() } }
+        dialog.setOnDismissListener {
+            if (!closed) {
+                if (!session.isPreparing) session.refreshSettings()
+                applyCaptionStyle(); applyWindowMode()
+                pendingBenchmarkSeconds?.let { session.startPlaybackBenchmark(it) }
+            }
+        }
         dialog.show()
     }
     private fun voiceDialog() {
@@ -463,12 +485,12 @@ class MainActivity : ComponentActivity() {
         if (choices.isEmpty()) { showMessage("Installe une voix locale dans le moteur choisi, puis actualise les voix.", true); return }
         AlertDialog.Builder(this).setTitle("Voix installées utilisables hors ligne")
             .setSingleChoiceItems(choices.map { it.label }.toTypedArray(), choices.indexOfFirst { it.name == prefs.voiceName }) { dialog, index ->
-                prefs.voiceName = choices[index].name; session.refreshSettings(); dialog.dismiss()
+                session.beforeSettingsChange(); prefs.voiceName = choices[index].name; session.refreshSettings(); dialog.dismiss()
             }.setNegativeButton("Fermer", null).show()
     }
     private fun helpDialog() {
         session.pause()
-        AlertDialog.Builder(this).setTitle("Cinéma 0.3 — mode d’emploi et limites")
+        AlertDialog.Builder(this).setTitle("Cinéma 0.3.1 — mode d’emploi et limites")
             .setMessage("Ouvre une vidéo, choisis une piste textuelle et une voix dans la même langue. Le lecteur ne traduit pas.\n\nÉtirement intégral : toute l’image est visible, avec proportions modifiées. La protection interdit le zoom et les déplacements accidentels. Un recadrage de marges exige une confirmation distincte et peut être annulé.\n\nAdaptatif : la vitesse est calculée à partir du WAV préparé ou d’une estimation calibrée en lecture directe. Le plafond est réglable de 100 à 250 % de la vitesse de base, 180 % au départ. L’algorithme réserve le temps des segments restants et respecte la tolérance de retard choisie. Une pause reste possible si la phrase ne tient pas au plafond choisi ; aucun dialogue n’est résumé.\n\nPréparation : indexer le texte, puis préparer cinq minutes ou toute la vidéo. Le film reste en pause et ne reprend que sur commande. Le cache persiste mais sa capacité est limitée ; préparer toute la vidéo ne garantit pas que tous les fichiers audio tiennent encore en cache. Reste dans l’application pendant la préparation.\n\nLes filtres restent facultatifs. La ponctuation et les silences naturels ne sont pas supprimés. Si un modèle est modifié à l’intérieur d’un moteur, utilise le bouton signalant sa mise à jour.\n\nPGS, VobSub et sous-titres incrustés ne sont pas vocalisés. Pas de DRM, d’OCR, de traduction, d’audiodescription ni de lecture en arrière-plan. Les essais de décodeurs utilisent ceux déjà présents sur le téléphone. Les effets visuels sont réservés au SDR reconnu.\n\nLe lecteur n’a pas d’autorisation Internet. Les moteurs vocaux sont des applications externes. Aucun runtime neuronal vocal GPU/NPU n’est intégré. Les profils règlent l’anticipation et le cache, pas le matériel interne d’un moteur tiers.\n\nÉdition 0.3 installable à côté de la 0.1 et de la 0.2, avec réglages séparés. Aucun fichier original n’est modifié.")
             .setPositiveButton("Fermer", null).show()
     }

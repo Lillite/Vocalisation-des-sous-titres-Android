@@ -48,6 +48,11 @@ object Revision03Checks {
             check(SpeechTools.segments("لماذا؟ نعم.") == listOf("لماذا؟", "نعم."))
         }
         test("paragraph boundaries survive segmentation") { check(SpeechTools.segments("Premier\n\nSecond")==listOf("Premier","Second")) }
+        test("paragraph boundaries survive the actual subtitle cleaning pipeline") {
+            val raw = "<i>Premier locuteur</i><br/>  <br/>Second locuteur"
+            check(SpeechTools.segments(SpeechTools.filter(raw, SpeechTools.Filters())) ==
+                listOf("Premier locuteur", "Second locuteur"))
+        }
         test("Unicode and long words never split surrogate pairs") {
             val s="😀".repeat(1500); val chunks=SpeechTools.segments(s)
             check(chunks.joinToString("")==s); check(chunks.all { it.length<=1000 && !it.first().isLowSurrogate() && !it.last().isHighSurrogate() })
@@ -99,9 +104,46 @@ object Revision03Checks {
         }
         test("known overlap does not expire the older long cue early") { val m=ready(); m.cues(1,listOf("A"),identities=listOf("a"),deadlinesMs=listOf(5000)); m.cues(2,listOf("A","B"),identities=listOf("a","b"),deadlinesMs=listOf(5000,6000)); m.advance(2000); check(m.snapshot().videoRequested) }
         test("identical simultaneous speakers keep separate deadlines") { val m=ready(); val first=m.cues(1,listOf("Oui","Oui"),identities=listOf("a","b"),deadlinesMs=listOf(1000,3000)).speak(); val next=m.speechFinished(first.id).speak(); check(first.deadlineMs==1000L && next.deadlineMs==3000L) }
+        test("enabling narration preserves distinct active dialogues and their deadlines") {
+            val m = ready(); m.setEnabled(false)
+            m.cues(1, listOf("Bonjour", "Salut"), identities = listOf("a", "b"), deadlinesMs = listOf(1000, 3000))
+            val first = m.setEnabled(true).speak()
+            check(first.text == "Bonjour" && first.remainingText.isEmpty() && first.deadlineMs == 1000L)
+            val second = m.speechFinished(first.id).speak()
+            check(second.text == "Salut" && second.deadlineMs == 3000L)
+        }
+        test("switching to continuous never merges two active dialogues") {
+            val m = ready(); m.cues(1, listOf("Bonjour", "Salut"))
+            val first = m.setMode(NarrationMachine.Mode.CONTINUOUS).speak()
+            check(first.text == "Bonjour" && first.remainingText.isEmpty())
+            check(m.speechFinished(first.id).speak().text == "Salut")
+        }
         test("pause blocks old completion and timer-based resume") { val m=ready(); val id=m.cues(1,listOf("Bonjour."),deadlinesMs=listOf(1000)).speak().id; m.pause(); m.advance(2000); m.speechFinished(id); check(!m.snapshot().wantsPlayback && !m.snapshot().videoRequested) }
         test("seek removes old deadline state") { val m=ready(); m.cues(1,listOf("Bonjour."),deadlinesMs=listOf(100)); m.reset(true); m.setMediaReady(true); m.advance(1000); check(!m.snapshot().waitingForSpeech && m.snapshot().speakingId==null) }
         test("preview is distinguishable from movie narration") { val m=ready(); check(m.preview("Bonjour.").speak().preview); check(!m.snapshot().wantsPlayback) }
+        test("refusing an oversized repeat never consumes the film dialogue") {
+            val m = ready(); val text = "Une réplique complète sans arrêt ".repeat(120).trim()
+            val first = m.cues(1, listOf(text)).speak()
+            val refused = m.preview()
+            check(refused.any { it is NarrationMachine.Effect.Message && it.error })
+            check(!m.snapshot().wantsPlayback)
+            var speaking: NarrationMachine.Effect.Speak? = m.play().speak()
+            check(speaking?.text == first.text)
+            val retained = mutableListOf<String>()
+            while (speaking != null) {
+                retained += speaking.text
+                speaking = m.speechFinished(speaking.id).filterIsInstance<NarrationMachine.Effect.Speak>().singleOrNull()
+            }
+            check(retained.joinToString(" ") == text)
+        }
+        test("refusing a repeat without a ready voice retains the interrupted segment") {
+            val m = ready(); val first = m.cues(1, listOf("Bonjour. À demain.")).speak()
+            m.setSpeechReady(false)
+            check(m.preview().any { it is NarrationMachine.Effect.Message && it.error })
+            m.setSpeechReady(true)
+            val resumed = m.play().speak()
+            check(resumed.text == first.text && resumed.remainingText == "À demain.")
+        }
         test("legacy comfort keeps its boundary pause") { val m=ready(); m.setMode(NarrationMachine.Mode.COMFORT); m.cues(1,listOf("Bonjour."),deadlinesMs=listOf(5000)); m.cues(2,emptyList()); check(m.snapshot().waitingForSpeech) }
         test("cache persists across cache object recreation") { val d=Files.createTempDirectory("persist").toFile(); try { val c=SpeechDiskCache(d){16L shl 20}; val f=c.temporary(); wav(f); check(c.put("key",f)!=null); check(SpeechDiskCache(d){16L shl 20}.get("key")?.durationMs==1000L) } finally { d.deleteRecursively() } }
         test("valid-header corrupted PCM is rejected by digest") { val d=Files.createTempDirectory("digest").toFile(); try { val c=SpeechDiskCache(d){16L shl 20}; val f=c.temporary(); wav(f); c.put("key",f); java.io.RandomAccessFile(File(d,"key.wav"),"rw").use{it.seek(100);it.write(1)};check(c.get("key")==null) }finally{d.deleteRecursively()} }

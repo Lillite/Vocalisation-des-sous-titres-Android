@@ -40,6 +40,14 @@ public final class FixtureSpeechService extends TextToSpeechService {
         // not merely a UI field. This check exists only in the instrumentation APK.
         if (request.getCharSequenceText().toString().startsWith("Cette longue phrase doit accélérer sans cache")
                 && request.getSpeechRate() < 175) { callback.error(); return; }
+        if (request.getCharSequenceText().toString().startsWith("Réglage vérifié à cent cinquante pour cent")
+                && request.getSpeechRate() != 150) { callback.error(); return; }
+        // Simulate an actual engine taking time to prepare one explicitly
+        // requested subtitle; the player's periodic maintenance must not cancel it.
+        if (request.getCharSequenceText().toString().startsWith("Préparation explicite avec narration désactivée")) {
+            android.os.SystemClock.sleep(1500);
+            if (cancelled) return;
+        }
         if (callback.start(16000, AudioFormat.ENCODING_PCM_16BIT, 1) != TextToSpeech.SUCCESS) return;
         byte[] silence = new byte[Math.max(2, callback.getMaxBufferSize())];
         int remaining = 32000;
