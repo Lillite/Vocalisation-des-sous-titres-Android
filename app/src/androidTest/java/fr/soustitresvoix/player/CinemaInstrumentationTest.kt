@@ -30,9 +30,13 @@ class CinemaInstrumentationTest {
         // The shell-owned directory survives the Gradle test APK uninstall.
         // It is used only on the disposable emulator, never in production.
         require(name.matches(Regex("[a-z-]+")))
-        val command = "mkdir -p /sdcard/Download/cinema03-tests; screencap -p /sdcard/Download/cinema03-tests/$name.png"
-        android.os.ParcelFileDescriptor.AutoCloseInputStream(
-            instrument.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
+        // UiAutomation executes argv directly, without a shell interpreter.
+        // Use separate commands: semicolons/pipes are not shell syntax here.
+        for (command in listOf("mkdir -p /sdcard/Download/cinema03-tests",
+            "screencap -p /sdcard/Download/cinema03-tests/$name.png")) {
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                instrument.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
+        }
     }
     @Test fun fullscreenReallyFillsContentAndControlsAreOverlays() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
