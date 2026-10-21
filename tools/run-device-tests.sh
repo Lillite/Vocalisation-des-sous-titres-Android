@@ -1,6 +1,30 @@
 #!/usr/bin/env bash
 set -uo pipefail
-mkdir -p build/verification/screenshots
+variant="${1:-debug}"
+pass="${2:-1}"
+if [[ "$#" -gt 2 || ! "$variant" =~ ^(debug|release)$ || ! "$pass" =~ ^[12]$ ]]; then
+  echo 'Usage: run-device-tests.sh [debug|release] [1|2]' >&2
+  exit 2
+fi
+if [[ "$variant" == release ]]; then
+  evidence="build/verification/android-release-pass-$pass"
+  task=(:app:connectedReleaseAndroidTest -PverifyRelease=true)
+  reference=build/verification/apk-pair.sha256
+  if [[ ! -f "${SUBTITRES_SIGNING_PROPERTIES:-}" || ! -f "$reference" ]]; then
+    echo 'Release validation requires the CI signing properties and verified APK pair hashes.' >&2
+    exit 2
+  fi
+else
+  evidence=build/verification
+  if [[ "$pass" != 1 ]]; then evidence="build/verification/android-debug-pass-$pass"; fi
+  task=(:app:connectedDebugAndroidTest)
+  reference=""
+fi
+apk="app/build/outputs/apk/$variant/app-$variant.apk"
+test_apk="app/build/outputs/apk/androidTest/$variant/app-$variant-androidTest.apk"
+reports=app/build/outputs/androidTest-results/connected
+additional=app/build/outputs/connected_android_test_additional_output
+mkdir -p "$evidence/screenshots"
 
 # This script is for the disposable CI emulator, never a user's phone.
 device="${ANDROID_SERIAL:-emulator-5554}"
@@ -10,9 +34,11 @@ if [[ "$device" != emulator-* ]]; then
 fi
 
 collect_diagnostics() {
-  adb -s "$device" pull /sdcard/Download/cinema03-tests/ build/verification/screenshots/ >/dev/null 2>&1 || true
-  adb -s "$device" shell dumpsys window > build/verification/windows-after-tests.txt 2>&1 || true
-  adb -s "$device" logcat -d -t 8000 > build/verification/logcat-after-tests.txt 2>&1 || true
+  original_status=$?
+  adb -s "$device" pull /sdcard/Download/cinema03-tests/ "$evidence/screenshots/" >/dev/null 2>&1 || true
+  adb -s "$device" shell dumpsys window > "$evidence/windows-after-tests.txt" 2>&1 || true
+  adb -s "$device" logcat -d -t 8000 > "$evidence/logcat-after-tests.txt" 2>&1 || true
+  return "$original_status"
 }
 trap collect_diagnostics EXIT
 
@@ -27,7 +53,7 @@ for attempt in {1..30}; do
   framework_ready=false
   if [[ "$framework" == package:* ]]; then framework_ready=true; fi
   printf 'attempt=%s sys.boot_completed=%q init.svc.bootanim=%q framework_ready=%s\n' \
-    "$attempt" "$boot" "$animation" "$framework_ready" >> build/verification/boot-readiness.txt
+    "$attempt" "$boot" "$animation" "$framework_ready" >> "$evidence/boot-readiness.txt"
   if [[ "$boot" == 1 && ( "$animation" == stopped || -z "$animation" ) && "$framework_ready" == true ]]; then
     ready=true
     break
@@ -35,33 +61,41 @@ for attempt in {1..30}; do
   sleep 2
 done
 if [[ "$ready" != true ]]; then
-  cat build/verification/boot-readiness.txt
+  cat "$evidence/boot-readiness.txt"
   echo 'Emulator did not finish booting; instrumentation was not started.' >&2
   exit 2
 fi
-adb -s "$device" shell svc power stayon true >/dev/null
-adb -s "$device" shell settings put system screen_off_timeout 1800000
-adb -s "$device" shell input keyevent KEYCODE_WAKEUP
-adb -s "$device" shell wm dismiss-keyguard
+sdk=$(adb -s "$device" shell getprop ro.build.version.sdk | tr -d '\r')
+abi=$(adb -s "$device" shell getprop ro.product.cpu.abi | tr -d '\r')
+fingerprint=$(adb -s "$device" shell getprop ro.build.fingerprint | tr -d '\r')
+printf 'sdk=%s\nabi=%s\nfingerprint=%s\n' "$sdk" "$abi" "$fingerprint" > "$evidence/device-properties.txt"
+if [[ "$variant" == release && ( "$sdk" != 36 || "$abi" != x86_64 ) ]]; then
+  echo 'Release validation requires the API 36 x86_64 emulator configured by CI.' >&2
+  exit 2
+fi
+adb -s "$device" shell svc power stayon true >/dev/null || exit 2
+adb -s "$device" shell settings put system screen_off_timeout 1800000 || exit 2
+adb -s "$device" shell input keyevent KEYCODE_WAKEUP || exit 2
+adb -s "$device" shell wm dismiss-keyguard || exit 2
 # Complete only Android's one-time fullscreen tutorial on this disposable
 # emulator. Its focusable SystemUI window can otherwise cover the activity
 # after a delayed rotation; ANRs and application dialogs remain test failures.
 # AOSP ImmersiveModeConfirmation observes this setting while SystemUI runs.
 adb -s "$device" shell settings put secure immersive_mode_confirmations confirmed || exit 2
 confirmation=$(adb -s "$device" shell settings get secure immersive_mode_confirmations | tr -d '\r')
-printf 'immersive_mode_confirmations=%s\n' "$confirmation" >> build/verification/boot-readiness.txt
+printf 'immersive_mode_confirmations=%s\n' "$confirmation" >> "$evidence/boot-readiness.txt"
 if [[ "$confirmation" != confirmed ]]; then
   echo 'The emulator fullscreen tutorial precondition was not applied.' >&2
   exit 2
 fi
 focused=false
 for attempt in {1..30}; do
-  adb -s "$device" shell dumpsys window > build/verification/windows-before-tests.txt
-  if grep -q 'Application Not Responding:' build/verification/windows-before-tests.txt; then
+  adb -s "$device" shell dumpsys window > "$evidence/windows-before-tests.txt"
+  if grep -q 'Application Not Responding:' "$evidence/windows-before-tests.txt"; then
     echo 'Emulator has an ANR window before instrumentation; inspect the captured diagnostics.' >&2
     exit 2
   fi
-  if grep -q 'mCurrentFocus=Window{' build/verification/windows-before-tests.txt; then
+  if grep -q 'mCurrentFocus=Window{' "$evidence/windows-before-tests.txt"; then
     focused=true
     break
   fi
@@ -72,36 +106,48 @@ if [[ "$focused" != true ]]; then
   exit 2
 fi
 
-gradle --no-daemon --stacktrace :app:connectedDebugAndroidTest > build/verification/device-console.txt 2>&1
+# Start each full pass with a new application/fixture process. This touches
+# only the disposable emulator; no failure dialogs are dismissed or retried.
+adb -s "$device" shell am force-stop fr.soustitresvoix.player.stable || exit 2
+adb -s "$device" shell am force-stop fr.soustitresvoix.player.stable.test || exit 2
+adb -s "$device" shell rm -rf /sdcard/Download/cinema03-tests || exit 2
+rm -rf "$reports" "$additional" || exit 2
+if [[ -n "$reference" ]]; then
+  sha256sum --check "$reference" > "$evidence/apk-check-before.txt" 2>&1 || exit 2
+fi
+sha256sum "$apk" "$test_apk" > "$evidence/apk-pair-before.sha256" || exit 2
+started_ns=$(python3 -c 'import time; print(time.time_ns())')
+printf '%s\n' "$started_ns" > "$evidence/started-ns.txt"
+
+# Do not use --rerun-tasks here: it can regenerate the demo and rebuild the
+# APK. Removing only the old results ensures fresh instrumentation output.
+gradle --no-daemon --stacktrace --no-build-cache "${task[@]}" > "$evidence/device-console.txt" 2>&1
 status=$?
-tail -n 180 build/verification/device-console.txt
+tail -n 180 "$evidence/device-console.txt"
 
-# Gradle's final stack trace can push the actual failing assertion out of the
-# log tail. Print the authoritative XML results after it, without retries or
-# skipped-test allowances, and preserve the machine-readable summary.
-python3 - <<'PY'
-import json
-from pathlib import Path
-import sys
-import xml.etree.ElementTree as ET
-
-reports = sorted(Path('app/build/outputs/androidTest-results/connected').rglob('TEST-*.xml'))
-summary = {'reports': len(reports), 'tests': 0, 'failures': 0, 'errors': 0, 'skipped': 0}
-for path in reports:
-    root = ET.parse(path).getroot()
-    for case in root.iter('testcase'):
-        summary['tests'] += 1
-        for outcome in case:
-            key = {'failure': 'failures', 'error': 'errors', 'skipped': 'skipped'}.get(outcome.tag)
-            if key:
-                summary[key] += 1
-                print(f"{outcome.tag.upper()} {case.get('classname')}.{case.get('name')}")
-                print(outcome.get('message', ''))
-                print(outcome.text or '')
-Path('build/verification/android-test-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-print('Android instrumentation:', json.dumps(summary))
-sys.exit(0 if summary['tests'] > 0 and not any(summary[k] for k in ('failures', 'errors', 'skipped')) else 1)
-PY
+# Check all method identities, so missing, duplicated or skipped tests cannot
+# satisfy the release gate. These are actual device XML results, not inventory.
+python3 tools/verify-test-results.py \
+  --reports "$reports" --expected-count 67 --sources app/src/androidTest/java \
+  --not-before-ns "$started_ns" --output "$evidence/android-test-summary.json"
 report_status=$?
 if [[ "$status" == 0 && "$report_status" != 0 ]]; then status=$report_status; fi
+sha256sum "$apk" "$test_apk" > "$evidence/apk-pair-after.sha256"
+hash_status=$?
+if [[ "$hash_status" == 0 ]]; then
+  cmp "$evidence/apk-pair-before.sha256" "$evidence/apk-pair-after.sha256"
+  hash_status=$?
+fi
+if [[ "$status" == 0 && "$hash_status" != 0 ]]; then status=$hash_status; fi
+# Preserve each pass before the next one removes the generated report folder.
+# A failed copy must also fail validation; only optional device diagnostics
+# in the EXIT trap are best effort.
+for folder in "$reports" "$additional"; do
+  if [[ -d "$folder" ]]; then
+    cp -a "$folder" "$evidence/"
+    archive_status=$?
+    if [[ "$status" == 0 && "$archive_status" != 0 ]]; then status=$archive_status; fi
+  fi
+done
+printf '%s\n' "$status" > "$evidence/exit-status.txt"
 exit "$status"
