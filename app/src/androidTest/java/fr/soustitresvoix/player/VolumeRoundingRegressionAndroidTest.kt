@@ -9,6 +9,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.ViewMatchers.withContentDescription
 import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -86,16 +87,16 @@ class VolumeRoundingRegressionAndroidTest {
                     Triple("Volume habituel du film", 0, 59),
                     Triple("Son du film conservé pendant la voix", 0, 53)
                 )) {
-                    onView(withText("$label : $percent %")).check { view, error ->
+                    onView(withText("$label : $percent %")).inRoot(isDialog()).check { view, error ->
                         if (error != null) throw error
                         assertEquals("$label : $percent %", (view as TextView).text.toString())
                     }
-                    onView(withContentDescription(label)).check { view, error ->
+                    onView(withContentDescription(label)).inRoot(isDialog()).check { view, error ->
                         if (error != null) throw error
                         assertEquals(percent - minimum, (view as SeekBar).progress)
                     }
                 }
-                onView(withText("Appliquer et fermer")).perform(click())
+                onView(withText("Appliquer et fermer")).inRoot(isDialog()).perform(click())
                 scenario.onActivity { activity ->
                     assertEquals(rate / 100f, activity.session.prefs.speechRate, 0f)
                     assertEquals(53 / 100f, activity.session.prefs.voiceVolume, 0f)
