@@ -1,0 +1,35 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 640
+PlayResY: 360
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, Alignment
+Style: Sign,Arial,28,8
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 1,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 2,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 3,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 4,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 5,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 6,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 7,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 8,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 9,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 10,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 11,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 12,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 13,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 14,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 15,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 16,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 17,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 18,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 19,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 20,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 21,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 22,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT
+Dialogue: 23,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ACCÈS INTERDIT

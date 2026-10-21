@@ -1,6 +1,16 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+// The release key and its passwords stay outside the source repository.
+val releaseSigning = providers.environmentVariable("SUBTITRES_SIGNING_PROPERTIES").orNull?.let { location ->
+    val propertiesFile = file(location).canonicalFile
+    require(!propertiesFile.toPath().startsWith(rootDir.canonicalFile.toPath())) {
+        "Release signing properties must be outside the repository."
+    }
+    Properties().apply { propertiesFile.inputStream().use { load(it) } }
 }
 // Generate only our synthetic demonstration, never a personal film.
 val demoResources = layout.buildDirectory.dir("generated/demo-res")
@@ -35,11 +45,11 @@ android {
     compileSdk = 36
     buildToolsVersion = "36.0.0"
     defaultConfig {
-        applicationId = "fr.soustitresvoix.player.cinema3"
+        applicationId = "fr.soustitresvoix.player.stable"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.3.1-cinema-test"
+        versionCode = 5
+        versionName = "0.3.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets.getByName("main").res.srcDir(demoResources)
@@ -47,7 +57,30 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    buildTypes { release { isMinifyEnabled = false } }
+    signingConfigs {
+        if (releaseSigning != null) create("privateRelease") {
+            fun required(name: String): String = requireNotNull(releaseSigning.getProperty(name)) {
+                "Missing release signing property: $name"
+            }
+            val keyFile = file(required("storeFile")).canonicalFile
+            require(!keyFile.toPath().startsWith(rootDir.canonicalFile.toPath())) {
+                "The release key must be outside the repository."
+            }
+            storeFile = keyFile
+            storeType = "PKCS12"
+            storePassword = required("storePassword")
+            keyAlias = required("keyAlias")
+            keyPassword = required("keyPassword")
+        }
+    }
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            if (releaseSigning != null) signingConfig = signingConfigs.getByName("privateRelease")
+        }
+    }
+    testBuildType = if (providers.gradleProperty("verifyRelease").orNull == "true") "release" else "debug"
+    testOptions { unitTests.isIncludeAndroidResources = true }
     lint { abortOnError = true; checkReleaseBuilds = true }
 }
 tasks.named("preBuild") { dependsOn(generateDemo) }
@@ -58,10 +91,35 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
     implementation("androidx.media3:media3-effect:1.11.1")
-    // Align the target debug runtime with the tracing API used by AndroidX Test.
-    debugImplementation("androidx.tracing:tracing:1.3.0")
+    // Instrumentation exercises both debug and the exact release variant.
+    implementation("androidx.tracing:tracing:1.3.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.17")
+    testImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test:core:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
+}
+
+// Android 36 Robolectric runs on Java 21; Android production compilation remains Java 17.
+val androidTestJavaLauncher = javaToolchains.launcherFor {
+    languageVersion.set(JavaLanguageVersion.of(21))
+}
+tasks.withType<Test>().configureEach {
+    javaLauncher.set(androidTestJavaLauncher)
+    maxHeapSize = "1536m"
+    jvmArgs(
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
+        "--add-opens=java.base/java.io=ALL-UNNAMED",
+        "--add-opens=java.base/java.net=ALL-UNNAMED",
+        "--add-opens=java.base/java.security=ALL-UNNAMED",
+        "--add-opens=java.base/java.text=ALL-UNNAMED",
+        "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
+        "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED",
+        "--add-opens=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED"
+    )
+    systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+    testLogging { events("passed", "failed", "skipped") }
 }

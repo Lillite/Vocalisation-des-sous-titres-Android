@@ -15,6 +15,7 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** Video fills the window; safe-area padding belongs only to overlays. */
 @UnstableApi
@@ -175,10 +176,10 @@ class CinemaView(
                     val change = (startY - event.y) / height.coerceAtLeast(1)
                     if (startX > width / 2) {
                         prefs.movieVolume = (startVolume + change).coerceIn(0f, 1f); session.updateMix()
-                        tell("Volume film ${(prefs.movieVolume * 100).toInt()} %")
+                        tell("Volume film ${(prefs.movieVolume * 100).roundToInt()} %")
                     } else {
                         activity.window.attributes = activity.window.attributes.apply { screenBrightness = (startBrightness + change).coerceIn(0.01f, 1f) }
-                        tell("Luminosité ${(activity.window.attributes.screenBrightness * 100).toInt()} %")
+                        tell("Luminosité ${(activity.window.attributes.screenBrightness * 100).roundToInt()} %")
                     }
                 }
                 return true
@@ -286,10 +287,14 @@ class CinemaView(
     }
     internal fun setFrameProtection(enabled: Boolean) {
         if (disposed) return
+        if (enabled && prefs.int("imageMode", 0, 0, 2) == 1) {
+            // Use the same entire-image transition as the explicit mode button.
+            setFramingMode(0)
+            return
+        }
         prefs.putBool("protectFrame", enabled)
         if (enabled) {
             zoom = 1f; dx = 0f; dy = 0f
-            if (prefs.int("imageMode", 0, 0, 2) == 1) rememberFraming(0)
         }
         applyImage()
     }

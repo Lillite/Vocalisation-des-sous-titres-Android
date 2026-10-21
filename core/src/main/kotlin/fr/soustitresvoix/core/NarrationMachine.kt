@@ -82,14 +82,22 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
     fun pause(): List<Effect> = event {
         wantsPlayback = false
         val running = current
-        if (running != null && !running.preview && resumePolicy == ResumePolicy.REPLICA) {
+        // Buffering or voice unavailability may already have put the interrupted
+        // segment back at the head. Its group must have actually started: a new
+        // queued replica must not inherit the previous one's resume policy.
+        val interrupted = when {
+            running?.preview == true -> null
+            running != null -> running.job
+            else -> queue.peekFirst()?.takeIf { it.group == lastSpokenGroup }
+        }
+        if (interrupted != null && resumePolicy == ResumePolicy.REPLICA) {
             interrupt(keep = false)
-            queue.removeIf { it.group == running.job.group }
-            SpeechTools.segments(running.job.original).asReversed().forEach {
-                queue.addFirst(Job(it, running.job.expired, running.job.group, running.job.original, running.job.deadlineMs))
+            queue.removeIf { it.group == interrupted.group }
+            SpeechTools.segments(interrupted.original).asReversed().forEach {
+                queue.addFirst(Job(it, interrupted.expired, interrupted.group, interrupted.original, interrupted.deadlineMs))
             }
         } else interrupt(keep = current?.preview != true)
-        if (running != null && !running.preview && resumePolicy == ResumePolicy.EXPLICIT) voiceSuspended = true
+        if (interrupted != null && resumePolicy == ResumePolicy.EXPLICIT) voiceSuspended = true
     }
     /** Call before seek, media replacement or subtitle track change. */
     fun reset(keepPlaybackIntent: Boolean = false): List<Effect> = event {

@@ -1,6 +1,8 @@
-# Sous-titres en voix — Cinéma 0.3.1 (test)
+# Sous-titres en voix — 0.3.2
 
-Édition parallèle à 0.2 : application `fr.soustitresvoix.player.cinema3`, branche `cinema-0.3.1`. Conserver l’ancienne application. Le workflow Cinema 0.3 ne rend l’APK disponible qu’après compilation, lint, contrôle du manifeste, signature et tests sur Android 36 réussis. Les résultats exécutés restent dans Actions ; aucune promesse zéro bug.
+Version corrective issue de Cinéma 0.3.1. L’application `fr.soustitresvoix.player.stable` utilise une signature durable conservée hors du dépôt. Son identité distincte permet de conserver les anciennes éditions de test, dont la clé privée n’est pas disponible ici. Les préférences et les autorisations d’ouverture des vidéos restent propres à chaque installation ; choisir de nouveau la voix et les vidéos dans cette édition. Aucun fichier vidéo original n’est modifié.
+
+La procédure de vérification et de signature figure dans `TESTING.md`. Les rapports d’exécution précisent les environnements réellement testés ; une compilation ou un ancien résultat CI ne valide pas automatiquement une nouvelle version.
 
 ## Premier essai
 
@@ -19,13 +21,13 @@ Dans Voix / écran : choisir Adaptatif, vitesse de base 100 %, plafond 180 % com
 
 ## Compilation
 
-Java 17, Gradle 8.13, SDK 36, Build Tools 36.0.0, Kotlin 2.2.21, AGP 8.11.1, Media3 1.11.1. FFmpeg ne sert qu’à générer la démonstration synthétique sur le serveur de compilation.
+Java 17 pour la compilation et Java 21 pour les tests Android 36 Robolectric, Gradle 8.13, SDK 36, Build Tools 36.0.0, Kotlin 2.2.21, AGP 8.11.1, Media3 1.11.1. FFmpeg ne sert qu’à générer la démonstration synthétique sur le serveur de compilation.
 
 ```
-gradle --no-daemon :core:test :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
+gradle --no-daemon :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
 gradle --no-daemon :app:connectedDebugAndroidTest
 ```
 
 Les tests de la 0.2 sont conservés. Nouveaux contrôles : ponctuation, échéances et répétitions simultanées, persistance et intégrité du cache, détection prudente des marges, annulation de l’indexation MKV/SRT, vitesse transmise au vrai service TTS de test, pixels des quatre coins après étirement, restauration du cadrage, effets SDR et traitement audio PCM. Les voix externes réelles, TalkBack complet, HDR et performances du OnePlus restent à mesurer sur l’appareil. Pas de nouveau modèle vocal neuronal ou backend NPU intégré.
 
-Le lecteur ne demande ni Internet, ni microphone, ni caméra, ni permission générale de stockage. Les pages du catalogue ne s’ouvrent dans le navigateur que sur demande. Un moteur vocal externe peut avoir ses propres permissions. Version debug pour essais privés, aucune clé privée dans le dépôt.
+Le lecteur ne demande ni Internet, ni microphone, ni caméra, ni permission générale de stockage. Les pages du catalogue ne s’ouvrent dans le navigateur que sur demande. Un moteur vocal externe peut avoir ses propres permissions. Les clés de signature et mots de passe sont exclus du dépôt.

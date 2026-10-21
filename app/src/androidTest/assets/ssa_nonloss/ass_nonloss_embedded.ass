@@ -1,0 +1,18 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 320
+PlayResY: 180
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Sign,Arial,18,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,8,5,5,5,1
+Style: Dialogue,Arial,16,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,1,0,2,5,5,5,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:09.00,Sign,,0,0,0,,{\an8\pos(160,12)}Non-perte — panneau interne ; accès réservé.
+Dialogue: 1,0:00:02.00,0:00:03.20,Dialogue,ALICE,0,0,0,,{\an2\pos(160,164)}Non-perte — dialogue interne un ; Alice arrive.
+Dialogue: 1,0:00:04.00,0:00:05.20,Dialogue,BOB,0,0,0,,{\an2\pos(160,164)}Non-perte — dialogue interne deux ; Bob répond.
+Dialogue: 1,0:00:06.00,0:00:07.20,Dialogue,ALICE,0,0,0,,{\an2\pos(160,164)}Non-perte — dialogue interne trois ; Alice repart.
+Dialogue: 1,0:00:10.00,0:00:11.20,Dialogue,ALICE,0,0,0,,{\an2\pos(160,164)}Non-perte — reprise interne ; encore une fois.
+Dialogue: 1,0:00:12.00,0:00:13.20,Dialogue,ALICE,0,0,0,,{\an2\pos(160,164)}Non-perte — reprise interne ; encore une fois.

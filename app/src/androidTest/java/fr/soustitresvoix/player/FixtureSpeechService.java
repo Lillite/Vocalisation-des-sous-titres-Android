@@ -1,5 +1,6 @@
 package fr.soustitresvoix.player;
 
+import android.content.Intent;
 import android.media.AudioFormat;
 import android.speech.tts.SynthesisCallback;
 import android.speech.tts.SynthesisRequest;
@@ -7,7 +8,9 @@ import android.speech.tts.TextToSpeech;
 import android.speech.tts.TextToSpeechService;
 import android.speech.tts.Voice;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Locale;
 
 /** Instrumentation APK only: deterministic PCM, never a production voice.
@@ -15,7 +18,29 @@ import java.util.Locale;
  * class path does not include the target APK's deduplicated Kotlin runtime.
  */
 public final class FixtureSpeechService extends TextToSpeechService {
+    public static final String OBSERVATION_ACTION = "fr.soustitresvoix.fixture.SYNTHESIS_OBSERVED";
+    public static final String NONLOSS_PREFIX = "Non-perte — ";
+    public static final String ASYNC_ERROR_PREFIX = "Non-perte — erreur asynchrone : ";
+    private final Set<String> failedOnce = new HashSet<>();
     private volatile boolean cancelled;
+
+    // The engine is a separate test-APK process. Observe actual SynthesisRequest
+    // text through explicit IPC, not through a static field in the test process.
+    // Android's public SynthesisRequest does not expose the modern utterance ID;
+    // the client test checks that independently in AndroidSpeech's completion.
+    private void report(SynthesisRequest request, String event) {
+        String text = request.getCharSequenceText().toString();
+        if (!text.startsWith(NONLOSS_PREFIX)) return;
+        String[] packages = getPackageManager().getPackagesForUid(request.getCallerUid());
+        if (packages == null) return;
+        for (String target : packages) {
+            if ("fr.soustitresvoix.player.cinema3".equals(target)
+                    || "fr.soustitresvoix.player.stable".equals(target)) {
+                sendBroadcast(new Intent(OBSERVATION_ACTION).setPackage(target)
+                    .putExtra("text", text).putExtra("event", event));
+            }
+        }
+    }
     @Override protected int onIsLanguageAvailable(String lang, String country, String variant) {
         return "fr".equals(lang) || "fra".equals(lang)
             ? TextToSpeech.LANG_COUNTRY_AVAILABLE : TextToSpeech.LANG_NOT_SUPPORTED;
@@ -36,6 +61,20 @@ public final class FixtureSpeechService extends TextToSpeechService {
     @Override public int onLoadVoice(String name) { return onIsValidVoiceName(name); }
     @Override protected void onSynthesizeText(SynthesisRequest request, SynthesisCallback callback) {
         cancelled = false;
+        report(request, "received");
+        String requestedText = request.getCharSequenceText().toString();
+        if (requestedText.startsWith(ASYNC_ERROR_PREFIX) && failedOnce.add(requestedText)) {
+            // A real asynchronous engine callback, after the synthesis request
+            // has reached the service. The next request for this exact text is
+            // allowed, so the test can verify the direct fallback separately.
+            if (callback.start(16000, AudioFormat.ENCODING_PCM_16BIT, 1) == TextToSpeech.SUCCESS) {
+                byte[] partial = new byte[32];
+                callback.audioAvailable(partial, 0, partial.length);
+            }
+            report(request, "injected_error");
+            callback.error(TextToSpeech.ERROR_SYNTHESIS);
+            return;
+        }
         // The 0.3 direct-path regression requires the rate to reach the actual service,
         // not merely a UI field. This check exists only in the instrumentation APK.
         if (request.getCharSequenceText().toString().startsWith("Cette longue phrase doit accélérer sans cache")
@@ -56,6 +95,6 @@ public final class FixtureSpeechService extends TextToSpeechService {
             if (callback.audioAvailable(silence, 0, n) != TextToSpeech.SUCCESS) return;
             remaining -= n;
         }
-        if (!cancelled) callback.done();
+        if (!cancelled && callback.done() == TextToSpeech.SUCCESS) report(request, "completed");
     }
 }

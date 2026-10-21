@@ -110,7 +110,13 @@ class AndroidSpeech(
         configuredEngine = preferences.enginePackage
         val ticket = generation
         if (configuredEngine.isNotEmpty() && engines().none { it.name == configuredEngine }) {
-            onAvailability(false, "Ce moteur vocal n’est plus installé. Choisis un autre moteur."); return
+            // connect() also runs inside the constructor. Notify only after the
+            // owner has assigned this instance, and ignore a closed/retried connection.
+            main.post {
+                if (!closed && ticket == generation)
+                    onAvailability(false, "Ce moteur vocal n’est plus installé. Choisis un autre moteur.")
+            }
+            return
         }
         engine = TextToSpeech(context.applicationContext, { status -> main.post {
             if (!closed && ticket == generation) initialize(status)

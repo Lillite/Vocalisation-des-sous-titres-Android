@@ -20,7 +20,7 @@ srt = root / 'examples/demonstration.srt'
 assert srt.is_file() and len(re.findall(r' --> ', srt.read_text(encoding='utf-8'))) == 8
 script = (root / 'app/build.gradle.kts').read_text(encoding='utf-8')
 assert 'generateDemo' in script and 'dependsOn(generateDemo)' in script
-assert not list(root.rglob('*.jks')) and not list(root.rglob('*.keystore'))
+assert not any(list(root.rglob(pattern)) for pattern in ('*.jks', '*.keystore', '*.p12', '*.pfx', 'signing.properties'))
 production = list(root.glob('app/src/main/java/**/*.kt')) + list(root.glob('core/src/main/kotlin/**/*.kt'))
 assert len(production) >= 7, 'Missing production sources'
 for file in production:

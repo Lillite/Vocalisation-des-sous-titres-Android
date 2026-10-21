@@ -17,7 +17,9 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: |
+            17
+            21
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
@@ -38,7 +40,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          gradle --no-daemon --stacktrace :core:test :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest > build/verification/build-console.txt 2>&1
+          gradle --no-daemon --stacktrace --rerun-tasks --no-build-cache :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest > build/verification/build-console.txt 2>&1
           result=$?
           tail -n 180 build/verification/build-console.txt
           exit "$result"
@@ -85,6 +87,7 @@ jobs:
             core/build/reports/tests/
             core/build/test-results/
             app/build/reports/
+            app/build/test-results/
             app/build/outputs/androidTest-results/
             app/build/outputs/connected_android_test_additional_output/
           retention-days: 14

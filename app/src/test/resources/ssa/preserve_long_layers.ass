@@ -1,0 +1,36 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 640
+PlayResY: 360
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Sign,Arial,28,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,8,10,10,10,1
+Style: Dialogue,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 1,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 2,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 3,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 4,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 5,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 6,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 7,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 8,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 9,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 10,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 11,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 12,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 13,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 14,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 15,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 16,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 17,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 18,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 19,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 20,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 21,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 22,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.
+Dialogue: 23,0:00:01.00,0:00:01.20,Sign,,0,0,0,,{\an8\pos(320,30)}ATTENTION… Attends, encore ; écoute : « tout doit être lu ». Pourquoi ? Parce que c’est important ! Et cetera.

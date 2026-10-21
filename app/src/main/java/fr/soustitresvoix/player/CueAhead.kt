@@ -19,16 +19,25 @@ import java.util.TreeMap
 @UnstableApi
 class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : ExtractorsFactory {
     private val limit = 100_000
-    private val factory = DefaultExtractorsFactory()
+    private data class Captured(val track: String?, val group: CuesWithTiming, val origins: List<SsaOccurrence>?)
+    private val captured = ThreadLocal<Captured?>()
+    @Volatile private var onOriginCue: ((String?, CuesWithTiming, List<SsaOccurrence>) -> Unit)? = null
+    private val factory = DefaultExtractorsFactory().setSubtitleParserFactory(parsers(sidecar = false))
     var truncated = false; private set
     private var reports = 0
     private var reportedChars = 0L
-    @Synchronized private fun report(track: String?, group: CuesWithTiming) {
+    /** Configure before the factory is handed to a media source or an indexer. */
+    fun setOccurrenceListener(listener: (String?, CuesWithTiming, List<SsaOccurrence>) -> Unit): CueAheadFactory {
+        onOriginCue = listener
+        return this
+    }
+    @Synchronized private fun report(track: String?, group: CuesWithTiming, origins: List<SsaOccurrence>? = null) {
         val characters = group.cues.sumOf { it.text?.length ?: 0 }
         if (characters == 0) return
         if (reports >= limit || reportedChars + characters > 12_000_000) { truncated = true; return }
         reports++; reportedChars += characters
-        onCue(track, group)
+        val annotated = onOriginCue
+        if (origins != null && annotated != null) annotated(track, group, origins) else onCue(track, group)
     }
     @Synchronized private fun resetBudget() { reports = 0; reportedChars = 0 }
     override fun createExtractors(): Array<Extractor> = wrap(factory.createExtractors())
@@ -76,11 +85,13 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
             sampleData(ParsableByteArray(buffer, n), n, sampleDataPart); return n
         }
         override fun sampleMetadata(timeUs: Long, flags: Int, size: Int, offset: Int, cryptoData: TrackOutput.CryptoData?) {
-            out.sampleMetadata(timeUs, flags, size, offset, cryptoData)
-            if (!cueFormat) return
+            if (!cueFormat) { out.sampleMetadata(timeUs, flags, size, offset, cryptoData); return }
             val b = bytes.toByteArray(); val start = b.size - offset - size
             if (!overflow && cryptoData == null && start >= 0 && size > 0) {
-                try { report(track, CueDecoder().decode(timeUs, b, start, size)) }
+                try {
+                    val group = CueDecoder().decode(timeUs, b, start, size)
+                    report(track, group, originsFor(track, group))
+                }
                 catch (_: RuntimeException) { truncated = true }
             } else if (overflow || cryptoData != null || start < 0) {
                 truncated = true
@@ -88,13 +99,43 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
             bytes.reset()
             if (!overflow && offset in 1..b.size) bytes.write(b, b.size - offset, offset)
             overflow = false
+            // Publish the index before the sample becomes readable by TextRenderer.
+            // Otherwise a fast renderer can post onCues ahead of this index callback.
+            out.sampleMetadata(timeUs, flags, size, offset, cryptoData)
         }
     }
-    fun sidecarParsers(): SubtitleParser.Factory {
+    private fun originsFor(track: String?, group: CuesWithTiming): List<SsaOccurrence>? {
+        val source = captured.get() ?: return null
+        val origins = source.origins ?: return null
+        if (source.track != track || origins.size != group.cues.size ||
+            source.group.durationUs != group.durationUs) return null
+        val shift = try { Math.subtractExact(group.startTimeUs, source.group.startTimeUs) }
+            catch (_: ArithmeticException) { return null }
+        return origins.map { it.shifted(shift) ?: return null }
+    }
+    fun sidecarParsers(): SubtitleParser.Factory = parsers(sidecar = true)
+    private fun parsers(sidecar: Boolean): SubtitleParser.Factory {
         val default = DefaultSubtitleParserFactory()
         return object : SubtitleParser.Factory by default {
             override fun create(format: Format): SubtitleParser {
                 val parser = default.create(format)
+                if (format.sampleMimeType == MimeTypes.TEXT_SSA) {
+                    return SsaOccurrenceParser(parser, format, { truncated = true }) { group, origins, output ->
+                        if (sidecar) {
+                            report("external-subtitle", group, origins)
+                            output.accept(group)
+                        } else {
+                            // SubtitleTranscodingTrackOutput calls sampleMetadata synchronously
+                            // inside this consumer. Its absolute time includes the container offset.
+                            val previous = captured.get()
+                            captured.set(Captured(format.id, group, origins))
+                            try { output.accept(group) } finally {
+                                if (previous == null) captured.remove() else captured.set(previous)
+                            }
+                        }
+                    }
+                }
+                if (!sidecar) return parser
                 return object : SubtitleParser by parser {
                     override fun parse(data: ByteArray, offset: Int, length: Int, options: SubtitleParser.OutputOptions,
                         output: Consumer<CuesWithTiming>) {
@@ -112,8 +153,10 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
 @UnstableApi
 class CueAheadIndex {
     var truncated = false; private set
-    data class Item(val track: String?, val startUs: Long, val endUs: Long, val raw: String, val ordinal: Int = 0) {
-        val identity: String get() = "$track:$startUs:$endUs:$ordinal:$raw"
+    data class Item(val track: String?, val startUs: Long, val endUs: Long, val raw: String, val ordinal: Int = 0,
+        val sourceToken: String? = null) {
+        val identity: String get() = sourceToken?.let { "$track:$startUs:$endUs:$it" }
+            ?: "$track:$startUs:$endUs:$ordinal:$raw"
     }
     private val frames = TreeMap<Long, MutableList<Item>>()
     private val unique = HashSet<Item>()
@@ -136,7 +179,7 @@ class CueAheadIndex {
     private var cursorUs = 0L
     val count: Int @Synchronized get() = unique.size
     @Synchronized fun clear() { frames.clear(); unique.clear(); trackSnapshots.clear(); characters = 0; cursorUs = 0; truncated = false }
-    @Synchronized fun add(track: String?, group: CuesWithTiming) {
+    @Synchronized fun add(track: String?, group: CuesWithTiming, origins: List<SsaOccurrence>? = null) {
         if (group.startTimeUs == C.TIME_UNSET || group.durationUs <= 0 || group.durationUs == C.TIME_UNSET) {
             if (group.cues.any { !it.text.isNullOrEmpty() }) truncated = true
             return
@@ -146,7 +189,12 @@ class CueAheadIndex {
         for ((ordinal, cue) in group.cues.withIndex()) {
             val raw = cue.text?.toString() ?: continue
             if (raw.length > 24_000) { truncated = true; continue }
-            val item = Item(track, group.startTimeUs, end, raw, ordinal)
+            val origin = origins?.takeIf { it.size == group.cues.size }?.get(ordinal)?.takeIf {
+                it.startUs <= group.startTimeUs && it.endUs >= end && it.endUs > it.startUs
+            }
+            if (origins != null && origin == null) truncated = true
+            val item = if (origin == null) Item(track, group.startTimeUs, end, raw, ordinal)
+                else Item(track, origin.startUs, origin.endUs, raw, origin.ordinal, origin.token)
             if (unique.add(item)) {
                 trackSnapshots.remove(track)
                 frames.getOrPut(item.startUs) { mutableListOf() }.add(item)

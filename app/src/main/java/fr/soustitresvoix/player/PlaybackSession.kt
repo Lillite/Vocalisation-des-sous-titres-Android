@@ -252,6 +252,8 @@ class PlaybackSession(
             .setPreferredTextLanguages("fr", "fra").setSelectUndeterminedTextLanguage(true).build()
         val tap = CueAheadFactory { track, cues -> handler.post {
             if (!closed && epoch == mediaEpoch) ahead.add(track, cues)
+        } }.setOccurrenceListener { track, cues, origins -> handler.post {
+            if (!closed && epoch == mediaEpoch) ahead.add(track, cues, origins)
         } }
         val factory = DefaultMediaSourceFactory(context, tap).setSubtitleParserFactory(tap.sidecarParsers())
         player.setMediaSource(factory.createMediaSource(item.build()), saved.positionMs)
@@ -393,7 +395,7 @@ class PlaybackSession(
                 }
             } catch (e: Exception) { handler.post {
                 if (!closed && epoch == mediaEpoch && indexer === task) {
-                    indexer=null; manualPreparation=false; indexingStatus=e.message ?: "Indexation impossible"
+                    indexer=null; manualPreparation=false; indexingStatus=FullSubtitleIndexer.safeFailureMessage(e)
                     onMessage(indexingStatus, true)
                 }
             } }

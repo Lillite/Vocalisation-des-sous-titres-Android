@@ -33,6 +33,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 /** Accessible library controls and an independent immersive video presentation. */
 @UnstableApi
@@ -193,6 +194,7 @@ class MainActivity : ComponentActivity() {
         // CinemaView restores the explicit per-video choice when entered again.
         playerView.resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
         session.visual.setFramingMode(0)
+        if (session.visual.margins.nonzero()) session.visual.crop(fr.soustitresvoix.core.BlackBars.Margins())
         playerView.subtitleView?.setPadding(0, 0, 0, 0)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(18, 18, 18)); setPadding(dp(8), dp(8), dp(8), dp(8))
@@ -458,10 +460,10 @@ class MainActivity : ComponentActivity() {
                 })
             })
         }
-        slider("Vitesse de la voix", 60, 200, (prefs.speechRate * 100).toInt(), " %") { session.beforeSettingsChange(); prefs.speechRate = it / 100f }
-        slider("Volume de la voix", 10, 100, (prefs.voiceVolume * 100).toInt(), " %") { prefs.voiceVolume = it / 100f }
-        slider("Volume habituel du film", 0, 100, (prefs.movieVolume * 100).toInt(), " %") { prefs.movieVolume = it / 100f }
-        slider("Son du film conservé pendant la voix", 0, 100, (prefs.duckVolume * 100).toInt(), " %") { prefs.duckVolume = it / 100f }
+        slider("Vitesse de la voix", 60, 200, (prefs.speechRate * 100).roundToInt(), " %") { session.beforeSettingsChange(); prefs.speechRate = it / 100f }
+        slider("Volume de la voix", 10, 100, (prefs.voiceVolume * 100).roundToInt(), " %") { prefs.voiceVolume = it / 100f }
+        slider("Volume habituel du film", 0, 100, (prefs.movieVolume * 100).roundToInt(), " %") { prefs.movieVolume = it / 100f }
+        slider("Son du film conservé pendant la voix", 0, 100, (prefs.duckVolume * 100).roundToInt(), " %") { prefs.duckVolume = it / 100f }
         slider("Taille des sous-titres", 22, 60, prefs.subtitleSp.toInt(), " sp") { prefs.subtitleSp = it.toFloat() }
         column.addView(button("Choisir une voix hors ligne") { voiceDialog() })
         column.addView(button("Écouter un essai de la voix") { session.refreshSettings(); session.previewVoice() })
@@ -498,7 +500,7 @@ class MainActivity : ComponentActivity() {
     }
     private fun helpDialog() {
         session.pause()
-        AlertDialog.Builder(this).setTitle("Cinéma 0.3.1 — mode d’emploi et limites")
+        AlertDialog.Builder(this).setTitle("Sous-titres en voix 0.3.2 — mode d’emploi et limites")
             .setMessage("Ouvre une vidéo, choisis une piste textuelle et une voix dans la même langue. Le lecteur ne traduit pas.\n\nÉtirement intégral : toute l’image est visible, avec proportions modifiées. La protection interdit le zoom et les déplacements accidentels. Un recadrage de marges exige une confirmation distincte et peut être annulé.\n\nAdaptatif : la vitesse est calculée à partir du WAV préparé ou d’une estimation calibrée en lecture directe. Le plafond est réglable de 100 à 250 % de la vitesse de base, 180 % au départ. L’algorithme réserve le temps des segments restants et respecte la tolérance de retard choisie. Une pause reste possible si la phrase ne tient pas au plafond choisi ; aucun dialogue n’est résumé.\n\nPréparation : indexer le texte, puis préparer cinq minutes ou toute la vidéo. Le film reste en pause et ne reprend que sur commande. Le cache persiste mais sa capacité est limitée ; préparer toute la vidéo ne garantit pas que tous les fichiers audio tiennent encore en cache. Reste dans l’application pendant la préparation.\n\nLes filtres restent facultatifs. La ponctuation et les silences naturels ne sont pas supprimés. Si un modèle est modifié à l’intérieur d’un moteur, utilise le bouton signalant sa mise à jour.\n\nPGS, VobSub et sous-titres incrustés ne sont pas vocalisés. Pas de DRM, d’OCR, de traduction, d’audiodescription ni de lecture en arrière-plan. Les essais de décodeurs utilisent ceux déjà présents sur le téléphone. Les effets visuels sont réservés au SDR reconnu.\n\nLe lecteur n’a pas d’autorisation Internet. Les moteurs vocaux sont des applications externes. Aucun runtime neuronal vocal GPU/NPU n’est intégré. Les profils règlent l’anticipation et le cache, pas le matériel interne d’un moteur tiers.\n\nÉdition 0.3 installable à côté de la 0.1 et de la 0.2, avec réglages séparés. Aucun fichier original n’est modifié.")
             .setPositiveButton("Fermer", null).show()
     }

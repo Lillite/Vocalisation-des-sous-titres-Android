@@ -7,7 +7,8 @@ if len(sys.argv) != 2:
     raise SystemExit('Usage: check-apk-manifest.py manifest.xml')
 ns = '{http://schemas.android.com/apk/res/android}'
 root = ET.parse(Path(sys.argv[1])).getroot()
-assert root.get('package') == 'fr.soustitresvoix.player.cinema3', 'Unexpected application identity'
+assert root.get('package') == 'fr.soustitresvoix.player.stable', 'Unexpected application identity'
+assert root.get(ns + 'versionCode') == '5' and root.get(ns + 'versionName') == '0.3.2', 'Unexpected version'
 app = root.find('application')
 assert app is not None and app.get(ns + 'allowBackup') == 'false', 'Backup must remain disabled'
 permissions = {node.get(ns + 'name', '') for node in root if node.tag.startswith('uses-permission')}

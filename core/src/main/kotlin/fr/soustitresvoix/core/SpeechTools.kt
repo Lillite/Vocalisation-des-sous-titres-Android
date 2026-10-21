@@ -34,24 +34,51 @@ object WavInfo {
     data class Info(val durationMs: Long, val bytes: Long)
     fun read(file: File): Info? = try {
         RandomAccessFile(file, "r").use { r ->
+            fun u16(): Int = java.lang.Short.toUnsignedInt(java.lang.Short.reverseBytes(r.readShort()))
             fun u32(): Long = Integer.toUnsignedLong(Integer.reverseBytes(r.readInt()))
             fun tag(): String { val b = ByteArray(4); r.readFully(b); return String(b, Charsets.US_ASCII) }
-            if (r.length() < 44 || r.length() > 16L * 1024 * 1024 || tag() != "RIFF") return null
-            u32(); if (tag() != "WAVE") return null
-            var byteRate = 0L; var dataSize = 0L; var chunks = 0
-            while (r.filePointer + 8 <= r.length() && chunks++ < 64) {
+            val length = r.length()
+            if (length < 44 || length > 16L * 1024 * 1024 || tag() != "RIFF") return null
+            val riffSize = u32()
+            val riffEnd = 8 + riffSize
+            if (riffSize < 4 || riffEnd > length || tag() != "WAVE") return null
+            var byteRate = 0L; var blockAlign = 0; var dataSize = -1L; var chunks = 0
+            var foundFormat = false
+            while (r.filePointer < riffEnd) {
+                if (riffEnd - r.filePointer < 8 || ++chunks > 64) return null
                 val name = tag(); val size = u32(); val body = r.filePointer
-                if (size > r.length() - body) return null
-                if (name == "fmt " && size >= 16) {
-                    val encoding = java.lang.Short.toUnsignedInt(java.lang.Short.reverseBytes(r.readShort()))
-                    if (encoding !in listOf(1, 3)) return null
-                    r.skipBytes(6); byteRate = u32()
+                if (size > riffEnd - body) return null
+                // Android FileSynthesisCallback omits the final pad byte for
+                // odd-length PCM8 output. Accept complete terminal data while
+                // still requiring padding before any following chunk.
+                val next = if (name == "data" && body + size == riffEnd) riffEnd
+                    else body + size + size % 2
+                if (next > riffEnd) return null
+                if (name == "fmt ") {
+                    if (foundFormat || size < 16 || size == 17L) return null
+                    val encoding = u16(); val channels = u16(); val sampleRate = u32()
+                    byteRate = u32(); blockAlign = u16(); val bits = u16()
+                    when (encoding) {
+                        1 -> if (bits != 8 && bits != 16 && bits != 24 && bits != 32) return null
+                        3 -> if (bits != 32 && bits != 64) return null
+                        else -> return null
+                    }
+                    if (channels == 0 || sampleRate == 0L ||
+                        blockAlign.toLong() != channels.toLong() * (bits / 8) ||
+                        byteRate != sampleRate * blockAlign) return null
+                    // WAVEFORMATEX may add a cbSize and optional format bytes.
+                    // Keep fmt16, fmt18 and larger valid chunks without assuming
+                    // that the next chunk or PCM data starts at byte 44.
+                    if (size >= 18 && u16().toLong() > size - 18) return null
+                    foundFormat = true
+                } else if (name == "data") {
+                    if (dataSize >= 0) return null
+                    dataSize = size
                 }
-                if (name == "data") dataSize = size
-                if (dataSize > 0 && byteRate > 0) break
-                r.seek(body + size + size % 2)
+                r.seek(next)
             }
-            if (byteRate <= 0 || dataSize <= 0) null else Info(dataSize * 1000 / byteRate, r.length())
+            if (!foundFormat || dataSize <= 0 || dataSize % blockAlign != 0L) null
+            else Info(dataSize * 1000 / byteRate, length)
         }
     } catch (_: Exception) { null }
 }
