@@ -11,16 +11,19 @@ Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcou
 | Étape | Contrôles exigés |
 | --- | --- |
 | Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 36 tests JVM du noyau, 38 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 36 tests du noyau et des 38 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Variante debug | 40 tests JVM du noyau, 41 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 40 tests du noyau et des 41 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
 | Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
-| Android 36 | Deux passages complets des 68 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
+| Android 36 | Deux passages complets des 69 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
 | Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
 
 Ces effectifs incluent les suites de la version 0.3.2 et les compléments de la
 [première étape de modularisation](docs/MODULARISATION_ETAPE_1.md) : trois tests
 du contrôleur de narration, trois tests de composition et un scénario instrumenté
-de pause/reprise. Aucun test antérieur n'est retiré. Lorsqu'un test est
+de pause/reprise. La [deuxième étape](docs/CAPACITES_ETAPE_2.md) ajoute quatre tests
+du modèle de diagnostic, trois tests JVM de consultation et d'invalidation, et
+un scénario Android de consultation/copie avec observation des requêtes TTS.
+Aucun test antérieur n'est retiré. Lorsqu'un test est
 ajouté, mettre à jour les effectifs attendus dans le workflow ou dans
 `tools/run-device-tests.sh` ; ne jamais retirer un test pour retrouver un nombre
 attendu. Les contrôles des rapports refusent les tests manquants, ignorés,
@@ -81,6 +84,15 @@ Le test JVM de copie du diagnostic utilise un shadow limité à la métrique
 mémoire est synthétique ; le fichier, l’indexeur, l’activité et le presse-papiers
 suivent leur vrai parcours. Le test instrumenté correspondant n’utilise aucun
 shadow. Ne pas interpréter cette précondition JVM comme une mesure Android.
+
+Le scénario de diagnostic de l'étape 2 emploie aussi ce shadow PSS sur la JVM.
+Ses proxies délèguent au vrai lecteur Media3 et enregistrent les commandes aux
+frontières des composants ; la voix y est contrôlée. Le scénario Android utilise
+le vrai service vocal de fixture et une action IPC dédiée observant **toutes**
+les demandes de synthèse. Deux essais vocaux explicites, avant et après les
+consultations, vérifient que cette observation fonctionne. L'entrée dans les
+réglages garde sa pause existante ; les assertions de stabilité commencent
+ensuite. Elles portent sur afficher, actualiser et copier le diagnostic.
 
 Dans ce test instrumenté, les dialogues se ferment par leurs boutons et avec
 une racine Espresso explicitement limitée aux dialogues. Deux fermetures Retour

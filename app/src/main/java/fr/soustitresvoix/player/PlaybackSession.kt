@@ -27,6 +27,7 @@ import fr.soustitresvoix.core.NarrationController
 import fr.soustitresvoix.core.NarrationMachine
 import fr.soustitresvoix.core.SpeechTools
 import fr.soustitresvoix.core.PlaybackBenchmark
+import fr.soustitresvoix.core.PlaybackDiagnosticSnapshot
 import java.io.File
 
 @UnstableApi
@@ -44,7 +45,9 @@ class PlaybackSession(
     private val subtitleSource: SubtitleSource = components.createSubtitles(context)
     private val indexingWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
     private var indexer: SubtitleIndexer? = null
-    var indexingStatus = "Indexation complète non demandée"; private set
+    private var indexingStatusEpoch = 0L
+    var indexingStatus = "Indexation complète non demandée"
+        private set(value) { field = value; indexingStatusEpoch = mediaEpoch }
     private var manualPreparation = false
     private var thermalPreparationStopped = false
     val isPreparing: Boolean get() = indexer != null || speech.bulkPreparation || manualPreparation
@@ -85,6 +88,7 @@ class PlaybackSession(
     private var appliedFilters = prefs.filters
     internal val playback: PlaybackBackend = components.createPlayback(context, prefs,
         movieAudio, components.createVideoRenderer())
+    private val diagnosticObserver = PlaybackDiagnosticsObserver(this)
     // The same Player instance is shared by both views for this session's lifetime.
     val player: Player get() = playback.player
     val video: VideoOutput get() = playback.video
@@ -146,6 +150,7 @@ class PlaybackSession(
                 if (!closed) visual.onInputFormatChanged(format)
             }
         })
+        playback.addAnalyticsListener(diagnosticObserver)
         player.setAudioAttributes(androidx.media3.common.AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), false)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
@@ -207,9 +212,10 @@ class PlaybackSession(
         finishPlaybackBenchmark("Changement de vidéo ou de fichier de sous-titres")
         savePosition(); cancelIndexing(); indexedSource = null; visual.reset()
         val epoch = ++mediaEpoch; lastRawCaption = ""; ahead.clear(); speech.cancelPreparation()
+        val diagnosticToken = diagnosticObserver.beginMedia()
         apply(machine.reset(false)); lastCue = null; onCaption("")
         media = saved
-        val item = MediaItem.Builder().setUri(Uri.parse(saved.uri))
+        val item = MediaItem.Builder().setUri(Uri.parse(saved.uri)).setTag(diagnosticToken)
         val path = saved.subtitlePath
         hasAttachedSubtitle = path != null && saved.subtitleMime != null && File(path).isFile
         selectExternalWhenAvailable = hasAttachedSubtitle
@@ -476,15 +482,21 @@ class PlaybackSession(
             "Cette dernière phrase permet de vérifier la fin de la préparation."))
         onMessage("Banc d’essai de six extraits lancé. Consulte Mesures. Une seconde exécution teste le cache chaud ; vider le cache fournit une comparaison à froid.", false)
     }
+    fun diagnosticSnapshot(): PlaybackDiagnosticSnapshot = diagnosticObserver.snapshot()
+    internal fun diagnosticIndexingStatus(): String = if (indexingStatusEpoch == mediaEpoch)
+        indexingStatus else "Indexation complète non demandée pour ce média"
     fun diagnostics(): String {
+        val snapshot = diagnosticSnapshot()
+        val capabilities = PlaybackDiagnosticText.render(snapshot)
+        if (snapshot.closed) return capabilities
         val elapsed = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(1)
         val cpu = (android.os.Process.getElapsedCpuTime() - startedCpu) * 100.0 / elapsed
         val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val temp = battery?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
         val heat = if (Build.VERSION.SDK_INT >= 29) context.getSystemService(PowerManager::class.java).currentThermalStatus.toString() else "indisponible"
         val pss = context.getSystemService(android.app.ActivityManager::class.java).getProcessMemoryInfo(intArrayOf(android.os.Process.myPid())).firstOrNull()?.totalPss ?: 0
-        return "Appareil : ${Build.MANUFACTURER} ${Build.MODEL} ; Android ${Build.VERSION.RELEASE}\n" +
-            "Décodeur vidéo : $videoDecoder\nImages vidéo abandonnées : $droppedFrames\n" +
+        return "$capabilities\n\nAppareil : ${Build.MANUFACTURER} ${Build.MODEL} ; Android ${Build.VERSION.RELEASE}\n" +
+            "Images vidéo abandonnées (cumul de session) : $droppedFrames\n" +
             "CPU du lecteur (hors moteur vocal externe) : ${"%.1f".format(cpu)} % d’un cœur, moyenne de session\n" +
             "Mémoire PSS du lecteur : ${pss / 1024} Mio (moteur vocal externe non inclus)\n" +
             "Température BATTERIE : ${if (temp != null && temp != Int.MIN_VALUE) "${temp / 10f} °C" else "indisponible"} ; pas la température CPU/GPU\n" +
@@ -498,10 +510,7 @@ class PlaybackSession(
             "Délais synthèse en fichier : ${speech.synthesisLatency.summary()}\n" +
             "Délais lecture du cache : ${speech.cacheLatency.summary()}\n" +
             "Pauses de confort terminées : ${holdLatency.summary()}\n" +
-            "$indexingStatus\nPréparation : anticipation ${prefs.lookAheadSeconds} s estimées, ${prefs.lookAheadCount} segments max, cache ${prefs.cacheBytes / 1048576} Mio\n" +
-            "Audio expérimental : ${movieAudio.enabled}; ${movieAudio.processedSamples} échantillons PCM16 traités (pas de séparation des sources)\n" +
-            "Effets GPU : contraste ${visual.contrast}, luminosité ${visual.brightness}, marges validées ${visual.margins.nonzero()}, HDR ${visual.hdr}, comparaison original ${visual.bypass}\n" +
-            "Agrandissement détaillé : demandé ${visual.detailedScaling}, actif ${visual.detailedScalingActive}, cible ${visual.scalingTarget}\n" +
+            "Préparation : anticipation ${prefs.lookAheadSeconds} s estimées, ${prefs.lookAheadCount} segments max, cache ${prefs.cacheBytes / 1048576} Mio\n" +
             "GPU/NPU du moteur vocal : non exposés par l’API TTS Android. Aucun benchmark OnePlus n’est simulé.\n\n${playbackBenchmarkReport()}"
     }
     fun repeatLast() {
@@ -636,6 +645,7 @@ class PlaybackSession(
     fun close() {
         if (closed) return
         pause(); cancelIndexing(); indexingWorker.shutdownNow(); closed = true; mediaEpoch++; handler.removeCallbacksAndMessages(null)
+        diagnosticObserver.close()
         try { context.unregisterReceiver(noisy) } catch (_: IllegalArgumentException) { }
         visual.close(); speech.close(); playback.close()
     }

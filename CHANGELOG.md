@@ -2,6 +2,18 @@
 
 Ce journal présente les étapes principales vérifiables dans l’historique du dépôt. Les rapports détaillés restent accessibles dans l’[index documentaire](docs/README.md). Les numéros ci-dessous désignent les versions de l’application ; les correspondances avec les publications GitHub figurent dans l’[historique](docs/HISTORIQUE_BRANCHES.md).
 
+## En préparation — Capacités et observations, étape 2
+
+- Point de retour de l’étape 1 conservé au commit `a093e791b1413aefef6add027225b88c20657c6c` ; nouvelle branche de travail séparée.
+- Modèle de diagnostic sans dépendance Android ou Media3, avec disponibilité, provenance et faits demandés/configurés/observés distincts.
+- Raccordement au diagnostic existant et au panneau des codecs, sans commande de lecture, de traitement ou de synthèse déclenchée par la consultation.
+- Identité propre à chaque ouverture, même pour une URI identique ; invalidation des observations lors du remplacement et de la fermeture, avec rejet des événements anciens ou non attribuables.
+- Déclarations du matériel, métadonnées du média, configuration graphique et compteurs audio explicitement limités à ce qu’ils établissent.
+- Quatre nouveaux tests du noyau, trois tests JVM de l’application et un scénario Android de consultation/copie ; maintien des tests antérieurs et des algorithmes de vocalisation.
+
+Cette étape ne crée pas de version ni de publication APK. Les contrôles exigés et
+les limites sont décrits dans [Capacités et observations — étape 2](docs/CAPACITES_ETAPE_2.md).
+
 ## En préparation — Modularisation, étape 1
 
 - Point de retour conservé au commit `32e988654fc44faa80e1fb69c98cf9ca29e9f5b0`, sur une branche de sauvegarde ; travail séparé avant la livraison demandée ultérieurement.

@@ -22,6 +22,7 @@ Le catalogue présente des informations datées et distingue moteurs Android, mo
 |---|---|
 | Comprendre les composants et les invariants de lecture | [Architecture](ARCHITECTURE.md) |
 | Suivre la première étape de modularisation préparatoire | [Modularisation — étape 1](MODULARISATION_ETAPE_1.md) |
+| Comprendre les capacités déclarées et les observations du lecteur | [Capacités et observations — étape 2](CAPACITES_ETAPE_2.md) |
 | Compiler, exécuter les tests et vérifier l’APK signé | [Procédure de validation](../TESTING.md) |
 | Organiser une modification et son intégration dans `main` | [Contribution](../CONTRIBUTING.md) |
 | Lire les consignes applicables aux agents de développement | [Consignes de développement](../AGENTS.md) |

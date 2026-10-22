@@ -11,6 +11,12 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
+import fr.soustitresvoix.core.CapabilityDiagnostic
+import fr.soustitresvoix.core.CapabilityStatus
+import fr.soustitresvoix.core.DiagnosticSource
+
+/** Platform declarations for a named codec; never a CPU/GPU utilization measure. */
+data class DecoderClassification(val hardwareAccelerated: Boolean, val softwareOnly: Boolean)
 
 /**
  * Session-owned playback implementation. The session closes it after stopping its
@@ -27,6 +33,9 @@ interface PlaybackBackend {
     val videoDecoderCounters: DecoderCounters?
     fun setMediaSource(source: MediaSource, startPositionMs: Long)
     fun addAnalyticsListener(listener: AnalyticsListener)
+    /** Read-only declarations. An unreported capability remains unknown. */
+    fun diagnosticCapabilities(): List<CapabilityDiagnostic> = emptyList()
+    fun decoderClassification(name: String): DecoderClassification? = null
     fun close()
 }
 
@@ -49,6 +58,9 @@ interface MovieAudio {
     var speaking: Boolean
     val processedSamples: Long
     fun createSink(context: Context): AudioSink
+    fun diagnosticCapability(): CapabilityDiagnostic = CapabilityDiagnostic(
+        "audio.spectral_ducking", CapabilityStatus.UNKNOWN, DiagnosticSource.NOT_EXPOSED,
+        "Ce composant ne déclare pas les conditions de son traitement audio.")
 }
 
 /** Creates a fresh renderer from the backend's configured Media3 builder. */

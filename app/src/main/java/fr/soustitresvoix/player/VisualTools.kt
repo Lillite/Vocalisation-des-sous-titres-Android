@@ -48,6 +48,18 @@ class VisualTools(private val session: PlaybackSession) {
     )
     // The player is initialized with an empty effect list before prepare().
     private var appliedPlan = RenderPlan()
+    /** Read-only comparison of requested values with the last successful submission.
+     * This is not a measurement of rendered pixels. It must never call apply(). */
+    internal data class DiagnosticImageState(
+        val contrast: Float, val brightness: Float, val margins: Boolean,
+        val bypass: Boolean, val scalingRequested: Boolean, val surfaceKnown: Boolean,
+        val configuredContrast: Float, val configuredBrightness: Float, val configuredMargins: Boolean,
+        val configuredScalingWidth: Int, val configuredScalingHeight: Int
+    )
+    internal fun diagnosticState() = DiagnosticImageState(
+        contrast, brightness, margins.nonzero(), bypass, detailedScaling, renderWidth > 0 && renderHeight > 0,
+        appliedPlan.contrast, appliedPlan.brightness, appliedPlan.margins.nonzero(),
+        appliedPlan.scalingWidth, appliedPlan.scalingHeight)
     private val updateEffects = Runnable { if (!closed) applyPendingEffects() }
     val detailedScalingActive: Boolean get() = detailedScaling && !hdr && !bypass && renderWidth > 0 && renderHeight > 0
     val scalingTarget: String get() = if (renderWidth > 0 && renderHeight > 0) "$renderWidth × $renderHeight" else "surface non mesurée"

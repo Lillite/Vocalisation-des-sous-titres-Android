@@ -2,8 +2,8 @@
 
 [Index de la documentation](README.md) · [Compilation et validation](../TESTING.md)
 
-Cette vue décrit les comportements de l’édition **0.3.2** et la première étape
-de modularisation préparatoire sur cette branche. Le projet sépare la logique de
+Cette vue décrit les comportements de l’édition **0.3.2** et les deux premières étapes
+préparatoires sur cette branche. Le projet sépare la logique de
 narration indépendante d’Android, les adaptateurs du lecteur et l’interface. Les
 invariants ci-dessous sont des exigences à préserver lors des modifications ; les
 résultats de vérification restent attachés au commit réellement testé.
@@ -34,6 +34,36 @@ effets et analytics sont encore ceux de Media3. Cette première étape isole les
 implémentations ; elle ne fournit pas déjà un moteur alternatif ni un protocole
 entièrement indépendant de Media3. Les limites et les obligations d’un remplacement
 figurent dans [Modularisation — étape 1](MODULARISATION_ETAPE_1.md).
+
+## Capacités et observations communes
+
+`core/PlaybackDiagnostics.kt` définit des valeurs sans type Android ou Media3 :
+disponibilité, provenance, faits demandés/configurés/observés et instantanés
+immuables. `PlaybackDiagnosticStore` invalide une génération lors d’un changement
+de média et rejette une publication ancienne ou postérieure à sa fermeture.
+L’absence d’une observation reste inconnue ; elle ne devient pas `false` ou zéro.
+
+`PlaybackDiagnosticsObserver` adapte les événements et états Media3 existants à ce
+modèle sur le thread de la session. Une identité opaque dans le tag du `MediaItem`
+est créée à chaque ouverture. Un événement n’est accepté que si sa période est
+retrouvée dans sa propre timeline, dans la bonne fenêtre, avec cette même identité.
+Un événement sans période peut être un repli des analytics vers la fenêtre
+courante : il ne constitue pas une preuve suffisante. Une réutilisation de codec
+sans nouvelle initialisation peut donc laisser le décodeur inconnu après une
+réouverture. Aucune réinitialisation du lecteur n’est provoquée pour le diagnostic.
+
+Les déclarations matériel/logiciel sont mémorisées au cours de la sélection de
+codecs déjà existante, uniquement à partir des flags Android disponibles depuis
+l’API 29. La consultation ne déclenche pas de nouvel inventaire. Les effets
+graphiques exposent le dernier plan transmis ; le compteur PCM reste un cumul de
+session. Ces données ne prouvent ni les pixels affichés, ni la fréquence réelle
+de l’écran, ni une atténuation sonore instantanée.
+
+`PlaybackDiagnosticText` formate un seul instantané. Le diagnostic et le panneau
+des codecs l’utilisent sans envoyer de commande de lecture ou de voix. Les
+algorithmes de narration, d’anticipation, de synthèse et d’extraction restent ceux
+de l’étape 1. Les détails et scénarios de vérification figurent dans
+[Capacités et observations — étape 2](CAPACITES_ETAPE_2.md).
 
 ## Noyau indépendant d’Android
 
