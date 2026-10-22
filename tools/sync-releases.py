@@ -142,6 +142,14 @@ def snapshot(release):
     return result
 
 
+def release_field_matches(key, actual, expected):
+    # GitHub's editor can serialize Markdown with CRLF instead of LF. Only this
+    # representation difference is ignored; snapshots and reports stay verbatim.
+    if key == "body" and isinstance(actual, str) and isinstance(expected, str):
+        return actual.replace("\r\n", "\n") == expected.replace("\r\n", "\n")
+    return actual == expected
+
+
 def verify_download(asset, entry, tag):
     expected = entry["asset"]
     url = urlsplit(asset.get("browser_download_url", ""))
@@ -181,7 +189,7 @@ def verify_release(client, entry, canonical=False, original_assets=None):
     if canonical:
         for key, value in desired_release(entry).items():
             if key != "make_latest":
-                require(release.get(key) == value, f"Release {entry['id']} did not retain requested {key}.")
+                require(release_field_matches(key, release.get(key), value), f"Release {entry['id']} did not retain requested {key}.")
     return release
 
 
@@ -232,7 +240,7 @@ def synchronize(client, entries, apply, report):
         originals[entry["id"]] = asset_snapshot(release)
         report["before"].append(snapshot(release))
         desired = desired_release(entry)
-        update = any(release.get(key) != value for key, value in desired.items() if key != "make_latest")
+        update = any(not release_field_matches(key, release.get(key), value) for key, value in desired.items() if key != "make_latest")
         update = update or (entry["latest"] and latest_id != entry["id"])
         report["plan"].append({"id": entry["id"], "tag": entry["tag"], "create_tag": canonical is None, "update_release": update, "delete_old_tag": old is not None})
     report["preflight"] = "passed"
