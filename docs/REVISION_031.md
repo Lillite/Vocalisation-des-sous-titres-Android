@@ -1,5 +1,7 @@
 # Cinéma 0.3.1 — corrections de livraison
 
+> **Document historique — révision 0.3.1.** Les identifiants, signatures de test et résultats intermédiaires ci-dessous décrivent cette révision. L’édition 0.3.2 utilise une identité et une signature distinctes : consulter l’[accueil du projet](../README.md), la [procédure actuelle de validation et de signature](../TESTING.md) et l’[historique des branches](HISTORIQUE_BRANCHES.md).
+
 Cette édition reprend le code 0.3 existant au commit `0f9b2759cff849ffb76c829510788c12965dde32`. L’application porte le même identifiant expérimental `fr.soustitresvoix.player.cinema3`, avec versionCode 4. L’édition Cinéma 0.2 peut rester installée à côté.
 
 ## Adaptatif

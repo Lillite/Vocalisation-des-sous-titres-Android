@@ -1,0 +1,40 @@
+# Documentation de Sous-titres en voix
+
+[Accueil du projet et téléchargement de l’APK](../README.md)
+
+La documentation d’utilisation et de développement décrit l’édition **0.3.2**. Les notes de révision plus anciennes restent accessibles pour comprendre les changements et les vérifications effectuées à chaque étape.
+
+## Utiliser et vérifier l’application
+
+| Besoin | Document |
+|---|---|
+| Installer l’application, choisir une voix et comprendre les fonctions | [Présentation et démarrage rapide](../README.md) |
+| Vérifier la lecture, le cadrage, les voix et l’accessibilité sur son téléphone | [Parcours de tests sur téléphone](TESTS_TELEPHONE.md) |
+| Consulter les moteurs vocaux, modèles et sources documentaires | [Catalogue des voix et moteurs](VOIX_CATALOGUE_2026.md) |
+| Comprendre les possibilités et limites CPU, GPU et NPU | [Étude de l’accélération](ETUDE_ACCELERATION.md) |
+| Consulter les principales évolutions par version | [Historique des versions](../CHANGELOG.md) |
+
+Le catalogue présente des informations datées et distingue moteurs Android, modèles et passerelles. La présence d’une référence ne prouve ni son installation, ni son fonctionnement hors ligne, ni sa qualité sur un téléphone donné. Le lecteur utilise un moteur vocal Android externe ; il n’intègre pas de nouveau moteur neuronal vocal GPU/NPU.
+
+## Développer et valider
+
+| Besoin | Document |
+|---|---|
+| Comprendre les composants et les invariants de lecture | [Architecture](ARCHITECTURE.md) |
+| Compiler, exécuter les tests et vérifier l’APK signé | [Procédure de validation](../TESTING.md) |
+| Organiser une modification et son intégration dans `main` | [Contribution](../CONTRIBUTING.md) |
+| Lire les consignes applicables aux agents de développement | [Consignes de développement](../AGENTS.md) |
+| Comprendre la consolidation des branches et la provenance des versions | [Historique des branches](HISTORIQUE_BRANCHES.md) |
+
+Les résultats de tests se rapportent à un commit et à un environnement précis. La [validation de livraison de la 0.3.2](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/39532451903) concerne le commit `311d99052d287bb2227e85255740de201234e770`. Elle ne remplace pas une nouvelle validation après modification, ni les essais manuels sur le téléphone.
+
+## Notes historiques
+
+Ces documents conservent les constats de leur époque, notamment les anciens identifiants d’application, branches, signatures, nombres de tests et échecs intermédiaires. Pour installer ou compiler la version actuelle, suivre les documents ci-dessus.
+
+| Document | Périmètre conservé |
+|---|---|
+| [Révision 0.3](REVISION_03.md) | Adaptatif, préparation, cadrage, audio et limites introduites dans cette révision |
+| [Révision 0.3.1](REVISION_031.md) | Corrections successives et constats des exécutions de livraison |
+| [Couverture des demandes 0.3.1](COUVERTURE_DEMANDES_031.md) | Correspondance détaillée entre demandes, code, preuves et limites |
+| [Régression Android initiale](REGRESSION_ANDROID.md) | Exception du moteur d’expressions régulières Android et contrôles ajoutés à l’époque |

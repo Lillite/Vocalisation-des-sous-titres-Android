@@ -1,5 +1,7 @@
 # Cinéma 0.3.1 — couverture des demandes et limites vérifiables
 
+> **Document historique — suivi des demandes de la 0.3.1.** Cette matrice conserve les preuves, branches et limites constatées à cette étape. Elle complète l’[historique des versions](../CHANGELOG.md) ; les instructions actuelles sont dans l’[accueil](../README.md) et [TESTING.md](../TESTING.md).
+
 État documentaire : **20 octobre 2026**. Cette matrice reprend les demandes explicites du message utilisateur, y compris ses priorités : image entière étirée, ponctuation, préparation fiable, adaptation plus rapide et exploitation utile du téléphone. Elle décrit le code de la révision 0.3.1 en cours de validation. La présence d'une fonction ou d'un test ne signifie pas que son exécution a réussi sur le téléphone.
 
 **La validation se lit dans les preuves du commit exact de l'APK livré**, selon la procédure ci-dessous. Ce document ne présume aucun succès de la CI. Le seul décompte local antérieur retenu ici est celui des **140 contrôles du noyau validés avant les nouveaux correctifs** ; il ne valide ni ces correctifs, ni la compilation Android finale, ni les performances d'un moteur externe.
@@ -168,7 +170,7 @@ La qualification du commit livré exige d'abord une validation des correctifs li
 [étude accélération]: ETUDE_ACCELERATION.md
 [tests téléphone]: TESTS_TELEPHONE.md
 [révision 0.3.1]: REVISION_031.md
-[workflow cinéma]: ../.github/workflows/cinema3.yml
+[workflow cinéma]: https://github.com/Lillite/Vocalisation-des-sous-titres-Android/blob/b0f32d39fd94cbfef1b018322d5132235dfbb590/.github/workflows/cinema3.yml
 [tests noyau 0.3]: ../core/src/test/kotlin/fr/soustitresvoix/core/Revision03Checks.kt
 [tests noyau cinéma]: ../core/src/test/kotlin/fr/soustitresvoix/core/CinemaChecks.kt
 [tests Android 0.3]: ../app/src/androidTest/java/fr/soustitresvoix/player/Revision03AndroidTest.kt

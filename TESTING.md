@@ -1,5 +1,53 @@
 # Vérifications de régression
 
+## Validation continue dans GitHub Actions
+
+Le workflow unique [Android — compilation et régressions](.github/workflows/android.yml)
+s'exécute pour chaque proposition de fusion vers `main`, après une modification
+de `main` et à la demande depuis l'onglet **Actions**. Chaque nouvelle exécution
+doit réussir avant de présenter les modifications correspondantes comme validées.
+Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcours.
+
+| Étape | Contrôles exigés |
+| --- | --- |
+| Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
+| Variante debug | 33 tests JVM du noyau, 35 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 33 tests du noyau et des 35 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
+| Android 36 | Deux passages complets des 67 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
+| Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
+
+Ces effectifs correspondent aux suites de la version 0.3.2. Lorsqu'un test est
+ajouté, mettre à jour les effectifs attendus dans le workflow ou dans
+`tools/run-device-tests.sh` ; ne jamais retirer un test pour retrouver un nombre
+attendu. Les contrôles des rapports refusent les tests manquants, ignorés,
+échoués ou dupliqués. L'instrumentation compare aussi les méthodes exécutées à
+l'inventaire des sources. Les dates des rapports doivent correspondre au passage
+en cours.
+
+La variante debug est compilée et vérifiée sur la JVM. Les deux exécutions
+instrumentées automatiques portent sur la **variante release** ; la compilation
+de l'APK de tests debug ne constitue pas une exécution de ces tests sur Android.
+
+Deux artefacts sont produits :
+
+- **Android-rapports-validation** : journaux, résultats JUnit, rapports lint,
+  manifestes, signatures, empreintes, diagnostics de l'émulateur, commit source
+  et archive `sources-verifiees.zip`. Les preuves disponibles sont conservées
+  même lorsqu'une étape échoue.
+- **SousTitresVoix-release-validation** : paire d'APK release testée, empreintes,
+  certificat de validation et commit source. Cet artefact est produit uniquement
+  après la réussite de tous les contrôles.
+
+La clé créée dans cette CI est **éphémère**, conservée hors du dépôt puis
+supprimée. L'APK de validation ne remplace pas une distribution signée avec la
+clé stable et ne garantit pas une mise à jour par-dessus une installation
+existante. Les artefacts Actions sont conservés 14 jours ; les APK destinés à
+l'utilisation et leurs informations de version sont accessibles depuis le
+[README](README.md).
+
+## Validation locale
+
 La compilation Android utilise le JDK 17. Les tests Robolectric avec Android 36
 utilisent un processus JDK 21. Installer les deux JDK et les rendre disponibles
 aux toolchains Gradle, par exemple avec `JAVA_HOME_17_X64` et `JAVA_HOME_21_X64`.

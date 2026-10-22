@@ -1,5 +1,7 @@
 # Révision 0.3 — périmètre et limites
 
+> **Document historique — révision 0.3.** Les branches, identifiants d’application et constats ci-dessous sont ceux de cette édition. Pour l’édition actuelle, consulter l’[accueil du projet](../README.md), la [procédure de validation](../TESTING.md) et l’[historique des branches](HISTORIQUE_BRANCHES.md).
+
 Code de test, identifiant `fr.soustitresvoix.player.cinema3`, branche `cinema-0.3`. Les branches 0.1 et 0.2 restent intactes. Pas de promesse « zéro bug ». Aucune mesure sur le OnePlus n’est inventée : les résultats Android réellement exécutés sont dans Actions, les mesures locales dans l’application.
 
 ## Adaptatif

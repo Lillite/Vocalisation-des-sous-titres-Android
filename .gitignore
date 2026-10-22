@@ -12,3 +12,5 @@ signing.properties
 .idea/
 *.iml
 .DS_Store
+__pycache__/
+*.py[cod]
