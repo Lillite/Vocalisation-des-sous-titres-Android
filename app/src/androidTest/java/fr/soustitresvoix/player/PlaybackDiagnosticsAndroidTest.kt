@@ -135,6 +135,15 @@ class PlaybackDiagnosticsAndroidTest {
                     assertTrue("The playback thread did not acknowledge the paused baseline",
                         requireNotNull(barrier).blockUntilDelivered(20_000))
                     instrument.waitForIdleSync()
+                    // TTS completion clears the speaking ID before the film's
+                    // delayed hold/release fade has finished. The playback-thread
+                    // barrier does not drain future posts on the session Handler.
+                    // Keep the default fade and wait for its actual target before
+                    // comparing the volume across read-only diagnostic actions.
+                    waitFor("The film volume did not recover after the explicit voice preview") {
+                        val session = activity.get().session
+                        session.player.volume == session.prefs.movieVolume
+                    }
                     var baseline: PausedState? = null
                     var decoder = ""
                     scenario.onActivity { current ->

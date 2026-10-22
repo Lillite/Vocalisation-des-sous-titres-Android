@@ -92,7 +92,10 @@ le vrai service vocal de fixture et une action IPC dédiée observant **toutes**
 les demandes de synthèse. Deux essais vocaux explicites, avant et après les
 consultations, vérifient que cette observation fonctionne. L'entrée dans les
 réglages garde sa pause existante ; les assertions de stabilité commencent
-ensuite. Elles portent sur afficher, actualiser et copier le diagnostic.
+ensuite, lorsque le volume du film est réellement revenu au niveau demandé.
+La fin de la phrase et une barrière du thread ExoPlayer ne suffisent pas à
+attendre les callbacks différés du fondu de volume. Les assertions portent sur
+afficher, actualiser et copier le diagnostic.
 
 Dans ce test instrumenté, les dialogues se ferment par leurs boutons et avec
 une racine Espresso explicitement limitée aux dialogues. Deux fermetures Retour
