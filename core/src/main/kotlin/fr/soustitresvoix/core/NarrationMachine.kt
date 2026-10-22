@@ -2,34 +2,32 @@ package fr.soustitresvoix.core
 
 import java.util.ArrayDeque
 
-/**
- * Deterministic single-thread state machine. It never calls Android or a TTS engine.
- * The Android adapter must deliver all events on the main thread, and execute
- * returned effects in order. Utterance IDs are never reused, even after a seek.
- */
+/** Single-threaded deterministic controller. Apply returned effects in order. */
 class NarrationMachine(private val maxPendingChars: Int = 24_000) {
-    enum class Mode { COMFORT, CONTINUOUS }
+    enum class Mode { COMFORT, CONTINUOUS, ADAPTIVE }
+    enum class ResumePolicy { REPLICA, SEGMENT, EXPLICIT }
     sealed class Effect {
-        data class Speak(val id: String, val text: String) : Effect()
+        data class Speak(val id: String, val text: String, val remainingText: String = "", val deadlineMs: Long? = null, val preview: Boolean = false) : Effect()
         object StopSpeech : Effect()
         data class Video(val playing: Boolean) : Effect()
         data class Duck(val enabled: Boolean) : Effect()
         data class Message(val text: String, val error: Boolean = false) : Effect()
     }
     data class Snapshot(
-        val wantsPlayback: Boolean,
-        val videoRequested: Boolean,
-        val speakingId: String?,
-        val pendingCount: Int,
-        val waitingForSpeech: Boolean,
-        val enabled: Boolean,
-        val mode: Mode
+        val wantsPlayback: Boolean, val videoRequested: Boolean,
+        val speakingId: String?, val pendingCount: Int, val waitingForSpeech: Boolean,
+        val enabled: Boolean, val mode: Mode, val voiceSuspended: Boolean = false
     )
-    private data class Job(val text: String, var expired: Boolean = false)
+    private data class Job(val text: String, var expired: Boolean = false,
+        val group: Long = 0, val original: String = text, var deadlineMs: Long? = null)
     private data class Running(val id: String, val job: Job, val preview: Boolean = false)
     private val queue = ArrayDeque<Job>()
     private var current: Running? = null
     private var sequence = 0L
+    private var groupSequence = 0L
+    private var resumePolicy = ResumePolicy.REPLICA
+    private var voiceSuspended = false
+    private var activeIdentities: List<String>? = null
     private var wantsPlayback = false
     private var mediaReady = false
     private var speechReady = false
@@ -39,13 +37,14 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
     private var requestedDuck = false
     private var lastFrameKey: Pair<Long, List<String>>? = null
     private var activeTexts: List<String> = emptyList()
+    private var activeDeadlines: List<Long?> = emptyList()
     private var lastSpokenText = ""
+    private var lastSpokenGroup = -1L
     private var warnedImages = false
     private val effects = mutableListOf<Effect>()
 
     fun snapshot() = Snapshot(wantsPlayback, requestedVideo, current?.id,
-        queue.size, wantsPlayback && mustHold(), enabled, mode)
-
+        queue.size, wantsPlayback && mustHold(), enabled, mode, voiceSuspended)
     fun setSpeechReady(ready: Boolean): List<Effect> = event {
         speechReady = ready
         if (!ready) {
@@ -53,191 +52,183 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
             if (enabled) wantsPlayback = false
         }
     }
-
     fun setMediaReady(ready: Boolean): List<Effect> = event {
         mediaReady = ready
         if (!ready && current?.preview != true) interrupt(keep = true)
     }
-
+    fun setResumePolicy(policy: ResumePolicy): List<Effect> = event {
+        resumePolicy = policy
+        if (policy != ResumePolicy.EXPLICIT) voiceSuspended = false
+    }
+    fun resumeVoice(): List<Effect> { voiceSuspended = false; return play() }
+    fun pendingTexts(): List<String> = queue.map { it.text }
+    data class PlannedReplica(val text: String, val deadlineMs: Long?)
+    /** Pending groups include both this replica's remaining segments and overlaps. */
+    fun pendingPlan(): List<PlannedReplica> = queue.groupBy { it.group }.values.map { jobs ->
+        PlannedReplica(jobs.joinToString(" ") { it.text }, jobs.first().deadlineMs)
+    }
     fun play(): List<Effect> = event {
-        // A preview must never continue as an ordinary film subtitle.
+        if (voiceSuspended && enabled) {
+            wantsPlayback = false
+            effects += Effect.Message("Appuie sur Reprendre la voix pour reprendre la phrase et la vidéo.")
+            return@event
+        }
         if (current?.preview == true) interrupt(keep = false)
         if (enabled && !speechReady) {
             wantsPlayback = false
             effects += Effect.Message("La voix n’est pas prête. Choisis une voix installée ou désactive la vocalisation.", true)
-        } else {
-            wantsPlayback = true
-        }
+        } else wantsPlayback = true
     }
-
     fun pause(): List<Effect> = event {
         wantsPlayback = false
-        interrupt(keep = current?.preview != true)
+        val running = current
+        // Buffering or voice unavailability may already have put the interrupted
+        // segment back at the head. Its group must have actually started: a new
+        // queued replica must not inherit the previous one's resume policy.
+        val interrupted = when {
+            running?.preview == true -> null
+            running != null -> running.job
+            else -> queue.peekFirst()?.takeIf { it.group == lastSpokenGroup }
+        }
+        if (interrupted != null && resumePolicy == ResumePolicy.REPLICA) {
+            interrupt(keep = false)
+            queue.removeIf { it.group == interrupted.group }
+            SpeechTools.segments(interrupted.original).asReversed().forEach {
+                queue.addFirst(Job(it, interrupted.expired, interrupted.group, interrupted.original, interrupted.deadlineMs))
+            }
+        } else interrupt(keep = current?.preview != true)
+        if (interrupted != null && resumePolicy == ResumePolicy.EXPLICIT) voiceSuspended = true
     }
-
-    /** Called BEFORE a seek, media replacement, or subtitle-track switch. */
+    /** Call before seek, media replacement or subtitle track change. */
     fun reset(keepPlaybackIntent: Boolean = false): List<Effect> = event {
         val oldIntent = wantsPlayback
-        interrupt(keep = false)
-        queue.clear()
-        activeTexts = emptyList()
-        lastFrameKey = null
-        lastSpokenText = ""
-        warnedImages = false
-        mediaReady = false
+        interrupt(keep = false); queue.clear()
+        activeTexts = emptyList(); activeDeadlines = emptyList(); activeIdentities = null; voiceSuspended = false
+        lastFrameKey = null; lastSpokenText = ""; lastSpokenGroup = -1L
+        warnedImages = false; mediaReady = false
         wantsPlayback = keepPlaybackIntent && oldIntent
     }
-
     fun setEnabled(value: Boolean): List<Effect> = event {
         if (enabled != value) {
-            enabled = value
-            interrupt(keep = false)
-            queue.clear()
+            enabled = value; voiceSuspended = false
+            interrupt(keep = false); queue.clear()
             if (value) {
-                enqueue(activeTexts.joinToString("\n"))
+                activeTexts.forEachIndexed { index, text ->
+                    enqueue(text, if (mode == Mode.ADAPTIVE) activeDeadlines.getOrNull(index) else null)
+                }
                 if (!speechReady) wantsPlayback = false
             }
         }
     }
-
     fun setMode(value: Mode): List<Effect> = event {
         if (mode != value) {
             mode = value
-            // Do not retain stale comfort-mode captions in continuous mode.
+            if (value != Mode.ADAPTIVE) { current?.job?.deadlineMs = null; queue.forEach { it.deadlineMs = null } }
             if (value == Mode.CONTINUOUS) {
-                interrupt(keep = false)
-                queue.clear()
-                enqueue(activeTexts.joinToString("\n"))
+                interrupt(keep = false); queue.clear()
+                activeTexts.forEach { enqueue(it) }
             }
         }
     }
-
-    /**
-     * frameTimeUs is the timestamp supplied by Media3's CueGroup, not wall time.
-     * Identical callbacks are ignored; the same sentence at a different timestamp
-     * remains a different occurrence and may legitimately be spoken again.
-     */
-    fun cues(frameTimeUs: Long, texts: List<String>, hasImages: Boolean = false): List<Effect> = event {
+    /** Stable occurrence IDs distinguish restyling from a later identical replica. */
+    fun cues(frameTimeUs: Long, texts: List<String>, hasImages: Boolean = false,
+        identities: List<String>? = null, deadlinesMs: List<Long?>? = null): List<Effect> = event {
         val clean = texts.map { it.trim() }.filter { it.isNotEmpty() }
         val key = frameTimeUs to clean
         if (key == lastFrameKey && !hasImages) return@event
         val oldTexts = activeTexts
-        lastFrameKey = key
-        activeTexts = clean
+        val oldIdentities = activeIdentities
+        if (!hasImages && identities != null && identities == oldIdentities && clean == oldTexts) return@event
+        activeIdentities = identities; lastFrameKey = key; activeTexts = clean
+        activeDeadlines = deadlinesMs.orEmpty()
         if (!enabled) return@event
         if (hasImages && !warnedImages) {
-            warnedImages = true
-            wantsPlayback = false
+            warnedImages = true; wantsPlayback = false
             interrupt(keep = true)
-            effects += Effect.Message(
-                "Cette piste contient des sous-titres en images. Leur lecture vocale n’est pas disponible. Choisis une piste texte ou ajoute un fichier SRT, VTT ou ASS.", true)
+            effects += Effect.Message("Cette piste contient des sous-titres en images. Leur lecture vocale n’est pas disponible. Choisis une piste texte ou ajoute un fichier SRT, VTT ou ASS.", true)
         }
-        // Every actual frame boundary expires the preceding utterances.
-        current?.takeUnless { it.preview }?.job?.expired = true
-        queue.forEach { it.expired = true }
-        if (mode == Mode.CONTINUOUS) {
-            interrupt(keep = false)
-            queue.clear()
+        current?.takeUnless { it.preview || it.job.deadlineMs != null }?.job?.expired = true
+        queue.forEach { if (it.deadlineMs == null) it.expired = true }
+        if (mode == Mode.CONTINUOUS) { interrupt(keep = false); queue.clear() }
+        val incomingIndices = if (identities != null && oldIdentities != null && identities.size == clean.size) {
+            clean.indices.filter { i -> identities[i] !in oldIdentities || clean[i] !in oldTexts }
+        } else if (clean == oldTexts) clean.indices.toList() else {
+            val remaining = oldTexts.toMutableList()
+            clean.indices.filter { !remaining.remove(clean[it]) }
         }
-        // Keep unchanged overlapping cues from being re-read. A frame consisting
-        // of exactly the same texts at a NEW timestamp is a new occurrence.
-        val incoming = if (clean == oldTexts) clean else clean.filterNot { it in oldTexts }
-        enqueue(incoming.joinToString("\n"))
-    }
+        incomingIndices.forEach { i -> enqueue(clean[i], if (mode == Mode.ADAPTIVE) deadlinesMs?.getOrNull(i) else null) }
 
-    fun speechFinished(id: String): List<Effect> = event {
-        if (current?.id == id) current = null
     }
-
+    fun advance(positionMs: Long): List<Effect> = event {
+        current?.takeUnless { it.preview }?.job?.let { job ->
+            job.deadlineMs?.let { if (positionMs >= it) job.expired = true }
+        }
+        queue.forEach { job -> job.deadlineMs?.let { if (positionMs >= it) job.expired = true } }
+    }
+    fun speechFinished(id: String): List<Effect> = event { if (current?.id == id) current = null }
     fun speechFailed(id: String, detail: String): List<Effect> = event {
         if (current?.id != id) return@event
-        wantsPlayback = false
-        // Preserve the failed sentence for an EXPLICIT retry after voice settings
-        // are fixed. Never loop/retry automatically against a failing engine.
-        interrupt(keep = true)
+        wantsPlayback = false; interrupt(keep = true)
         effects += Effect.Message("Lecture vocale interrompue : $detail", true)
     }
-
     fun fail(detail: String): List<Effect> = event {
-        wantsPlayback = false
-        interrupt(keep = false)
-        queue.clear()
+        wantsPlayback = false; interrupt(keep = false); queue.clear()
         effects += Effect.Message(detail, true)
     }
-
-    /** Preview/repeat deliberately leaves the film paused on completion. */
+    /** Repeating a whole replica consumes its pending segments, not other replicas. */
     fun preview(text: String = lastSpokenText): List<Effect> = event {
         wantsPlayback = false
-        // Repeating the interrupted film sentence consumes that pending copy;
-        // testing a DIFFERENT voice sample preserves it for later playback.
-        interrupt(keep = current?.job?.text != text)
-        if (!speechReady) {
-            effects += Effect.Message("Aucune voix disponible. Ouvre les réglages vocaux Android.", true)
-            return@event
+        val refusal = when {
+            !speechReady -> Effect.Message("Aucune voix disponible. Ouvre les réglages vocaux Android.", true)
+            text.isBlank() -> Effect.Message("Aucune phrase à répéter.")
+            text.length > 3_000 -> Effect.Message("Cette phrase est trop longue pour un essai vocal.", true)
+            else -> null
         }
-        if (text.isBlank()) {
-            effects += Effect.Message("Aucune phrase à répéter.")
-            return@event
+        if (refusal != null) {
+            // Refusing a preview must not consume the interrupted film replica.
+            interrupt(keep = true); effects += refusal; return@event
         }
-        // A preview is bounded rather than silently truncated.
-        if (text.length > 3_000) {
-            effects += Effect.Message("Cette phrase est trop longue pour un essai vocal.", true)
-            return@event
-        }
+        val repeatGroup = if (text == lastSpokenText) lastSpokenGroup else -1L
+        interrupt(keep = current?.job?.group != repeatGroup)
+        if (repeatGroup >= 0) queue.removeIf { it.group == repeatGroup }
+        voiceSuspended = false
         val running = Running(nextId(), Job(text), preview = true)
-        current = running
-        effects += Effect.Speak(running.id, text)
+        current = running; effects += Effect.Speak(running.id, text, preview = true)
     }
-
-    private fun enqueue(text: String) {
+    private fun enqueue(text: String, deadlineMs: Long? = null) {
         if (text.isBlank()) return
         val total = queue.sumOf { it.text.length } + (current?.job?.text?.length ?: 0) + text.length
         if (total > maxPendingChars) {
-            wantsPlayback = false
-            interrupt(keep = false)
-            queue.clear()
+            wantsPlayback = false; interrupt(keep = false); queue.clear()
             effects += Effect.Message("Trop de texte reçu à la fois. La lecture est arrêtée plutôt que de perdre silencieusement des sous-titres.", true)
             return
         }
-        SubtitleText.splitForSpeech(text, 1_000).forEach { queue.addLast(Job(it)) }
+        val group = ++groupSequence
+        SpeechTools.segments(text).forEach { queue.addLast(Job(it, group = group, original = text, deadlineMs = deadlineMs)) }
     }
-
     private fun interrupt(keep: Boolean) {
         val running = current ?: return
-        // Invalidate first: stop() may synchronously provoke an engine callback.
         current = null
         if (keep && !running.preview) queue.addFirst(running.job)
         effects += Effect.StopSpeech
     }
-
-    private fun mustHold(): Boolean = enabled && mode == Mode.COMFORT &&
+    private fun mustHold(): Boolean = enabled && mode != Mode.CONTINUOUS &&
         (current?.job?.expired == true || queue.any { it.expired })
-
     private fun settle() {
-        if (current == null && enabled && speechReady && mediaReady && wantsPlayback && queue.isNotEmpty()) {
-            val job = queue.removeFirst()
-            val running = Running(nextId(), job)
-            current = running
-            lastSpokenText = job.text
-            effects += Effect.Speak(running.id, job.text)
+        if (current == null && !voiceSuspended && enabled && speechReady && mediaReady && wantsPlayback && queue.isNotEmpty()) {
+            val job = queue.removeFirst(); val running = Running(nextId(), job)
+            current = running; lastSpokenText = job.original; lastSpokenGroup = job.group
+            effects += Effect.Speak(running.id, job.text, queue.filter { it.group == job.group }.joinToString(" ") { it.text }, job.deadlineMs)
         }
         val video = wantsPlayback && !mustHold() && current?.preview != true
         val duck = current != null
-        if (video != requestedVideo) {
-            requestedVideo = video
-            effects += Effect.Video(video)
-        }
-        if (duck != requestedDuck) {
-            requestedDuck = duck
-            effects += Effect.Duck(duck)
-        }
+        if (video != requestedVideo) { requestedVideo = video; effects += Effect.Video(video) }
+        if (duck != requestedDuck) { requestedDuck = duck; effects += Effect.Duck(duck) }
     }
-
     private fun nextId(): String = "subtitle-${++sequence}"
     private inline fun event(block: () -> Unit): List<Effect> {
         check(effects.isEmpty()) { "State machine must not be called reentrantly" }
-        block()
-        settle()
+        block(); settle()
         return effects.toList().also { effects.clear() }
     }
 }

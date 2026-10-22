@@ -1,0 +1,85 @@
+{
+  "repository": "Lillite/Vocalisation-des-sous-titres-Android",
+  "releases": [
+    {
+      "id": 416863176,
+      "old_tag": "Tes",
+      "old_tag_sha": "8028f5dd7619826c41cb3bfb1b1c3e1648eb2761",
+      "tag": "v0.1.0-test",
+      "source_commit": "8028f5dd7619826c41cb3bfb1b1c3e1648eb2761",
+      "title": "Sous-titres en voix 0.1.0 — Première préversion",
+      "prerelease": true,
+      "latest": false,
+      "notes": "docs/releases/0.1.0-test.md",
+      "asset": {
+        "id": 655091864,
+        "name": "SousTitresVoix-0.1.0-test.apk",
+        "size": 4933923,
+        "sha256": "85233d6d8642ce7930c5da48d8f470a018f01989a79d62a1cfc79b9b67b69e3d",
+        "version_name": "0.1.0-test",
+        "version_code": 1,
+        "application_id": "fr.soustitresvoix.player"
+      }
+    },
+    {
+      "id": 418489791,
+      "old_tag": "Test2",
+      "old_tag_sha": "8028f5dd7619826c41cb3bfb1b1c3e1648eb2761",
+      "tag": "v0.2.0-cinema-test",
+      "source_commit": "32ac63d7ac226a29f09bc728ad982721f120b333",
+      "title": "Sous-titres en voix 0.2.0 — Cinéma (préversion)",
+      "prerelease": true,
+      "latest": false,
+      "notes": "docs/releases/0.2.0-cinema-test.md",
+      "asset": {
+        "id": 659537331,
+        "name": "SousTitresVoix-Cinema-0.2.0-test.apk",
+        "size": 5820668,
+        "sha256": "41a8fd8b674f9bc4e1b26217f54682c378fe18e71a921e90a96beb0e5853257e",
+        "version_name": "0.2.0-cinema-test",
+        "version_code": 2,
+        "application_id": "fr.soustitresvoix.player.cinema"
+      }
+    },
+    {
+      "id": 418654445,
+      "old_tag": "Teste3",
+      "old_tag_sha": "8028f5dd7619826c41cb3bfb1b1c3e1648eb2761",
+      "tag": "v0.3.1-cinema-test",
+      "source_commit": "b0f32d39fd94cbfef1b018322d5132235dfbb590",
+      "title": "Sous-titres en voix 0.3.1 — Cinéma et cadrage (préversion)",
+      "prerelease": true,
+      "latest": false,
+      "notes": "docs/releases/0.3.1-cinema-test.md",
+      "asset": {
+        "id": 659939572,
+        "name": "SousTitresVoix-Cinema-0.3.1.apk",
+        "size": 6192271,
+        "sha256": "329e736ecd016c39278efd7c61d8e80d567ae635729acc273a93ae5379a61d5a",
+        "version_name": "0.3.1-cinema-test",
+        "version_code": 4,
+        "application_id": "fr.soustitresvoix.player.cinema3"
+      }
+    },
+    {
+      "id": 419092576,
+      "old_tag": "Test4",
+      "old_tag_sha": "8028f5dd7619826c41cb3bfb1b1c3e1648eb2761",
+      "tag": "v0.3.2",
+      "source_commit": "311d99052d287bb2227e85255740de201234e770",
+      "title": "Sous-titres en voix 0.3.2 — Version stable",
+      "prerelease": false,
+      "latest": true,
+      "notes": "docs/releases/0.3.2.md",
+      "asset": {
+        "id": 661164278,
+        "name": "SousTitresVoix-0.3.2-stable.apk",
+        "size": 4902640,
+        "sha256": "0b3d2c7c7639542115327ee2a561cd7560ce535d57dad144f14dc3cda0bbb121",
+        "version_name": "0.3.2",
+        "version_code": 5,
+        "application_id": "fr.soustitresvoix.player.stable"
+      }
+    }
+  ]
+}

@@ -21,7 +21,7 @@ object SubtitleText {
         // Media3 has already decoded markup in ordinary text cues. Never execute
         // HTML/JS and never send captions to a language model.
         return text.lines().map { spaces.replace(it, " ").trim() }
-            .filter { it.isNotEmpty() }.joinToString("\n").trim()
+            .joinToString("\n").trim()
     }
 
     /** Chunk at whitespace where possible; never split a UTF-16 surrogate pair. */

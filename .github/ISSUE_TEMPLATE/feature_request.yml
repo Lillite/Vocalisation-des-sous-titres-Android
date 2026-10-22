@@ -1,0 +1,23 @@
+name: Proposer une amélioration
+description: Expliquer un besoin de lecture ou d’accessibilité.
+title: "[Amélioration] "
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Besoin rencontré
+      description: Dans quelle situation le lecteur pourrait-il mieux vous aider ?
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Comportement souhaité
+      description: Décrire le résultat et les commandes attendus, avec un exemple si possible.
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Points à préserver
+      description: Par exemple vocalisation intégrale, fonctionnement hors ligne, simplicité des commandes ou accessibilité.

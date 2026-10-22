@@ -1,5 +1,7 @@
 # Régression détectée par l'exécution réelle sur Android
 
+> **Note historique de la version initiale.** Les nombres de tests et l’environnement ci-dessous décrivent cette régression au moment de sa correction. La procédure actuelle se trouve dans [TESTING.md](../TESTING.md) ; voir aussi l’[index de la documentation](README.md) et l’[historique des versions](../CHANGELOG.md).
+
 ## Échec observé
 
 L'exécution GitHub Actions 39185983950 a démarré un émulateur Android 35 et installé l'application. Le premier sous-titre du véritable MKV de démonstration a déclenché une `ExceptionInInitializerError` dans `SubtitleText`, causée par `PatternSyntaxException` dans le moteur ICU d'Android.

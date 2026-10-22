@@ -1,0 +1,69 @@
+name: Releases — noms, versions et descriptions
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/release-history.json'
+      - '.github/workflows/releases.yml'
+      - 'tools/sync-releases.py'
+      - 'docs/releases/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/release-history.json'
+      - '.github/workflows/releases.yml'
+      - 'tools/sync-releases.py'
+      - 'docs/releases/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: releases
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verifier toutes les releases sans les modifier
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/sync-releases.py
+      - name: Conserver le rapport de simulation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Releases-simulation
+          path: build/verification/releases-report.json
+          if-no-files-found: error
+          retention-days: 30
+  synchronize:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verifier puis harmoniser les releases existantes
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/sync-releases.py --apply
+      - name: Conserver le rapport avant et apres
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Releases-synchronisation
+          path: build/verification/releases-report.json
+          if-no-files-found: error
+          retention-days: 30

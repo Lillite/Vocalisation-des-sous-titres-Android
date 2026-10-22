@@ -1,61 +1,121 @@
-# Vocalisation des sous-titres Android — Sous-titres en voix
+# Sous-titres en voix
 
-Lecteur vidéo Android local destiné en priorité à une personne malvoyante : vocalisation des sous-titres textuels, commandes explicites, baisse réglable du son du film et mode confort qui attend la fin d’une phrase.
+Lecteur vidéo Android qui lit les sous-titres à voix haute, avec des commandes accessibles, un plein écran cinéma et des réglages pour écouter chaque réplique à son rythme.
 
-**Version de test 0.1.0.** Un projet compilé ou un test automatisé réussi ne garantit ni l’absence de bugs ni le confort réel sur chaque téléphone. L’état de la compilation et les rapports exécutés sont dans l’onglet **Actions** de ce dépôt privé.
+**Ce projet est réalisé intégralement par intelligence artificielle : la conception de l’application, l’écriture du code, les corrections, les tests automatisés et la documentation sont produits par IA à partir des demandes, des indications et des retours de son utilisateur.**
 
-## Installer depuis un téléphone
+Cette mention concerne le travail propre au projet. Android, Kotlin, Media3, les moteurs vocaux et les autres composants tiers restent les créations de leurs auteurs respectifs.
 
-1. Ouvrir **Actions**, puis l’exécution **Verifier et compiler Android** réussie (coche verte).
-2. Dans **Artifacts**, télécharger **SousTitresVoix-APK-test** en étant connecté au compte autorisé sur ce dépôt.
-3. Extraire le ZIP, ouvrir `app-debug.apk`, puis suivre la demande d’installation Android. Autoriser uniquement l’application utilisée pour ouvrir ce fichier, sans désactiver globalement les protections du téléphone.
-4. Ouvrir **Sous-titres en voix**, puis **Réglages de la voix et du confort**. Choisir une voix française hors ligne et écouter son échantillon.
-5. Lancer **Essai intégré : vidéo sous-titrée** avant d’essayer un fichier personnel.
+**[Télécharger l’APK 0.3.2](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.3.2/SousTitresVoix-0.3.2-stable.apk)** · [Versions publiées](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases) · [Documentation](docs/README.md) · [Signaler un problème](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/issues/new/choose)
 
-Le workflow ne publie l’APK qu’après la réussite des contrôles de compilation, signature, manifeste et tests instrumentés. Aucun APK n’est promis pour une exécution en échec.
+| Repère | État du projet |
+| --- | --- |
+| Version de l’application | **0.3.2** |
+| Android minimum | **Android 8.0 — API 26** |
+| Branche de référence | **`main`**, qui rassemble le travail terminé et vérifié |
+| Fonctionnement | Vidéos locales et voix Android installées ; aucune permission Internet dans le lecteur |
+| Vérifications | [Compilation et régressions Android](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml) |
 
-## Fonctions prévues par le code
+## Sommaire
 
-- Vidéos locales, notamment conteneurs MKV, MP4 et WebM ; les codecs effectivement lisibles dépendent des décodeurs du téléphone.
-- Sous-titres textuels intégrés et fichiers externes SRT, VTT, ASS/SSA. Choix explicite de l’encodage pour les fichiers anciens.
-- Synthèse vocale Android avec voix installées déclarées utilisables hors ligne. Pas de LLM ni de compte nécessaire pendant le visionnage.
-- Mode confort activé par défaut : si la voix n’a pas terminé à la transition suivante, la vidéo attend.
-- Mode continu facultatif : pas d’attente pour la voix, mais les phrases trop longues peuvent être interrompues.
-- Volumes séparés de la voix et du film, baisse progressive du film pendant la parole, vitesse de la voix, taille des sous-titres, plein écran et reprise de position.
-- Pause explicite, retour/avance de dix secondes, répétition de la dernière phrase et messages d’erreur visibles.
+- [Installer et commencer](#installer-et-commencer)
+- [Fonctions principales](#fonctions-principales)
+- [Choisir le mode vocal](#choisir-le-mode-vocal)
+- [Choisir le cadrage](#choisir-le-cadrage)
+- [Compatibilité et limites](#compatibilité-et-limites)
+- [Confidentialité](#confidentialité)
+- [Documentation et développement](#documentation-et-développement)
 
-## Limites
+## Installer et commencer
 
-Pas d’OCR pour les sous-titres en images PGS/VobSub ou incrustés dans la vidéo ; pas de traduction, de doublage humain ni d’audiodescription des scènes. Aucun accès aux contenus DRM d’autres applications. Pas de décodeurs FFmpeg intégrés au lecteur : FFmpeg sert uniquement à produire la vidéo synthétique de test pendant la compilation. Lecture en arrière-plan non prise en charge dans cette version.
+1. Depuis le téléphone, [télécharger `SousTitresVoix-0.3.2-stable.apk`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.3.2/SousTitresVoix-0.3.2-stable.apk). Ouvrir le fichier, puis autoriser son installation dans l’application utilisée pour l’ouvrir si Android le demande.
+2. Ouvrir **Sous-titres en voix**, puis **Réglages de la voix et du confort**.
+3. Dans **Choisir le moteur vocal de CE lecteur**, sélectionner un moteur installé, puis **Choisir une voix hors ligne** et **Écouter un essai de la voix**. L’installation initiale d’un moteur ou d’une voix peut nécessiter Internet dans l’application du fournisseur.
+4. Lancer **Essai intégré : sous-titres et mire de cadrage**. Ce court exemple synthétique permet d’essayer la lecture vocale et l’affichage avant d’ouvrir un fichier personnel.
+5. Ouvrir une vidéo locale, sélectionner sa piste de sous-titres textuels ou ajouter un fichier SRT, VTT, ASS/SSA. Choisir **Confort** ou **Adaptatif** pour préserver les phrases complètes.
 
-L’application source ne demande aucune permission. Le workflow vérifie aussi le manifeste de l’APK compilé pour exclure notamment Internet, microphone, caméra, contacts et accès général au stockage. Le moteur vocal Android reste un composant externe dont les voix doivent être vérifiées sur appareil.
+L’édition 0.3.2 utilise l’identité `fr.soustitresvoix.player.stable`. Elle peut coexister avec les anciennes éditions de test. Les réglages et les autorisations de fichiers sont propres à chaque installation : choisir à nouveau la voix et la vidéo dans cette édition. Les vidéos d’origine ne sont pas modifiées.
 
-## Compilation et tests
+### Identifier le bon téléchargement
 
-Chaîne fixée : Java 17, Gradle 8.13, Android SDK 36, Build Tools 36.0.0, AGP 8.11.1, Kotlin 2.2.21, Media3 1.11.1. Minimum Android configuré : API 26 (Android 8). Pour une compilation locale, installer également FFmpeg avec les encodeurs libx264 et AAC sur le PATH.
+L’[édition 0.3.2](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.3.2) est la version recommandée dans le dépôt.
 
-```sh
-gradle --no-daemon :core:test :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
-# Avec un appareil ou émulateur lancé :
-gradle --no-daemon :app:connectedDebugAndroidTest
-```
+- Taille publiée : **4 902 640 octets**.
+- SHA-256 : `0b3d2c7c7639542115327ee2a561cd7560ce535d57dad144f14dc3cda0bbb121`.
+- [Sources exactes de l’APK 0.3.2](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/311d99052d287bb2227e85255740de201234e770).
 
-La tâche `generateDemo` crée automatiquement un MKV H.264/AAC/SubRip avec les huit phrases françaises de `examples/demonstration.srt`. Aucun fichier vidéo personnel n’est utilisé ou transmis. L’APK se trouve ensuite dans `app/build/outputs/apk/debug/app-debug.apk`.
+Les anciennes publications de test et les correspondances entre tags, sources et APK sont répertoriées dans l’[historique des branches et des publications](docs/HISTORIQUE_BRANCHES.md).
 
-Le module `core` est indépendant d’Android. Sa suite comporte 54 contrôles et 10 000 transitions pseudo-aléatoires par graine. JUnit répète la suite avec les graines 42, 2026 et 7351. Les deux tests instrumentés vérifient une commande explicitement libellée et l’émission d’un sous-titre français par la lecture réelle du MKV sur Android. Ils ne valident pas le timbre d’une voix, TalkBack complet ou une séance de deux heures.
+## Fonctions principales
 
-```sh
-# Alternative locale sans Android/Gradle, avec kotlinc installé :
-bash tools/check-core.sh 42
-python3 tools/check-project.py
-```
+| Fonction | Utilisation |
+| --- | --- |
+| Vocalisation des sous-titres | Lecture des événements textuels distincts de la piste sélectionnée : dialogues, répliques et panneaux traduits. Les répétitions réellement présentes dans la source restent distinctes. |
+| Voix Android | Choix explicite du moteur et d’une voix installée, échantillon, vitesse et volume de la voix. Le catalogue présente des ressources et des moteurs externes. |
+| Confort d’écoute | Modes Confort, Adaptatif et Continu ; pause explicite, reprise et répétition de la dernière phrase. |
+| Mixage | Réglage séparé de la voix et du film, baisse progressive du film pendant la parole et options audio. |
+| Plein écran cinéma | Commandes de lecture, orientation, taille des sous-titres, image entière, étirement ou recadrage explicite. |
+| Préparation vocale | Préparer les cinq prochaines minutes ou indexer et préparer toute la vidéo ; opération explicite, annulable et soumise aux limites du cache. |
+| Image et diagnostic | Diagnostic du cadrage, aperçu avant suppression des marges encodées, filtres SDR facultatifs et mesures de lecture. |
 
-## Signature
+La préservation des sous-titres est une exigence du projet : la correction d’un panneau relu en boucle doit conserver les véritables occurrences, même lorsque plusieurs répliques contiennent le même texte. Voir les [vérifications de régression](TESTING.md).
 
-L’APK livré par le workflow est une version **debug**, signée pour des essais privés. Aucune clé privée n’est versionnée. La clé de test peut différer entre les exécutions ; configurer une clé stable conservée en sécurité avant une distribution suivie. Ne pas publier cette version comme une version de production.
+## Choisir le mode vocal
 
-## Documents
+| Mode | Comportement |
+| --- | --- |
+| **Confort** | La vidéo attend lorsque la voix a besoin de temps pour terminer la phrase. |
+| **Adaptatif** | La voix conserve la vitesse de base lorsque le budget disponible le permet, en tenant compte des segments et répliques proches ; elle accélère dans la limite réglée et conserve une attente si nécessaire. |
+| **Continu** | La vidéo continue sans attendre. Une phrase trop longue peut être interrompue ; ce mode ne convient pas à l’objectif de vocalisation intégrale. |
 
-- `docs/TESTS_TELEPHONE.md` : parcours de validation sur le téléphone cible.
-- `docs/ARCHITECTURE.md` : séparation du moteur, des API Android et de l’interface.
-- Les artefacts GitHub Actions contiennent les résultats JUnit, le rapport Android Lint, le manifeste extrait et l’empreinte SHA-256 de l’APK.
+Pour un premier essai du mode Adaptatif, les réglages proposés dans le projet sont une vitesse de base de **100 %**, un plafond de **180 %** et une tolérance de **600 ms**. Le confort réel dépend du moteur vocal et du contenu. Une phrase préparée utilise la durée mesurée du WAV ; sans cache, le lecteur travaille avec une estimation.
+
+La préparation vocale met la lecture en pause. Le cache est borné : « préparer toute la vidéo » ne garantit pas de conserver simultanément tous les fichiers audio d’une œuvre volumineuse.
+
+## Choisir le cadrage
+
+Ouvrir **Plein écran cinéma**, puis **Image / zoom**.
+
+| Mode affiché | Résultat |
+| --- | --- |
+| **Image entière, proportions originales** | L’image entière conserve ses proportions. Des bandes peuvent rester visibles. |
+| **Tout l’écran — image entière étirée** | L’image entière occupe l’écran en changeant ses proportions. Le raccourci **Étirement intégral** active ce mode. |
+| **Tout l’écran, image recadrée** | L’image remplit l’écran en coupant une partie de ses bords. |
+
+Les modes d’image entière réinitialisent les transformations incompatibles : zoom à 100 %, déplacements annulés et anciennes suppressions de marges retirées. La mire intégrée permet de vérifier que les quatre coins colorés restent visibles ; son cercle devient une ellipse lorsque l’image est étirée.
+
+Pour les bandes réellement encodées dans le fichier, utiliser **Diagnostic du cadrage et des bandes noires**, puis, si nécessaire, **Analyser les marges encodées — aperçu obligatoire**. Toute suppression demande une confirmation. Une scène sombre ou des sous-titres près des bords peuvent fausser l’analyse : vérifier l’aperçu avant de l’appliquer.
+
+## Compatibilité et limites
+
+- **Vidéos locales** : notamment MKV, MP4 et WebM ; les codecs effectivement lisibles dépendent des décodeurs du téléphone et du lecteur Media3.
+- **Sous-titres textuels** : pistes intégrées et fichiers externes SRT, VTT, ASS/SSA. Les fichiers externes sont limités à 8 Mio ; un choix d’encodage existe pour les fichiers anciens.
+- **Sous-titres en images** : pas d’OCR pour PGS/VobSub ni pour un texte uniquement incrusté dans l’image. Un panneau est vocalisé lorsqu’il figure dans la piste textuelle sélectionnée.
+- **Fonctions absentes** : pas de traduction automatique, d’audiodescription des scènes, d’accès aux contenus DRM d’autres applications ni de lecture en arrière-plan.
+- **Accélération vocale** : aucun modèle vocal neuronal, moteur GPU ou backend NPU propre au projet n’est intégré. Les possibilités d’un moteur Android externe dépendent de ce moteur.
+- **Validation sur téléphone** : les tests automatisés ne remplacent pas l’essai des voix réelles, de TalkBack, du HDR et d’une séance prolongée sur l’appareil cible.
+
+## Confidentialité
+
+Le lecteur ne demande aucune permission Internet, microphone, caméra ou accès général au stockage. Il ouvre les fichiers choisis dans le sélecteur Android et ne téléverse pas les vidéos ni les sous-titres. Le moteur vocal est un composant externe : vérifier ses propres permissions et la disponibilité effective de sa voix hors ligne.
+
+Les pages du catalogue s’ouvrent dans le navigateur uniquement sur demande. Les vidéos d’essai et les sous-titres utilisés par les tests sont synthétiques. Les clés privées de signature restent hors du dépôt.
+
+## Documentation et développement
+
+| Besoin | Document |
+| --- | --- |
+| Parcourir tous les documents | [Index de la documentation](docs/README.md) |
+| Vérifier le comportement sur un téléphone | [Parcours de tests manuels](docs/TESTS_TELEPHONE.md) |
+| Comprendre les versions | [Journal des changements](CHANGELOG.md) |
+| Compiler, tester et signer | [Procédure de vérification](TESTING.md) |
+| Comprendre le code | [Architecture](docs/ARCHITECTURE.md) |
+| Contribuer et terminer une modification | [Règles de contribution](CONTRIBUTING.md) et [consignes pour les agents](AGENTS.md) |
+| Retrouver les anciennes branches et APK | [Historique des branches et publications](docs/HISTORIQUE_BRANCHES.md) |
+| Explorer les moteurs vocaux | [Catalogue documentaire daté](docs/VOIX_CATALOGUE_2026.md) |
+
+Le dépôt contient `app/` pour l’application et les tests Android, `core/` pour le moteur indépendant d’Android, `docs/` pour la documentation, `examples/` pour les sous-titres synthétiques et `tools/` pour les contrôles. Le workflow de validation est [`.github/workflows/android.yml`](.github/workflows/android.yml).
+
+La compilation utilise Java 17 ; les tests Robolectric Android 36 utilisent Java 21. Les versions Gradle, Android SDK et dépendances sont précisées dans [TESTING.md](TESTING.md) et les fichiers de compilation.
+
+**Tout travail terminé et vérifié doit être intégré à `main`.** Les branches de travail servent à préparer et contrôler les changements ; la page d’accueil, la documentation et les liens de téléchargement doivent rester cohérents avec l’état réellement livré.

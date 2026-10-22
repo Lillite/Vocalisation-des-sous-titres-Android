@@ -1,0 +1,41 @@
+name: Signaler un problème
+description: Décrire un problème de lecture, de vocalisation ou d’interface.
+title: "[Problème] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci d’indiquer des étapes reproductibles. Ne joignez pas de vidéo personnelle, de clé ou de donnée privée. Un petit exemple synthétique est préférable.
+  - type: input
+    id: version
+    attributes:
+      label: Version de l’application
+      placeholder: Par exemple 0.3.2
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Téléphone et version Android
+      placeholder: Modèle, version Android et version système si utile
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Voix, formats et réglages
+      description: Moteur et voix, format vidéo, piste intégrée ou fichier de sous-titres, mode vocal et cadrage.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Étapes pour reproduire
+      description: Décrire les actions dans l’ordre, puis le résultat attendu et le résultat observé.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostic ou exemple synthétique
+      description: Facultatif. Relire les informations avant de les publier pour retirer toute donnée privée.

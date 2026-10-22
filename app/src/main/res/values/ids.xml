@@ -3,4 +3,9 @@
     <item type="id" name="open_video" />
     <item type="id" name="demo_button" />
     <item type="id" name="play_button" />
+    <item type="id" name="cinema_root" />
+    <item type="id" name="cinema_top" />
+    <item type="id" name="cinema_controls" />
+    <item type="id" name="cinema_play" />
+    <item type="id" name="cinema_unlock" />
 </resources>
