@@ -15,6 +15,8 @@ import androidx.media3.extractor.*
 import androidx.media3.extractor.text.*
 import androidx.test.core.app.ApplicationProvider
 import fr.soustitresvoix.core.NarrationMachine
+import fr.soustitresvoix.core.ExistingNarrationController
+import fr.soustitresvoix.core.NarrationController
 import fr.soustitresvoix.core.SpeechTools
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -63,10 +65,10 @@ class SsaOccurrenceRegressionTest {
             assertEquals(a.cues, b.cues)
         }
     }
-    private fun ready() = NarrationMachine().apply {
+    private fun ready(): NarrationController = ExistingNarrationController().apply {
         setMode(NarrationMachine.Mode.ADAPTIVE); setSpeechReady(true); setMediaReady(true); play()
     }
-    private fun forward(machine: NarrationMachine, parsed: Parsed, group: CueGroup): List<NarrationMachine.Effect> {
+    private fun forward(machine: NarrationController, parsed: Parsed, group: CueGroup): List<NarrationMachine.Effect> {
         val clean = group.cues.mapNotNull { it.text?.toString() }
             .map { SpeechTools.filter(it, filters) }.filter { it.isNotBlank() }
         val items = parsed.index.resolved(parsed.track, clean, group.presentationTimeUs, filters)
@@ -74,7 +76,7 @@ class SsaOccurrenceRegressionTest {
         return machine.cues(group.presentationTimeUs, clean,
             identities = items!!.map { it.identity }, deadlinesMs = items.map { it.endUs / 1000 + 600 })
     }
-    private fun drain(machine: NarrationMachine, first: List<NarrationMachine.Effect>): List<String> {
+    private fun drain(machine: NarrationController, first: List<NarrationMachine.Effect>): List<String> {
         val out = first.filterIsInstance<NarrationMachine.Effect.Speak>().map { it.text }.toMutableList()
         var iterations = 0
         while (machine.snapshot().speakingId != null) {
@@ -290,7 +292,7 @@ class SsaOccurrenceRegressionTest {
             withoutWhitespace(actual.joinToString(" ") { it.text }))
         assertEquals("Every emitted request has a fresh callback identity", actual.size, actual.map { it.id }.distinct().size)
     }
-    private fun drainComplete(machine: NarrationMachine, first: List<NarrationMachine.Effect>,
+    private fun drainComplete(machine: NarrationController, first: List<NarrationMachine.Effect>,
         heldUntilDrained: Boolean = false): List<NarrationMachine.Effect.Speak> {
         val spoken = mutableListOf<NarrationMachine.Effect.Speak>()
         fun collect(effects: List<NarrationMachine.Effect>) {

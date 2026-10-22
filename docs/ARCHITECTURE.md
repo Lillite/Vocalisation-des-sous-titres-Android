@@ -2,7 +2,38 @@
 
 [Index de la documentation](README.md) · [Compilation et validation](../TESTING.md)
 
-Cette vue décrit l’édition **0.3.2**. Le projet sépare la logique de narration indépendante d’Android, les adaptateurs du lecteur et l’interface. Les invariants ci-dessous sont des exigences à préserver lors des modifications ; les résultats de vérification restent attachés au commit réellement testé.
+Cette vue décrit les comportements de l’édition **0.3.2** et la première étape
+de modularisation préparatoire sur cette branche. Le projet sépare la logique de
+narration indépendante d’Android, les adaptateurs du lecteur et l’interface. Les
+invariants ci-dessous sont des exigences à préserver lors des modifications ; les
+résultats de vérification restent attachés au commit réellement testé.
+
+## Composition des composants
+
+`PlaybackSession` reçoit un `PlaybackComponents`. Les factories par défaut créent
+des instances propres à cette session :
+
+| Contrat | Implémentation par défaut | Responsabilité |
+|---|---|---|
+| `PlaybackBackend` | `Media3PlaybackBackend` | Posséder ExoPlayer, assembler ses renderers et ouvrir ses sources |
+| `MovieAudio` | `Media3MovieAudio` | Posséder l’unique `SpeechBandProcessor` installé dans le sink du film |
+| `VideoRendererFactory` / `VideoOutput` | `CinemaVideoRendererFactory` / sortie du backend | Construire le renderer existant et transmettre effets, format et stratégie de fréquence |
+| `SubtitleSource` / `SubtitleIndexer` | `Media3SubtitleSource` / adaptateur de `FullSubtitleIndexer` | Extraction pendant la lecture et indexation complète annulable |
+| `NarrationController` | `ExistingNarrationController` | Déléguer les événements à `NarrationMachine` et retourner tous ses effets dans le même ordre |
+| `SpeechService` | `AndroidSpeechService` | Déléguer la synthèse, le cache, la préparation et les mesures à `AndroidSpeech` |
+
+Le contrôleur de narration, le moteur vocal, les parseurs et leurs algorithmes
+existants restent derrière ces adaptateurs. Les effets de narration sont appliqués
+par la session sur le thread principal. Les callbacks d’extraction sont postés sur
+ce même thread et filtrés par l’epoch du média ; les retours d’indexation sont
+également filtrés par l’identité de la tâche. Le focus audio et les décisions de
+pause/reprise restent dans la session.
+
+La façade `Player` utilisée par les vues et certains types de source, pistes,
+effets et analytics sont encore ceux de Media3. Cette première étape isole les
+implémentations ; elle ne fournit pas déjà un moteur alternatif ni un protocole
+entièrement indépendant de Media3. Les limites et les obligations d’un remplacement
+figurent dans [Modularisation — étape 1](MODULARISATION_ETAPE_1.md).
 
 ## Noyau indépendant d’Android
 

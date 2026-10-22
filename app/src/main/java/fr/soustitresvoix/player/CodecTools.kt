@@ -24,7 +24,7 @@ object CodecTools {
             Handler(Looper.getMainLooper()).post {
                 val stillShown=wait.isShowing;wait.dismiss()
                 if(!stillShown || activity.isFinishing || activity.isDestroyed) return@post
-                val f=session.player.videoFormat
+                val f=session.video.format
                 val text="Décodeur actuellement initialisé : ${session.videoDecoder}\nVidéo : ${f?.sampleMimeType ?: "inconnue"}, ${f?.codecs ?: "profil inconnu"}\n\nCes capacités sont déclarées, pas un test de chaque codec. Aucune bibliothèque FFmpeg/LibVLC supplémentaire n’est intégrée. L’essai logiciel ne crée pas un décodeur absent et peut augmenter la consommation.\n\n$inventory"
                 AlertDialog.Builder(activity).setTitle("Compatibilité et secours logiciel").setMessage(text)
                     .setPositiveButton("Essayer priorité logicielle") { _,_-> session.retryDecoder(true) }

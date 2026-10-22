@@ -2,6 +2,18 @@
 
 Ce journal présente les étapes principales vérifiables dans l’historique du dépôt. Les rapports détaillés restent accessibles dans l’[index documentaire](docs/README.md). Les numéros ci-dessous désignent les versions de l’application ; les correspondances avec les publications GitHub figurent dans l’[historique](docs/HISTORIQUE_BRANCHES.md).
 
+## En préparation — Modularisation, étape 1
+
+- Point de retour conservé au commit `32e988654fc44faa80e1fb69c98cf9ca29e9f5b0`, sur une branche de sauvegarde ; travail séparé avant la livraison demandée ultérieurement.
+- Composition explicite des composants de lecture, audio du film, rendu vidéo, extraction/indexation et sortie vocale.
+- Assemblage ExoPlayer déplacé dans un adaptateur Media3 ; interface `Player` commune aux vues et accès vidéo spécifiques isolés.
+- Adaptateurs autour de `NarrationMachine` et `AndroidSpeech`, sans réécriture de leurs règles, callbacks, cache ou planification.
+- Chemins d’extraction en lecture et d’indexation complète reliés au même contrat, en conservant les identités et horaires des occurrences.
+- Contrôles de composition et de conservation des transitions, avec maintien des régressions SSA et des tests Android existants.
+
+Cette étape ne crée pas de version ni de publication APK. Voir le
+[périmètre et les preuves à vérifier](docs/MODULARISATION_ETAPE_1.md).
+
 ## Organisation du dépôt — 22 octobre 2026
 
 - Consolidation du travail terminé dans `main`, à partir des sources de la version 0.3.2.

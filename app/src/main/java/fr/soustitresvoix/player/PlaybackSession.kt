@@ -21,15 +21,9 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.DecoderReuseEvaluation
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.Renderer
-import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.analytics.AnalyticsListener
-import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
-import androidx.media3.exoplayer.video.VideoRendererEventListener
+import fr.soustitresvoix.core.NarrationController
 import fr.soustitresvoix.core.NarrationMachine
 import fr.soustitresvoix.core.SpeechTools
 import fr.soustitresvoix.core.PlaybackBenchmark
@@ -39,15 +33,17 @@ import java.io.File
 class PlaybackSession(
     private val context: Context, val prefs: PlayerPreferences,
     private val onChanged: () -> Unit, private val onMessage: (String, Boolean) -> Unit,
-    private val onCaption: (String) -> Unit
+    private val onCaption: (String) -> Unit,
+    components: PlaybackComponents = DefaultPlaybackComponents
 ) {
     private val handler = Handler(Looper.getMainLooper())
-    val machine = NarrationMachine()
+    val machine: NarrationController = components.createNarration()
     var ahead = CueAheadIndex(); private set
     val visual = VisualTools(this)
-    val bandProcessor = SpeechBandProcessor()
+    val movieAudio: MovieAudio = components.createMovieAudio()
+    private val subtitleSource: SubtitleSource = components.createSubtitles(context)
     private val indexingWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
-    private var indexer: FullSubtitleIndexer? = null
+    private var indexer: SubtitleIndexer? = null
     var indexingStatus = "Indexation complète non demandée"; private set
     private var manualPreparation = false
     private var thermalPreparationStopped = false
@@ -87,33 +83,11 @@ class PlaybackSession(
     private val startedCpu = android.os.Process.getElapsedCpuTime()
     private var lastPreparationTick = 0L
     private var appliedFilters = prefs.filters
-    val player: ExoPlayer = ExoPlayer.Builder(context,
-        object : DefaultRenderersFactory(context) {
-            override fun buildVideoRenderers(
-                context: Context, extensionRendererMode: Int,
-                mediaCodecSelector: MediaCodecSelector, enableDecoderFallback: Boolean,
-                eventHandler: Handler, eventListener: VideoRendererEventListener,
-                allowedVideoJoiningTimeMs: Long, out: ArrayList<Renderer>
-            ) {
-                // This factory uses the default extension mode (OFF). The builder's
-                // AV1 parsing and frame scheduling defaults match Media3 1.11.1's
-                // DefaultRenderersFactory; retain its configured codec components.
-                out.add(CinemaVideoRenderer(MediaCodecVideoRenderer.Builder(context)
-                    .setCodecAdapterFactory(getCodecAdapterFactory())
-                    .setMediaCodecSelector(mediaCodecSelector)
-                    .setEnableDecoderFallback(enableDecoderFallback)
-                    .setAllowedJoiningTimeMs(allowedVideoJoiningTimeMs)
-                    .setEventHandler(eventHandler)
-                    .setEventListener(eventListener)
-                    .setMaxDroppedFramesToNotify(DefaultRenderersFactory.MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY)))
-            }
-            override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioOutputPlaybackParams: Boolean): androidx.media3.exoplayer.audio.AudioSink =
-                androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(context)
-                    .setAudioProcessors(arrayOf(bandProcessor)).build()
-        }.setMediaCodecSelector { mime, secure, tunneling ->
-            val infos=androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT.getDecoderInfos(mime,secure,tunneling)
-            if(prefs.bool("preferSoftware")) infos.sortedByDescending { it.softwareOnly } else infos
-        }.setEnableDecoderFallback(true)).setUsePlatformDiagnostics(false).build()
+    internal val playback: PlaybackBackend = components.createPlayback(context, prefs,
+        movieAudio, components.createVideoRenderer())
+    // The same Player instance is shared by both views for this session's lifetime.
+    val player: Player get() = playback.player
+    val video: VideoOutput get() = playback.video
     private val audioManager = requireNotNull(context.getSystemService(AudioManager::class.java))
     private var closed = false
     private var ducked = false
@@ -124,7 +98,7 @@ class PlaybackSession(
     private var selectExternalWhenAvailable = false
     var media: SavedMedia? = null; private set
     private var focusHeld = false
-    val speech = AndroidSpeech(context, prefs,
+    val speech: SpeechService = components.createSpeech(context, prefs,
         onAvailability = { ready, msg ->
             if (!closed) {
                 if (!ready && prefs.narration) finishPlaybackBenchmark("Voix devenue indisponible : essai interrompu")
@@ -157,15 +131,15 @@ class PlaybackSession(
         }
     }
     init {
-        player.setVideoEffects(emptyList())
-        bandProcessor.enabled = prefs.bool("spectralDucking")
+        video.setEffects(emptyList())
+        movieAudio.enabled = prefs.bool("spectralDucking")
         speech.firstAudioLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.FIRST_AUDIO, it) }
         speech.synthesisLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.SYNTHESIS, it) }
         speech.cacheLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.CACHE, it) }
         holdLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.HOLD, it) }
-        player.setVideoChangeFrameRateStrategy(if (prefs.bool("matchFrameRate", true)) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF)
+        video.frameRateStrategy = if (prefs.bool("matchFrameRate", true)) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
         handler.post(playbackTick)
-        player.addAnalyticsListener(object : AnalyticsListener {
+        playback.addAnalyticsListener(object : AnalyticsListener {
             override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, dropped: Int, elapsedMs: Long) { droppedFrames += dropped }
             override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, name: String, timestampMs: Long, durationMs: Long) { videoDecoder = name }
             override fun onVideoInputFormatChanged(eventTime: AnalyticsListener.EventTime, format: Format, decoderReuseEvaluation: DecoderReuseEvaluation?) {
@@ -250,13 +224,10 @@ class PlaybackSession(
             .clearOverridesOfType(C.TRACK_TYPE_TEXT).clearOverridesOfType(C.TRACK_TYPE_AUDIO)
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             .setPreferredTextLanguages("fr", "fra").setSelectUndeterminedTextLanguage(true).build()
-        val tap = CueAheadFactory { track, cues -> handler.post {
-            if (!closed && epoch == mediaEpoch) ahead.add(track, cues)
-        } }.setOccurrenceListener { track, cues, origins -> handler.post {
+        val source = subtitleSource.createMediaSource(item.build()) { track, cues, origins -> handler.post {
             if (!closed && epoch == mediaEpoch) ahead.add(track, cues, origins)
         } }
-        val factory = DefaultMediaSourceFactory(context, tap).setSubtitleParserFactory(tap.sidecarParsers())
-        player.setMediaSource(factory.createMediaSource(item.build()), saved.positionMs)
+        playback.setMediaSource(source, saved.positionMs)
         player.prepare(); prefs.save(saved); onChanged()
     }
     fun play() {
@@ -380,7 +351,7 @@ class PlaybackSession(
         }
         if (indexedSource == origin) { prepare(ahead); return }
         indexer?.cancel()
-        val task = FullSubtitleIndexer(context); indexer = task
+        val task = subtitleSource.createIndexer(); indexer = task
         indexingStatus="Indexation complète en cours ; aucun décodage vidéo pour cet index"
         indexingWorker.execute {
             try {
@@ -395,7 +366,7 @@ class PlaybackSession(
                 }
             } catch (e: Exception) { handler.post {
                 if (!closed && epoch == mediaEpoch && indexer === task) {
-                    indexer=null; manualPreparation=false; indexingStatus=FullSubtitleIndexer.safeFailureMessage(e)
+                    indexer=null; manualPreparation=false; indexingStatus=subtitleSource.safeFailureMessage(e)
                     onMessage(indexingStatus, true)
                 }
             } }
@@ -417,7 +388,7 @@ class PlaybackSession(
         interruptPreparation("Préparation arrêtée : réglages modifiés. Applique les réglages puis relance la préparation ; le cache existant est conservé.")
     }
     private fun benchmarkCounters(): PlaybackBenchmark.Counters {
-        val videoCounters = player.videoDecoderCounters
+        val videoCounters = playback.videoDecoderCounters
         videoCounters?.ensureUpdated()
         return PlaybackBenchmark.Counters(
             SystemClock.elapsedRealtime(), android.os.Process.getElapsedCpuTime(), player.currentPosition.coerceAtLeast(0),
@@ -528,7 +499,7 @@ class PlaybackSession(
             "Délais lecture du cache : ${speech.cacheLatency.summary()}\n" +
             "Pauses de confort terminées : ${holdLatency.summary()}\n" +
             "$indexingStatus\nPréparation : anticipation ${prefs.lookAheadSeconds} s estimées, ${prefs.lookAheadCount} segments max, cache ${prefs.cacheBytes / 1048576} Mio\n" +
-            "Audio expérimental : ${bandProcessor.enabled}; ${bandProcessor.processedSamples} échantillons PCM16 traités (pas de séparation des sources)\n" +
+            "Audio expérimental : ${movieAudio.enabled}; ${movieAudio.processedSamples} échantillons PCM16 traités (pas de séparation des sources)\n" +
             "Effets GPU : contraste ${visual.contrast}, luminosité ${visual.brightness}, marges validées ${visual.margins.nonzero()}, HDR ${visual.hdr}, comparaison original ${visual.bypass}\n" +
             "Agrandissement détaillé : demandé ${visual.detailedScaling}, actif ${visual.detailedScalingActive}, cible ${visual.scalingTarget}\n" +
             "GPU/NPU du moteur vocal : non exposés par l’API TTS Android. Aucun benchmark OnePlus n’est simulé.\n\n${playbackBenchmarkReport()}"
@@ -556,8 +527,8 @@ class PlaybackSession(
         }
         apply(machine.setMode(prefs.mode)); apply(machine.setEnabled(prefs.narration))
         apply(machine.setResumePolicy(prefs.resumePolicy))
-        bandProcessor.enabled = prefs.bool("spectralDucking")
-        player.setVideoChangeFrameRateStrategy(if (prefs.bool("matchFrameRate", true)) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF)
+        movieAudio.enabled = prefs.bool("spectralDucking")
+        video.frameRateStrategy = if (prefs.bool("matchFrameRate", true)) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
         setDucked(ducked); onChanged()
     }
     private fun forwardCues(group: CueGroup) {
@@ -642,7 +613,7 @@ class PlaybackSession(
         player.volume = (prefs.movieVolume * if (ducked) prefs.duckVolume else 1f).coerceIn(0f, 1f)
     }
     private fun setDucked(value: Boolean) {
-        ducked = value; bandProcessor.speaking = value
+        ducked = value; movieAudio.speaking = value
         fade?.let { handler.removeCallbacks(it) }
         val from = player.volume
         val target = prefs.movieVolume * if (value) prefs.duckVolume else 1f
@@ -666,6 +637,6 @@ class PlaybackSession(
         if (closed) return
         pause(); cancelIndexing(); indexingWorker.shutdownNow(); closed = true; mediaEpoch++; handler.removeCallbacksAndMessages(null)
         try { context.unregisterReceiver(noisy) } catch (_: IllegalArgumentException) { }
-        visual.close(); speech.close(); player.release()
+        visual.close(); speech.close(); playback.close()
     }
 }

@@ -350,7 +350,7 @@ class CinemaView(
         column.addView(protection)
         column.addView(label("Les deux modes « image entière » annulent aussi les marges précédemment retirées. Une nouvelle analyse peut ensuite proposer des marges à valider."))
         column.addView(button("Diagnostic du cadrage et des bandes noires") {
-            val format=session.player.videoFormat; val size=session.player.videoSize
+            val format=session.video.format; val size=session.player.videoSize
             // videoSize describes the processed output when effects are active.
             // Keep source metadata separate so stretching cannot disguise its ratio.
             val sourceWidth = format?.width ?: 0

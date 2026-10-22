@@ -559,8 +559,8 @@ class Revision03AndroidTest {
             .putBoolean("matchFrameRate", false).commit()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { a ->
-                assertTrue(a.session.bandProcessor.enabled)
-                assertEquals(C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF, a.session.player.videoChangeFrameRateStrategy)
+                assertTrue(a.session.movieAudio.enabled)
+                assertEquals(C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF, a.session.video.frameRateStrategy)
             }
         }
     }
@@ -741,7 +741,7 @@ class Revision03AndroidTest {
             var a:MainActivity?=null
             scenario.onActivity { activity ->
                 a = activity
-                activity.session.player.addAnalyticsListener(androidx.media3.exoplayer.util.EventLogger())
+                activity.session.playback.addAnalyticsListener(androidx.media3.exoplayer.util.EventLogger())
                 activity.session.prefs.narration = false
                 activity.session.prefs.putInt("orientation", 0)
                 activity.session.refreshSettings()
@@ -812,7 +812,8 @@ class Revision03AndroidTest {
                 activity.session.pause()
                 // The public pause request masks playWhenReady immediately, but the
                 // playback thread still has to stop its clock and publish the final position.
-                pauseBarrier = activity.session.player.createMessage { _, _ -> }.send()
+                // Keep the actual playback-thread barrier: a timed sleep is not equivalent.
+                pauseBarrier = (activity.session.playback as Media3PlaybackBackend).exoPlayer.createMessage { _, _ -> }.send()
             }
             assertTrue("The playback thread did not acknowledge the pause barrier",
                 requireNotNull(pauseBarrier).blockUntilDelivered(20_000))

@@ -11,13 +11,16 @@ Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcou
 | Étape | Contrôles exigés |
 | --- | --- |
 | Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 33 tests JVM du noyau, 35 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 33 tests du noyau et des 35 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Variante debug | 36 tests JVM du noyau, 38 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 36 tests du noyau et des 38 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
 | Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
-| Android 36 | Deux passages complets des 67 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
+| Android 36 | Deux passages complets des 68 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
 | Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
 
-Ces effectifs correspondent aux suites de la version 0.3.2. Lorsqu'un test est
+Ces effectifs incluent les suites de la version 0.3.2 et les compléments de la
+[première étape de modularisation](docs/MODULARISATION_ETAPE_1.md) : trois tests
+du contrôleur de narration, trois tests de composition et un scénario instrumenté
+de pause/reprise. Aucun test antérieur n'est retiré. Lorsqu'un test est
 ajouté, mettre à jour les effectifs attendus dans le workflow ou dans
 `tools/run-device-tests.sh` ; ne jamais retirer un test pour retrouver un nombre
 attendu. Les contrôles des rapports refusent les tests manquants, ignorés,

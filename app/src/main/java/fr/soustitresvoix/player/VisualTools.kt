@@ -52,7 +52,7 @@ class VisualTools(private val session: PlaybackSession) {
     val detailedScalingActive: Boolean get() = detailedScaling && !hdr && !bypass && renderWidth > 0 && renderHeight > 0
     val scalingTarget: String get() = if (renderWidth > 0 && renderHeight > 0) "$renderWidth × $renderHeight" else "surface non mesurée"
     private var observedFormat: Format? = null
-    val hdr: Boolean get() = isHdrFormat(observedFormat ?: session.player.videoFormat) || session.player.currentTracks.groups.any { group ->
+    val hdr: Boolean get() = isHdrFormat(observedFormat ?: session.video.format) || session.player.currentTracks.groups.any { group ->
         group.type == C.TRACK_TYPE_VIDEO && (0 until group.length).any { group.isTrackSelected(it) && isHdrFormat(group.getTrackFormat(it)) }
     }
     companion object {
@@ -134,7 +134,7 @@ class VisualTools(private val session: PlaybackSession) {
                 if (plan.framingMode == 2) Presentation.LAYOUT_STRETCH_TO_FIT
                 else Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
         }
-        session.player.setVideoEffects(effects)
+        session.video.setEffects(effects)
         appliedPlan = plan
     }
     fun close() {

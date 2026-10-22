@@ -103,6 +103,16 @@ Les pages du catalogue s’ouvrent dans le navigateur uniquement sur demande. Le
 
 ## Documentation et développement
 
+### Étape 1 de modularisation, en préparation
+
+Cette branche prépare des interfaces remplaçables autour de Media3, de l’audio,
+de la vidéo, de l’extraction des sous-titres et de la narration. La demande du
+22 octobre 2026 prévoit plusieurs étapes avant toute livraison d’application.
+Le code de départ est conservé sur
+[`backup/avant-modularisation-20261022-32e9886`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/backup/avant-modularisation-20261022-32e9886).
+Le périmètre, les invariants et les contrôles sont détaillés dans
+[Modularisation — étape 1](docs/MODULARISATION_ETAPE_1.md).
+
 | Besoin | Document |
 | --- | --- |
 | Parcourir tous les documents | [Index de la documentation](docs/README.md) |
