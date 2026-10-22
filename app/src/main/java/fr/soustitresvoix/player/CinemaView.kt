@@ -13,6 +13,10 @@ import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import fr.soustitresvoix.core.ImageCommand
+import fr.soustitresvoix.core.ImageCommandDecision
+import fr.soustitresvoix.core.ImageCommandRejection
+import fr.soustitresvoix.core.ImageCommandRequest
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -332,6 +336,28 @@ class CinemaView(
     }
     fun imageDialog() {
         if (disposed) return
+        // An already open dialog must not issue a command for a replacement media.
+        val generation = session.imageCommands.snapshot().context.generation
+        fun submit(command: ImageCommand): Boolean {
+            val decision = session.imageCommands.submit(ImageCommandRequest(generation, command))
+            if (decision is ImageCommandDecision.Rejected) {
+                val reason = when (decision.reason) {
+                    ImageCommandRejection.CLOSED -> "Lecture fermée : réglage indisponible"
+                    ImageCommandRejection.STALE_MEDIA -> "La vidéo a changé : rouvre les réglages d’image"
+                    ImageCommandRejection.NON_FINITE_VALUE -> "Réglage refusé : valeur numérique invalide"
+                    ImageCommandRejection.OUT_OF_RANGE -> "Réglage refusé : valeur hors des limites autorisées"
+                    ImageCommandRejection.CAPABILITY_UNAVAILABLE -> "Traitement d’image indisponible avec ce moteur"
+                    ImageCommandRejection.CAPABILITY_UNKNOWN -> "Disponibilité du traitement d’image non confirmée"
+                    ImageCommandRejection.HDR_PROTECTED -> "HDR : traitement désactivé"
+                }
+                // Keep the refusal visible inside the modal UI. A transient
+                // CinemaView label behind this dialog would be easy to miss.
+                showDialog(AlertDialog.Builder(activity).setTitle("Réglage d’image refusé")
+                    .setMessage(reason).setPositiveButton("Fermer", null))
+                return false
+            }
+            return true
+        }
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val protection = CheckBox(activity).apply {
             text="Protéger le cadre : bloquer zoom et déplacements accidentels"; textSize=17f; minHeight=dp(56); isChecked=prefs.protectFrame
@@ -374,12 +400,10 @@ class CinemaView(
         column.addView(button("Analyser les marges encodées — aperçu obligatoire") { session.visual.showAnalysis(activity) { applyImage() } })
         column.addView(button("Annuler toute suppression de marges") { session.visual.crop(fr.soustitresvoix.core.BlackBars.Margins()); applyImage() })
         column.addView(button("Contraste léger + / original (SDR seulement)") {
-            if (session.visual.hdr) tell("HDR : traitement désactivé")
-            else session.visual.adjust(if (session.visual.contrast==0f) .12f else 0f,session.visual.brightness)
+            submit(ImageCommand.SetAdjustments(if (session.visual.contrast==0f) .12f else 0f, session.visual.brightness))
         })
         column.addView(button("Éclaircir légèrement / original (SDR seulement)") {
-            if (session.visual.hdr) tell("HDR : traitement désactivé")
-            else session.visual.adjust(session.visual.contrast,if (session.visual.brightness==0f) .06f else 0f)
+            submit(ImageCommand.SetAdjustments(session.visual.contrast, if (session.visual.brightness==0f) .06f else 0f))
         })
         column.addView(CheckBox(activity).apply {
             text = "Mise à l’échelle détaillée Lanczos — SDR seulement"
@@ -391,8 +415,13 @@ class CinemaView(
         column.addView(CheckBox(activity).apply {
             text = "Comparer à l’original : désactiver les traitements"
             textSize = 17f; minHeight = dp(56); isChecked = session.visual.bypass
+            var restoring = false
             setOnCheckedChangeListener { _, checked ->
-                if (!disposed && checked != session.visual.bypass) session.visual.toggleComparison()
+                if (!disposed && !restoring && !submit(ImageCommand.SetOriginalComparison(checked))) {
+                    restoring = true
+                    isChecked = session.imageCommands.snapshot().context.requested.originalComparison
+                    restoring = false
+                }
             }
         })
         column.addView(button("Zoom +") { setImageZoom(zoom + .25f) })

@@ -21,11 +21,21 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import fr.soustitresvoix.core.BlackBars
+import fr.soustitresvoix.core.CapabilityStatus
+import fr.soustitresvoix.core.ImageCommand
+import fr.soustitresvoix.core.ImageCommandContext
+import fr.soustitresvoix.core.ImageCommandDecision
+import fr.soustitresvoix.core.ImageCommandPolicy
+import fr.soustitresvoix.core.ImageCommandPort
+import fr.soustitresvoix.core.ImageCommandRequest
+import fr.soustitresvoix.core.ImageCommandSnapshot
+import fr.soustitresvoix.core.ImageSettings
+import fr.soustitresvoix.core.SubmittedImageAdjustments
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 @UnstableApi
-class VisualTools(private val session: PlaybackSession) {
+class VisualTools(private val session: PlaybackSession) : ImageCommandPort {
     var margins = BlackBars.Margins(); private set
     var contrast = 0f; private set
     var brightness = 0f; private set
@@ -36,6 +46,11 @@ class VisualTools(private val session: PlaybackSession) {
     private var framingMode = 0
     private var closed = false
     private val effectsHandler = Handler(Looper.getMainLooper())
+    // Tickets belong to this port, not to a URI or the diagnostic store. Reopening
+    // even the same media invalidates producers holding an older ticket.
+    private var commandGeneration = 0L
+    private var submissionSequence = 0L
+    private var lastSubmitted: SubmittedImageAdjustments? = null
     private data class RenderPlan(
         val margins: BlackBars.Margins = BlackBars.Margins(),
         val contrast: Float = 0f,
@@ -71,24 +86,49 @@ class VisualTools(private val session: PlaybackSession) {
         internal fun isHdrFormat(format: Format?): Boolean = format?.colorInfo?.colorTransfer in
             listOf(C.COLOR_TRANSFER_ST2084, C.COLOR_TRANSFER_HLG) || format?.sampleMimeType == "video/dolby-vision"
     }
+    override fun snapshot(): ImageCommandSnapshot {
+        check(Looper.myLooper() == effectsHandler.looper) { "Image commands require the session thread." }
+        val requested = ImageSettings(contrast, brightness, bypass)
+        // Do not consult the released player or backend after closure. The base
+        // declaration is separate from HDR: comparison cannot lift that guard.
+        val availability = if (closed) CapabilityStatus.UNKNOWN else session.playback.diagnosticCapabilities()
+            .singleOrNull { it.id == "video.effects" }?.status ?: CapabilityStatus.UNKNOWN
+        return ImageCommandSnapshot(ImageCommandContext(commandGeneration, closed,
+            !closed && hdr, availability, requested), lastSubmitted)
+    }
+    override fun submit(request: ImageCommandRequest): ImageCommandDecision {
+        val decision = ImageCommandPolicy.validate(request, snapshot().context)
+        if (decision is ImageCommandDecision.Accepted && decision.changed) {
+            session.finishPlaybackBenchmark(when (request.command) {
+                is ImageCommand.SetAdjustments -> "Traitements d’image modifiés : essai interrompu"
+                is ImageCommand.SetOriginalComparison -> "Comparaison d’image modifiée : essai interrompu"
+            })
+            contrast = decision.requested.contrast
+            brightness = decision.requested.imageBrightness
+            bypass = decision.requested.originalComparison
+            apply()
+        }
+        return decision
+    }
     fun reset() {
+        if (closed) return
         effectsHandler.removeCallbacks(updateEffects)
+        commandGeneration++
+        lastSubmitted = null
         observedFormat=null; margins = BlackBars.Margins(); contrast=0f; brightness=0f; bypass=false; detailedScaling=false
         apply()
     }
-    fun onInputFormatChanged(format: Format) { observedFormat = format; apply() }
+    fun onInputFormatChanged(format: Format) { if (!closed) { observedFormat = format; apply() } }
     fun crop(value: BlackBars.Margins) {
         require(value.safe()); session.finishPlaybackBenchmark("Marges modifiées : essai interrompu")
         margins=value; apply()
     }
-    fun adjust(c: Float, b: Float) {
-        session.finishPlaybackBenchmark("Traitements d’image modifiés : essai interrompu")
-        contrast=c.coerceIn(-.3f,.3f); brightness=b.coerceIn(-.2f,.2f); apply()
-    }
-    fun toggleComparison() {
-        session.finishPlaybackBenchmark("Comparaison d’image modifiée : essai interrompu")
-        bypass=!bypass; apply()
-    }
+    // Compatibility for existing synchronous callers. Delayed producers must
+    // retain the generation from their original snapshot and call the port.
+    fun adjust(c: Float, b: Float): ImageCommandDecision =
+        submit(ImageCommandRequest(commandGeneration, ImageCommand.SetAdjustments(c, b)))
+    fun toggleComparison(): ImageCommandDecision =
+        submit(ImageCommandRequest(commandGeneration, ImageCommand.SetOriginalComparison(!bypass)))
     fun setDetailedScaling(enabled: Boolean) {
         session.finishPlaybackBenchmark("Redimensionnement graphique modifié : essai interrompu")
         detailedScaling = enabled; apply()
@@ -148,9 +188,14 @@ class VisualTools(private val session: PlaybackSession) {
         }
         session.video.setEffects(effects)
         appliedPlan = plan
+        lastSubmitted = SubmittedImageAdjustments(commandGeneration, ++submissionSequence,
+            plan.contrast, plan.brightness)
     }
     fun close() {
+        if (closed) return
         closed = true
+        commandGeneration++
+        lastSubmitted = null
         effectsHandler.removeCallbacksAndMessages(null)
     }
     fun showAnalysis(activity: Activity, updated: () -> Unit) {

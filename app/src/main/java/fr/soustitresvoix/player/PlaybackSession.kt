@@ -28,6 +28,7 @@ import fr.soustitresvoix.core.NarrationMachine
 import fr.soustitresvoix.core.SpeechTools
 import fr.soustitresvoix.core.PlaybackBenchmark
 import fr.soustitresvoix.core.PlaybackDiagnosticSnapshot
+import fr.soustitresvoix.core.ImageCommandPort
 import java.io.File
 
 @UnstableApi
@@ -41,6 +42,7 @@ class PlaybackSession(
     val machine: NarrationController = components.createNarration()
     var ahead = CueAheadIndex(); private set
     val visual = VisualTools(this)
+    val imageCommands: ImageCommandPort get() = visual
     val movieAudio: MovieAudio = components.createMovieAudio()
     private val subtitleSource: SubtitleSource = components.createSubtitles(context)
     private val indexingWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
@@ -147,7 +149,7 @@ class PlaybackSession(
             override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, dropped: Int, elapsedMs: Long) { droppedFrames += dropped }
             override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, name: String, timestampMs: Long, durationMs: Long) { videoDecoder = name }
             override fun onVideoInputFormatChanged(eventTime: AnalyticsListener.EventTime, format: Format, decoderReuseEvaluation: DecoderReuseEvaluation?) {
-                if (!closed) visual.onInputFormatChanged(format)
+                if (!closed && diagnosticObserver.isCurrentMediaEvent(eventTime)) visual.onInputFormatChanged(format)
             }
         })
         playback.addAnalyticsListener(diagnosticObserver)

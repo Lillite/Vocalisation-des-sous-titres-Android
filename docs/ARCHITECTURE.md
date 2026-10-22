@@ -2,7 +2,7 @@
 
 [Index de la documentation](README.md) · [Compilation et validation](../TESTING.md)
 
-Cette vue décrit les comportements de l’édition **0.3.2** et les deux premières étapes
+Cette vue décrit les comportements de l’édition **0.3.2** et les trois premières étapes
 préparatoires sur cette branche. Le projet sépare la logique de
 narration indépendante d’Android, les adaptateurs du lecteur et l’interface. Les
 invariants ci-dessous sont des exigences à préserver lors des modifications ; les
@@ -65,6 +65,55 @@ algorithmes de narration, d’anticipation, de synthèse et d’extraction reste
 de l’étape 1. Les détails et scénarios de vérification figurent dans
 [Capacités et observations — étape 2](CAPACITES_ETAPE_2.md).
 
+## Commandes d’image validées
+
+`core/ImageCommands.kt` définit le port `ImageCommandPort`, ses instantanés et un
+validateur pur. `PlaybackSession.imageCommands` expose l’instance `VisualTools`
+déjà propriétaire des valeurs et des effets ; aucun second moteur de rendu ou
+ordonnanceur n’est créé.
+
+| Type | Responsabilité |
+|---|---|
+| `ImageCommand.SetAdjustments` | Demander ensemble le contraste et la luminosité de l’image, sans mutation partielle |
+| `ImageCommand.SetOriginalComparison` | Demander un état explicite de comparaison, sans basculement implicite |
+| `ImageCommandRequest` / `ImageCommandContext` | Séparer le ticket d’origine de la génération et des protections courantes |
+| `ImageCommandPolicy` | Retourner une acceptation ou un refus ; aucune lecture Android, commande de lecteur ou planification |
+| `ImageCommandDecision.Accepted` | Fournir les valeurs demandées, leur disposition sous HDR/bypass et l’indication d’un changement réel |
+| `SubmittedImageAdjustments` | Décrire contraste et luminosité d’un plan dont l’envoi a effectivement retourné, avec génération et séquence |
+| `ImageCommandSnapshot` | Lire le contexte et la dernière soumission attribuable, sans envoyer de commande |
+
+La validation traite d’abord la fermeture, puis la génération, les valeurs
+numériques, la disponibilité et le HDR. Les deux corrections doivent être finies
+et rester dans les bornes inclusives existantes : contraste de −0,3 à +0,3,
+luminosité de l’image de −0,2 à +0,2. Une demande invalide est refusée entièrement,
+sans écrêtage. Une capacité inconnue ou indisponible interdit aussi la commande.
+Une acceptation identique à l’état demandé ne relance ni le regroupement des
+effets ni l’interruption d’un essai comparatif.
+
+`VisualTools` conserve son regroupement de 32 ms et le calcul existant du plan.
+Sous comparaison, les valeurs demandées sont conservées mais leurs corrections
+sont neutralisées. Le HDR interdit les nouvelles corrections et reste contrôlé
+au moment du calcul du plan ; modifier la comparaison ne peut pas lever ce
+verrou. Le cadrage `Presentation` reste distinct de ces corrections et continue
+à s’appliquer dans les mêmes conditions. Un format inconnu ne constitue pas une
+preuve de SDR.
+
+Le ticket du port change à chaque remise à zéro pour une ouverture de média,
+même à URI identique, ainsi qu’à la fermeture. Les contrôles du dialogue capturent
+le ticket à son ouverture et ne le remplacent pas par le ticket courant au moment
+d’un clic tardif. Les événements de format utilisés par la protection d’image
+suivent aussi l’attribution stricte à la période, à la fenêtre et au tag du média
+introduite à l’étape 2. La fermeture annule les envois différés et interdit toute
+nouvelle commande.
+
+`lastSubmitted` n’est enregistré qu’après le retour de `setEffects`, puis invalidé
+au changement de média ou à la fermeture. Une commande regroupée, neutralisée ou
+sans changement ne prouve pas à elle seule un nouvel envoi. Cette trace décrit
+la configuration envoyée, jamais une vérification des pixels ou de la qualité du
+rendu. Les règles de narration et le traitement audio restent indépendants de ce
+port. Voir [Commandes d’image — étape 3](COMMANDES_IMAGE_ETAPE_3.md) pour les refus,
+les limites et les contrôles exigés.
+
 ## Noyau indépendant d’Android
 
 Le module [`core`](../core/src/main/kotlin/fr/soustitresvoix/core/) contient la logique de narration, le traitement du texte, la planification adaptative, la validation des fichiers WAV, le cache et les mesures.
@@ -103,7 +152,7 @@ Les préparations de cinq minutes ou de toute la vidéo sont déclenchées par l
 
 `PlaybackSession` relie Media3, la narration, les interruptions audio, l’indexation et la préparation. `PlayerPreferences` conserve les réglages et la dernière position. `MainActivity` expose les contrôles natifs et `CinemaView` les commandes du plein écran, avec libellés textuels et alternatives aux gestes.
 
-`VisualTools` et `CinemaVideoRenderer` appliquent le cadrage et les effets graphiques. Les deux modes « image entière » réinitialisent zoom, déplacements et marges retirées. Le recadrage volontaire et la suppression de marges demandent une action distincte. L’analyse de quelques images ne garantit pas qu’aucun texte ne figure dans une marge à un autre instant. Les traitements visuels concernés restent limités au SDR reconnu.
+`VisualTools` et `CinemaVideoRenderer` appliquent le cadrage et les effets graphiques. Les deux modes « image entière » réinitialisent zoom, déplacements et marges retirées. Le recadrage volontaire et la suppression de marges demandent une action distincte. L’analyse de quelques images ne garantit pas qu’aucun texte ne figure dans une marge à un autre instant. Les protections existantes bloquent les corrections concernées lorsque le HDR est reconnu ; l’absence d’une telle détection n’est pas une preuve de SDR.
 
 La baisse de volume agit sur le mix du film. Le traitement expérimental de bande vocale PCM16 n’est pas une séparation des voix et des ambiances. Les diagnostics et bancs d’essai sont locaux ; ils ne prouvent pas l’utilisation d’un backend vocal GPU/NPU ni une amélioration sur un appareil non mesuré.
 

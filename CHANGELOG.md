@@ -2,6 +2,22 @@
 
 Ce journal présente les étapes principales vérifiables dans l’historique du dépôt. Les rapports détaillés restent accessibles dans l’[index documentaire](docs/README.md). Les numéros ci-dessous désignent les versions de l’application ; les correspondances avec les publications GitHub figurent dans l’[historique](docs/HISTORIQUE_BRANCHES.md).
 
+## En préparation — Commandes d’image, étape 3
+
+- Point de retour de l’étape 2 conservé au commit `0319dcb9b0cfd71be4231849306f0b248e1dbe02`, sur `backup/etape-2-validee-20261022-0319dcb` ; travail sur `work/etape-3-commandes-image-20261023`.
+- Contrat indépendant d’Android pour régler atomiquement contraste et luminosité de l’image, puis activer ou désactiver explicitement la comparaison avec l’original.
+- Validation des valeurs finies et des bornes existantes, de la génération du média, de la fermeture, de la disponibilité et de la protection HDR ; refus explicites sans modification partielle.
+- Idempotence des demandes identiques et distinction entre réglages acceptés, plan effectivement soumis et pixels non mesurés ; invalidation des tickets et des faits de soumission au remplacement du média.
+- Raccordement des contrôles d’image existants, avec conservation du regroupement des effets, du bypass, du cadrage `Presentation` et des algorithmes de voix et d’audio.
+- Attribution des événements de format au média courant avant de mettre à jour la protection d’image ; maintien du rejet des callbacks anciens ou non attribuables.
+- Quatre nouveaux tests du noyau, cinq tests JVM de l’application et un scénario Android à exécuter avec toutes les régressions précédentes : effectifs exigés 44, 46 et 70.
+
+Les critères et limites figurent dans [Commandes d’image — étape 3](docs/COMMANDES_IMAGE_ETAPE_3.md).
+Les résultats doivent être rattachés au commit testé et à sa demande de fusion.
+Cette étape conserve le numéro de version et ne publie pas d’APK ni ne fusionne
+le travail dans `main`. Après validation, la suite proposée est un écran expert
+d’image sur ce contrat ; l’audio et les moteurs alternatifs sont des chantiers distincts.
+
 ## En préparation — Capacités et observations, étape 2
 
 - Point de retour de l’étape 1 conservé au commit `a093e791b1413aefef6add027225b88c20657c6c` ; nouvelle branche de travail séparée.

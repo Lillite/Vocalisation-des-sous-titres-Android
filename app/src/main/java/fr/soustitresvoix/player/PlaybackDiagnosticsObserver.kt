@@ -58,6 +58,9 @@ internal class PlaybackDiagnosticsObserver(private val session: PlaybackSession)
         return current.generation.takeIf { tag === current }
     }
 
+    /** Reuse the same attribution for the image guard and read-only diagnostics. */
+    internal fun isCurrentMediaEvent(event: AnalyticsListener.EventTime): Boolean = generationOf(event) != null
+
     override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime,
         decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
         val generation = generationOf(eventTime) ?: return

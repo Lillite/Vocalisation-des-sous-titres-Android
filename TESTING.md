@@ -11,10 +11,10 @@ Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcou
 | Étape | Contrôles exigés |
 | --- | --- |
 | Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 40 tests JVM du noyau, 41 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 40 tests du noyau et des 41 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Variante debug | 44 tests JVM du noyau, 46 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 44 tests du noyau et des 46 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
 | Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
-| Android 36 | Deux passages complets des 69 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
+| Android 36 | Deux passages complets des 70 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
 | Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
 
 Ces effectifs incluent les suites de la version 0.3.2 et les compléments de la
@@ -23,6 +23,12 @@ du contrôleur de narration, trois tests de composition et un scénario instrume
 de pause/reprise. La [deuxième étape](docs/CAPACITES_ETAPE_2.md) ajoute quatre tests
 du modèle de diagnostic, trois tests JVM de consultation et d'invalidation, et
 un scénario Android de consultation/copie avec observation des requêtes TTS.
+La [troisième étape](docs/COMMANDES_IMAGE_ETAPE_3.md) ajoute quatre tests de
+validation des commandes d’image, cinq tests JVM de leur raccordement et un
+scénario instrumenté supplémentaire. Les totaux 40/41/69 de l’étape 2 restent
+propres à son état historique ; les effectifs exigés sur cette branche sont
+44/46/70. Ces nombres sont des critères à contrôler, pas une preuve d’exécution :
+consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
 Aucun test antérieur n'est retiré. Lorsqu'un test est
 ajouté, mettre à jour les effectifs attendus dans le workflow ou dans
 `tools/run-device-tests.sh` ; ne jamais retirer un test pour retrouver un nombre
@@ -116,6 +122,42 @@ successives sans racine explicite pouvaient sélectionner l’activité sans foc
 Les fermetures utilisent des scopes `Closeable.use` imbriqués : toutes les
 assertions restent actives, les deux nettoyages sont tentés et une éventuelle
 erreur de fermeture est attachée à l’échec initial au lieu de le remplacer.
+
+### Contrôles des commandes d’image de l’étape 3
+
+Les quatre tests de `ImageCommandsTest` doivent couvrir les bornes inclusives, les valeurs non
+finies, les refus atomiques, l’ordre des protections, les tickets de génération,
+la fermeture, la disponibilité, le HDR, la comparaison et l’idempotence. Ils
+doivent distinguer une acceptation d’une soumission de plan : valider une demande
+ne remplit jamais une observation du rendu.
+
+Les cinq tests de `ImageCommandsRobolectricTest` doivent exercer le vrai port
+raccordé à `VisualTools`, le plan effectivement envoyé à la sortie vidéo et les
+contrôles existants. Les ports de lecture, d’audio et de sources délèguent aux vrais
+composants ; la voix active est contrôlée sur la JVM. Ils doivent vérifier les
+refus sans mutation ni interruption de benchmark, les demandes identiques,
+le regroupement des demandes, la protection HDR et le bypass, l’invalidation au
+remplacement du média et à la fermeture, ainsi que les événements de format
+anciens ou non attribuables. Les oracles conservent la séparation entre valeurs
+demandées et dernière soumission ; aucune valeur supposée ne remplace un envoi
+absent. Les contrôles de narration, d’audio et de transport doivent rester actifs,
+y compris le maintien de la file et de l’identifiant vocal, puis le refus d’un
+callback périmé après une pause. Un ancien dialogue d’image doit présenter le
+refus de génération et restaurer sa case de comparaison.
+
+Le scénario `ImageCommandsAndroidTest` doit emprunter la vraie activité, Media3
+et le service TTS de fixture, avec les boutons réels de contraste, de luminosité
+et de comparaison. Deux essais vocaux explicites encadrent les commandes ; la
+trace IPC doit contenir ces deux demandes seulement. La pause, la position, le
+volume et les préférences font partie de l’oracle de stabilité. Aucun nouvel
+oracle de pixels n’est ajouté. Les tests antérieurs de pixels, de cadrage, de pause,
+de reprise et de conservation des occurrences restent requis. Une réussite du
+contrat ou de son raccordement ne mesure ni la qualité d’un effet sur l’appareil
+cible, ni le rendu HDR réel, ni les performances d’un autre moteur.
+
+Ces contrôles s’ajoutent aux exigences complètes du tableau initial. Les rapports
+doivent établir les effectifs et les résultats du commit testé ; aucun résultat
+des étapes 1 ou 2 ne vaut validation de l’étape 3.
 
 Les tests JVM ne remplacent pas l'instrumentation. Sur un émulateur Android
 démarré, exécuter séparément `bash tools/run-device-tests.sh`. Les tests du
