@@ -10,7 +10,6 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
-import androidx.test.espresso.Espresso.pressBackUnconditionally
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.action.ViewActions.scrollTo
 import androidx.test.espresso.assertion.ViewAssertions.matches
@@ -19,6 +18,7 @@ import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import java.io.Closeable
 import java.io.File
 import java.util.UUID
 import org.junit.Assert.*
@@ -105,27 +105,29 @@ class IndexDiagnosticPrivacyAndroidTest {
                     current.getSystemService(ClipboardManager::class.java).setPrimaryClip(
                         ClipData.newPlainText("Diagnostic regression sentinel", "No diagnostic copied yet"))
                 }
-                var settingsOpen = false
-                var noticeOpen = false
-                try {
-                    onView(withText("Réglages de la voix et du confort")).perform(scrollTo(), click())
-                    settingsOpen = true
+                onView(withText("Réglages de la voix et du confort")).perform(scrollTo(), click())
+                // Target each dialog explicitly: an unscoped Back can select
+                // the unfocused activity while the dialog below regains focus.
+                // Nested use scopes also preserve an assertion failure if a
+                // later dialog cleanup fails, and still attempt both closures.
+                Closeable {
+                    onView(withText("Appliquer et fermer")).inRoot(isDialog()).perform(click())
+                }.use {
                     onView(withText("Copier le diagnostic complet")).inRoot(isDialog()).perform(scrollTo(), click())
-                    noticeOpen = true
-                    onView(withText("Diagnostic copié à ta demande ; aucun dialogue ou nom de fichier inclus."))
-                        .inRoot(isDialog()).check(matches(isDisplayed()))
-                    scenario.onActivity { current ->
-                        val clip = requireNotNull(current.getSystemService(ClipboardManager::class.java).primaryClip)
-                        val copied = clip.getItemAt(0).text.toString()
-                        assertEquals("Diagnostic local", clip.description.label.toString())
-                        assertTrue("The copy lost the actual index failure", copied.contains(current.session.indexingStatus))
-                        assertFalse("The copied diagnostic exposes a private filename despite its explicit UI promise: $marker",
-                            copied.contains(marker))
+                    Closeable {
+                        onView(withText("Fermer")).inRoot(isDialog()).perform(click())
+                    }.use {
+                        onView(withText("Diagnostic copié à ta demande ; aucun dialogue ou nom de fichier inclus."))
+                            .inRoot(isDialog()).check(matches(isDisplayed()))
+                        scenario.onActivity { current ->
+                            val clip = requireNotNull(current.getSystemService(ClipboardManager::class.java).primaryClip)
+                            val copied = clip.getItemAt(0).text.toString()
+                            assertEquals("Diagnostic local", clip.description.label.toString())
+                            assertTrue("The copy lost the actual index failure", copied.contains(current.session.indexingStatus))
+                            assertFalse("The copied diagnostic exposes a private filename despite its explicit UI promise: $marker",
+                                copied.contains(marker))
+                        }
                     }
-                } finally {
-                    // Close the real dialogs even when the privacy assertion fails.
-                    if (noticeOpen) pressBackUnconditionally()
-                    if (settingsOpen) pressBackUnconditionally()
                 }
             }
         } finally {

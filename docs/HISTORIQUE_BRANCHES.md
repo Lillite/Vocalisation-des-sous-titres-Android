@@ -4,7 +4,7 @@
 
 ## Branche de référence
 
-**`main` rassemble le travail terminé et vérifié.** La consolidation du 22 octobre 2026 part du commit [`311d99052d287bb2227e85255740de201234e770`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/311d99052d287bb2227e85255740de201234e770), qui contient la version 0.3.2. Les sources applicatives et les tests de cette version sont conservés ; la consolidation actualise la présentation, la documentation et l’organisation des vérifications.
+**`main` rassemble le travail terminé et vérifié.** La consolidation du 22 octobre 2026 part du commit [`311d99052d287bb2227e85255740de201234e770`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/311d99052d287bb2227e85255740de201234e770), qui contient la version 0.3.2. Les sources applicatives restent inchangées. La consolidation actualise la présentation, la documentation et l’organisation des vérifications ; elle corrige aussi la fermeture des dialogues dans un test Android, sans supprimer de test ni modifier ses assertions.
 
 Avant cette opération, `main` était restée au commit `8028f5d`, correspondant à la première édition. Les versions suivantes existaient sur des branches secondaires.
 

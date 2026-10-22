@@ -9,6 +9,7 @@ Ce journal présente les étapes principales vérifiables dans l’historique du
 - Réécriture de la page d’accueil : présentation, mention de réalisation intégrale par IA, téléchargement, démarrage, modes vocaux, cadrage, limites et navigation.
 - Index documentaire, règles de contribution, modèles de signalement et consigne durable de fusion du travail terminé dans `main`.
 - Regroupement des vérifications dans un workflow Android courant, déclenché sur les demandes de fusion vers `main` et sur `main`.
+- Fermeture explicite des dialogues dans le test Android de confidentialité du diagnostic, après une erreur de sélection de fenêtre pendant son nettoyage ; toutes les assertions sont conservées et une erreur de nettoyage ne masque plus l’échec initial.
 - Normalisation des titres, tags, descriptions et statuts des quatre publications existantes, avec vérification des APK et des commits sources.
 
 Cette consolidation n’ajoute pas de nouvelle version de l’application : le numéro reste **0.3.2**. Les changements d’organisation ne constituent pas une nouvelle mesure de performance ou de confort sur téléphone.

@@ -79,6 +79,13 @@ mémoire est synthétique ; le fichier, l’indexeur, l’activité et le presse
 suivent leur vrai parcours. Le test instrumenté correspondant n’utilise aucun
 shadow. Ne pas interpréter cette précondition JVM comme une mesure Android.
 
+Dans ce test instrumenté, les dialogues se ferment par leurs boutons et avec
+une racine Espresso explicitement limitée aux dialogues. Deux fermetures Retour
+successives sans racine explicite pouvaient sélectionner l’activité sans focus.
+Les fermetures utilisent des scopes `Closeable.use` imbriqués : toutes les
+assertions restent actives, les deux nettoyages sont tentés et une éventuelle
+erreur de fermeture est attachée à l’échec initial au lieu de le remplacer.
+
 Les tests JVM ne remplacent pas l'instrumentation. Sur un émulateur Android
 démarré, exécuter séparément `bash tools/run-device-tests.sh`. Les tests du
 moteur vocal utilisent leur propre service de synthèse de fixture ; une réussite
