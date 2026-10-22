@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
@@ -78,6 +79,30 @@ class PlaybackDiagnosticsAndroidTest {
             session.player.currentMediaItem, session.player.trackSelectionParameters,
             session.diagnosticSnapshot().generation,
             activity.getSharedPreferences("player", Context.MODE_PRIVATE).all.toMap())
+    }
+
+    private fun resetClipboard(clipboard: ClipboardManager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            // An artificial copied sentinel creates Android's clipboard preview,
+            // which can intercept the later tap on the left-hand Refresh button.
+            // Clearing creates no copied content and retains a fresh-copy oracle.
+            clipboard.clearPrimaryClip()
+        } else {
+            // minSdk is 26; clearPrimaryClip is available from 28. These older
+            // versions have no system clipboard preview to intercept the tap.
+            clipboard.setPrimaryClip(ClipData.newPlainText("Diagnostic sentinel", "No diagnostic copied yet"))
+        }
+        assertClipboardReset(clipboard)
+    }
+
+    private fun assertClipboardReset(clipboard: ClipboardManager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            assertFalse("The clipboard must be empty until an explicit copy", clipboard.hasPrimaryClip())
+        } else {
+            val clip = requireNotNull(clipboard.primaryClip)
+            assertEquals("Diagnostic sentinel", clip.description.label.toString())
+            assertEquals("No diagnostic copied yet", clip.getItemAt(0).text.toString())
+        }
     }
 
     @Test fun consultingRefreshingAndCopyingDiagnosticsDoesNotSynthesizeOrChangePausedPlayback() {
@@ -153,8 +178,7 @@ class PlaybackDiagnosticsAndroidTest {
                         assertNull(requireNotNull(baseline).narration.speakingId)
                         decoder = (current.session.diagnosticSnapshot().capabilities.single { it.id == "video.decoder" }
                             .observed?.value as DiagnosticValue.Text).value
-                        current.getSystemService(ClipboardManager::class.java).setPrimaryClip(
-                            ClipData.newPlainText("Diagnostic sentinel", "No diagnostic copied yet"))
+                        resetClipboard(current.getSystemService(ClipboardManager::class.java))
                     }
                     onView(withText("Mesures réelles de cette session")).inRoot(isDialog()).perform(scrollTo(), click())
                     Closeable {
@@ -165,7 +189,10 @@ class PlaybackDiagnosticsAndroidTest {
                         onView(withText("Actualiser")).inRoot(isDialog()).perform(click())
                         onView(withText("Mesures locales — pas de télémétrie")).inRoot(isDialog())
                             .check(matches(isDisplayed()))
-                        scenario.onActivity { current -> assertEquals(baseline, state(current)) }
+                        scenario.onActivity { current ->
+                            assertEquals(baseline, state(current))
+                            assertClipboardReset(current.getSystemService(ClipboardManager::class.java))
+                        }
                     }
                     onView(withText("Copier le diagnostic complet")).inRoot(isDialog()).perform(scrollTo(), click())
                     Closeable {
@@ -174,7 +201,8 @@ class PlaybackDiagnosticsAndroidTest {
                         onView(withText("Diagnostic copié à ta demande ; aucun dialogue ou nom de fichier inclus."))
                             .inRoot(isDialog()).check(matches(isDisplayed()))
                         scenario.onActivity { current ->
-                            val clip = requireNotNull(current.getSystemService(ClipboardManager::class.java).primaryClip)
+                            val clipboard = current.getSystemService(ClipboardManager::class.java)
+                            val clip = requireNotNull(clipboard.primaryClip)
                             val copied = clip.getItemAt(0).text.toString()
                             assertEquals("Diagnostic local", clip.description.label.toString())
                             assertTrue("The actual copy lost the current decoder observation", copied.contains(decoder))
@@ -182,6 +210,10 @@ class PlaybackDiagnosticsAndroidTest {
                             assertEquals("Consultation or copying changed playback/narration/preferences", baseline, state(current))
                             assertEquals("The diagnostic triggered synthesis", listOf(preview), observed())
                             assertNull(current.session.player.playerError)
+                            // Clean up only after validating the real clipboard
+                            // contents. Clearing is not a dismissal of any system
+                            // preview already displayed for that actual copy.
+                            resetClipboard(clipboard)
                         }
                     }
                     // A second explicit request and its actual completion bound

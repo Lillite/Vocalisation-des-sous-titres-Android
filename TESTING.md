@@ -97,6 +97,19 @@ La fin de la phrase et une barrière du thread ExoPlayer ne suffisent pas à
 attendre les callbacks différés du fondu de volume. Les assertions portent sur
 afficher, actualiser et copier le diagnostic.
 
+Sur Android API 28 et suivantes, le scénario vide le presse-papiers et vérifie
+son absence de contenu avant les consultations, puis à nouveau avant la copie
+explicite. Sur les API 26 et 27, où `clearPrimaryClip` n'existe pas, une sentinelle
+distincte du diagnostic conserve la même vérification de copie fraîche. Une
+sentinelle copiée sur Android récent peut afficher la vignette du presse-papiers
+système : le journal d'un échec montrait le clic « Actualiser » suivi de
+l'ouverture de `com.android.systemui/.clipboardoverlay.EditTextActivity`, mettant
+l'activité du lecteur en pause. Le test évite cette vignette artificielle, sans
+désactiver les fonctions du système. Le contenu, le libellé et les observations
+du diagnostic réellement copié restent vérifiés avant le nettoyage du
+presse-papiers ; ce nettoyage ne garantit pas la fermeture d'une vignette déjà
+affichée par la copie réelle.
+
 Dans ce test instrumenté, les dialogues se ferment par leurs boutons et avec
 une racine Espresso explicitement limitée aux dialogues. Deux fermetures Retour
 successives sans racine explicite pouvaient sélectionner l’activité sans focus.
