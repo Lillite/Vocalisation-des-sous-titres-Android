@@ -202,7 +202,7 @@ internal class AudioSettingsControls(
 internal object AudioCommandText {
     fun rejection(reason: AudioCommandRejection): String = when (reason) {
         AudioCommandRejection.CLOSED -> "Modification refusée : la session est fermée. Rouvre le lecteur et ses réglages."
-        AudioCommandRejection.STALE_MEDIA -> "Modification refusée : une autre ouverture de vidéo a eu lieu. Ferme puis rouvre ce panneau. Les réglages audio enregistrés sont conservés."
+        AudioCommandRejection.STALE_MEDIA -> "Modification refusée : une autre ouverture de vidéo a eu lieu. Ferme les fenêtres de réglages jusqu’au lecteur, puis rouvre les réglages audio. Les réglages audio enregistrés sont conservés."
         AudioCommandRejection.NON_FINITE_VALUE -> "Modification refusée : les volumes doivent être des nombres finis entre 0 et 100 %. Aucune valeur modifiée."
         AudioCommandRejection.OUT_OF_RANGE -> "Modification refusée : volumes de 0 à 100 % ; durées de 0 à 2 000 ms. Aucune valeur modifiée."
         AudioCommandRejection.CAPABILITY_UNAVAILABLE -> "Activation refusée : ce composant ne permet pas l’atténuation spectrale. Aucune valeur modifiée."

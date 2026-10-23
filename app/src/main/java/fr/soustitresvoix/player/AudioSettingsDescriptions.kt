@@ -20,7 +20,7 @@ internal object AudioSettingsDescriptions {
         "Saisir permet d’entrer directement un pourcentage décimal, par exemple 37,5. La valeur retenue par le lecteur est affichée. " +
         "Une modification applique immédiatement la nouvelle cible, réduite si la voix " +
         "est signalée active, et remplace le fondu ou l’attente de remontée en cours. " +
-        "Le bouton de réinitialisation de ce panneau rétablit 100 %. Dans « Voix et confort », utilise le curseur. " +
+        "Le bouton de réinitialisation du panneau de réglages audio rétablit 100 %. Dans « Voix et confort », utilise le curseur. " +
         "Ce pourcentage est une consigne, pas une mesure du son entendu."
 
     const val DUCK_VOLUME = "Règle la part du volume normal conservée pendant la voix, de 0 à 100 %, avec 25 % par défaut. " +
@@ -30,7 +30,7 @@ internal object AudioSettingsDescriptions {
         "5 points, avec arrêt aux bornes. Saisir permet un pourcentage décimal, par exemple 19,125. " +
         "La valeur retenue par le lecteur est affichée. " +
         "Une modification recalcule immédiatement le niveau selon l’état de la voix et remplace le fondu ou " +
-        "l’attente en cours. Le bouton de réinitialisation de ce panneau rétablit 25 %. " +
+        "l’attente en cours. Le bouton de réinitialisation du panneau de réglages audio rétablit 25 %. " +
         "Dans « Voix et confort », utilise le curseur. La voix narrée garde son propre volume."
 
     const val ATTACK = "Règle la durée demandée pour baisser progressivement le film lorsque la narration signale " +

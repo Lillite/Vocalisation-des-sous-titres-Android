@@ -167,7 +167,9 @@ class AudioNumericRobolectricTest {
             apply(dialog, input, "37,5")
             assertTrue(dialog.isShowing)
             assertEquals("37,5", input.text.toString())
-            assertTrue(dialog.findViewById<TextView>(R.id.audio_numeric_error).text.contains("autre ouverture"))
+            val refusal = dialog.findViewById<TextView>(R.id.audio_numeric_error).text
+            assertTrue(refusal.contains("autre ouverture"))
+            assertTrue(refusal.contains("Ferme les fenêtres de réglages jusqu’au lecteur, puis rouvre les réglages audio."))
             assertEquals(41L, f.port.commands.single().generation)
             assertEquals(original, f.port.context.requested)
             dialog.dismiss()

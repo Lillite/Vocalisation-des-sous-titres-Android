@@ -570,6 +570,52 @@ Les anciens résultats de l’étape 5 ne sont pas une preuve des sources de cet
 La demande de l’utilisateur réserve la fusion et la livraison à une instruction
 ultérieure ; cette validation ne vaut pas publication d’une application.
 
+#### Premier passage CI complet et revue des consignes
+
+Le commit `ba7cbd34eca7c956ffa32487826481d68b80e819` a réussi le
+[run 39946746215](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/39946746215),
+job `120391148255`, terminé le 23 octobre 2026 à 11:52 UTC. Les XML bruts
+confirment 77 tests noyau et 92 tests application en debug, les mêmes effectifs
+en release, puis deux passages des 75 tests Android release sur AOSP 36 x86_64 :
+**488 exécutions réussies, 244 méthodes distinctes**, sans échec, erreur, test
+ignoré, manquant, inattendu ou dupliqué. Les 187 méthodes de l’étape 5 sont
+conservées ; cette étape en ajoute 57.
+
+Les 176 fichiers de sources archivés correspondent exactement au commit de
+travail. Les dix fichiers protégés sont identiques à l’étape 5. Le lint debug
+et release contient, pour chaque variante, les mêmes 46 avertissements et un
+indice, sans nouvelle alerte. La paire release conserve ses empreintes avant
+et après les deux passages ; les preuves de manifeste, de permissions, de
+signature et d’alignement ont été contrôlées. L’archive de rapports, sans APK,
+a pour SHA-256
+`43f41ab6425c9ede91d971a97f030d6c794ee194ae52f673e888eba52c6c8bbe`.
+
+Les 22 captures attendues sont présentes en 1080 × 1920. La revue visuelle des
+dix nouvelles captures a toutefois relevé deux consignes ambiguës : le refus
+d’un éditeur périmé demandait de fermer « ce panneau », alors que le panneau
+parent conservait lui aussi son ticket ; l’aide des volumes situait leur
+bouton de réinitialisation dans l’éditeur, qui ne propose que l’annulation et
+l’application. Les textes sont précisés pour demander de fermer les fenêtres
+de réglages jusqu’au lecteur avant de les rouvrir, et pour situer la
+réinitialisation dans le panneau de réglages audio. Les assertions existantes
+contrôlent ces consignes, sans changer la validation des tickets ni le parcours
+audio ou vocal.
+
+Le passage local ciblé de cette correction a réussi **30/30 méthodes** :
+15 d’intégration des commandes audio, 7 de saisie numérique et 8 d’interface
+DSP. Les XML ne contiennent aucun échec, erreur, test ignoré, manquant,
+inattendu ou dupliqué ; les sources surveillées sont restées inchangées.
+La méthode native de grande police réussit aussi avec les descriptions
+complétées. La compilation des tests Android réussit ; elle ne constitue pas
+leur exécution. Ce passage a exécuté 37 tâches en 55 secondes.
+
+Cette correction textuelle doit encore être validée par la CI sur son propre
+commit. Le succès précédent reste attaché à
+`ba7cbd34eca7c956ffa32487826481d68b80e819` ; le bilan
+de la PR doit identifier la nouvelle exécution avant de déclarer le dernier
+état validé. Les captures ne remplacent pas les tests d’interaction, l’écoute
+sur appareil ni une vérification TalkBack.
+
 ## APK signé pour installation
 
 L'identité d'installation de cette série est `fr.soustitresvoix.player.stable`.
