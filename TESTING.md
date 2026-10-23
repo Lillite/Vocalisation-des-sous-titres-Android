@@ -186,6 +186,17 @@ comparaison de l’état commence après le retour réel du volume du film au ni
 demandé. Pause, position, choix de pistes, préférences et luminosité de fenêtre
 restent dans l’oracle. Le premier scénario Android d’image reste exécuté.
 
+Après une soumission d’effets, attendre aussi son traitement sur le thread de
+lecture, une notification de première image postérieure au changement lorsque
+le plan transmis est nouveau, puis le retour borné à `READY`. Le compteur doit
+être installé avant les actions et relevé avant chaque demande. Le renderer
+existant peut temporairement faire passer Media3 en `BUFFERING` lorsqu’il vide
+sa sortie vidéo. Pendant cette attente, les autres invariants et les demandes vocales restent contrôlés ;
+l’état complet, y compris `READY`, doit être identique à la référence à la fin.
+Ne pas supprimer l’état de préparation de l’oracle ni accepter un blocage. Les
+clics restent des interactions visibles, précédées d’un défilement si les
+textes d’état ont déplacé le contrôle.
+
 Les vérifications de grandes polices et des propriétés d’accessibilité sur la
 JVM ne constituent pas un essai TalkBack. Les captures de la démonstration
 synthétique documentent une interface observée ; elles ne prouvent pas à elles

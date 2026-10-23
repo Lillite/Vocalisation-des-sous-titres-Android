@@ -235,6 +235,39 @@ ressource de texte, au lieu de déplacer un avertissement `SetTextI18n` existant
 Aucune règle lint n’est supprimée. Les rapports de ce passage restent conservés ;
 une nouvelle validation complète doit porter sur les sources corrigées.
 
+### Premier passage de CI de cette étape
+
+L’[exécution 39884427222](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/39884427222)
+portait sur les sources `6c33e10f444283d0cf849b485e5985eeb74e4dd3`.
+Les suites JVM debug et release ont réussi avec 44 et 53 tests chacune.
+Les deux passages Android ont exécuté les 71 méthodes, avec les deux mêmes
+échecs et sans test ignoré, manquant ou dupliqué. Leurs journaux et captures
+restent conservés dans cette exécution ; elle ne constitue pas une validation
+réussie.
+
+Le scénario historique tentait un second clic sur la comparaison sans la
+ramener à l’écran, après un changement de hauteur des textes d’état. Son
+parcours est adapté avec le défilement normal avant ce clic, sans contourner
+la contrainte de visibilité du contrôle ni appeler son action directement.
+
+Le scénario expert comparait l’état complet dès le retour de l’appel d’envoi
+des effets. Il observait `BUFFERING` au lieu de `READY`, tandis que la voix, la
+file, la pause, la position, le volume, les pistes, les préférences et l’écran
+étaient identiques. Le renderer existant vide sa sortie vidéo avant de changer
+les effets ; Media3 peut donc rendre momentanément la vidéo non prête, même
+en pause. L’accusé d’envoi ne prouve pas que cette préparation est terminée.
+Le test attend désormais le traitement de la demande sur le thread de lecture,
+puis une nouvelle notification de première image lorsque le plan transmis a
+changé, ainsi que le retour effectif à `READY`, dans un délai borné. Le compteur
+de ces notifications est installé avant les actions et relevé avant chaque
+changement. Un plan identique ne crée pas artificiellement une attente d’image.
+Le test vérifie les autres invariants pendant cette attente et conserve
+l’égalité complète de l’état final : un blocage permanent, une erreur du
+lecteur, une reprise ou une nouvelle synthèse restent des échecs. Cette
+notification Media3 ne remplace pas les contrôles de pixels déjà présents.
+Les algorithmes du renderer et de la voix ne sont pas modifiés pour adapter
+l’application à cette attente.
+
 ## Références des descriptions
 
 Les descriptions combinent les règles effectivement présentes dans le lecteur

@@ -86,14 +86,79 @@ class ImageCommandsAndroidTest {
             activity.getSharedPreferences("player", Context.MODE_PRIVATE).all.toMap())
     }
 
-    private fun awaitSubmitted(activity: AtomicReference<MainActivity>, contrast: Float, brightness: Float) {
-        // ExoPlayer's thread barrier alone cannot drain a future 32 ms effect
-        // update. Wait for the actual session-owned submission acknowledgement.
-        waitFor("The requested image correction was not submitted to the real video output") {
-            val snapshot = activity.get().session.imageCommands.snapshot()
+    /** Application-thread notifications from the real renderer, not pixels or
+     * a fake rendering acknowledgement. The listener is installed before open. */
+    private class RenderedFrames : Player.Listener {
+        var count = 0L; private set
+        override fun onRenderedFirstFrame() { count++ }
+    }
+
+    private data class ImageSubmissionCheckpoint(val frames: Long, val sequence: Long?)
+
+    private fun checkpoint(activity: AtomicReference<MainActivity>, frames: RenderedFrames): ImageSubmissionCheckpoint {
+        var checkpoint: ImageSubmissionCheckpoint? = null
+        instrument.runOnMainSync {
+            checkpoint = ImageSubmissionCheckpoint(frames.count,
+                activity.get().session.imageCommands.snapshot().lastSubmitted?.sequence)
+        }
+        return requireNotNull(checkpoint)
+    }
+
+    private fun awaitSubmitted(
+        activity: AtomicReference<MainActivity>, contrast: Float, brightness: Float,
+        baseline: PausedState, frames: RenderedFrames, before: ImageSubmissionCheckpoint,
+        assertSpeechUnchanged: () -> Unit
+    ) {
+        assertEquals("The image-command baseline must be ready and paused", Player.STATE_READY, baseline.playbackState)
+        assertFalse(baseline.playWhenReady)
+        fun assertPausedInvariant(current: MainActivity) {
+            val actual = state(current)
+            // The existing CinemaVideoRenderer flushes the video sink when
+            // replacing effects. READY may briefly become BUFFERING while a
+            // fresh paused frame is prepared; no other field may change.
+            assertTrue("Unexpected playback state while submitting image corrections: ${actual.playbackState}",
+                actual.playbackState == Player.STATE_READY || actual.playbackState == Player.STATE_BUFFERING)
+            assertEquals("Image submission changed voice, transport, audio, preferences or screen brightness",
+                baseline, actual.copy(playbackState = baseline.playbackState))
+            assertNull(current.session.player.playerError)
+            assertSpeechUnchanged()
+        }
+        // The 32 ms coalescing delay must finish before a playback-thread
+        // barrier can cover the actual effect request.
+        waitFor("The image correction ($contrast, $brightness) was not submitted to the real video output") {
+            val current = activity.get()
+            assertPausedInvariant(current)
+            val snapshot = current.session.imageCommands.snapshot()
             snapshot.lastSubmitted?.let {
                 it.generation == snapshot.context.generation && it.contrast == contrast && it.imageBrightness == brightness
             } == true
+        }
+        var barrier: PlayerMessage? = null
+        instrument.runOnMainSync {
+            val current = activity.get()
+            assertPausedInvariant(current)
+            barrier = (current.session.playback as Media3PlaybackBackend).exoPlayer
+                .createMessage { _, _ -> }.send()
+        }
+        assertTrue("The playback thread did not acknowledge the submitted image correction",
+            requireNotNull(barrier).blockUntilDelivered(20_000))
+        // A playback-thread barrier can precede its next doSomeWork pass.
+        // READY alone could therefore still describe the old frame. The pinned
+        // renderer flushes its sink for a changed plan and reports the next
+        // first frame even in pause. Require that real notification as well.
+        // An identical plan has no new sequence and must not invent a frame wait.
+        waitFor("The paused video did not report a fresh frame and READY after image correction ($contrast, $brightness)") {
+            val current = activity.get()
+            assertPausedInvariant(current)
+            val submitted = requireNotNull(current.session.imageCommands.snapshot().lastSubmitted)
+            val freshFrame = submitted.sequence == before.sequence || frames.count > before.frames
+            freshFrame && current.session.player.playbackState == Player.STATE_READY
+        }
+        instrument.runOnMainSync {
+            val current = activity.get()
+            assertPausedInvariant(current)
+            // Keep the original complete-state equality, including readiness.
+            assertEquals(baseline, state(current))
         }
     }
 
@@ -117,8 +182,10 @@ class ImageCommandsAndroidTest {
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 val activity = AtomicReference<MainActivity>()
+                val renderedFrames = RenderedFrames()
                 scenario.onActivity { current ->
                     activity.set(current)
+                    current.session.player.addListener(renderedFrames)
                     current.session.open(SavedMedia(
                         "android.resource://${current.packageName}/${R.raw.demonstration}",
                         "Synthetic image-command fixture"))
@@ -126,7 +193,7 @@ class ImageCommandsAndroidTest {
                 }
                 waitFor("The actual video and fixture voice did not become ready") {
                     val session = activity.get().session
-                    session.player.playbackState == Player.STATE_READY && session.speech.isReady && session.video.format != null
+                    session.player.playbackState == Player.STATE_READY && session.speech.isReady && session.video.format != null && renderedFrames.count > 0
                 }
                 scenario.onActivity { current ->
                     assertTrue("Paused preparation must not synthesize", observed().isEmpty())
@@ -168,6 +235,13 @@ class ImageCommandsAndroidTest {
                         assertNull(requireNotNull(baseline).narration.speakingId)
                         assertEquals(ImageSettings(), current.session.imageCommands.snapshot().context.requested)
                     }
+                    fun changeImage(contrast: Float, brightness: Float, action: () -> Unit) {
+                        val before = checkpoint(activity, renderedFrames)
+                        action()
+                        awaitSubmitted(activity, contrast, brightness, requireNotNull(baseline), renderedFrames, before) {
+                            assertEquals("An image submission triggered actual synthesis", listOf(preview), observed())
+                        }
+                    }
                     fun assertPreserved(expected: ImageSettings) {
                         scenario.onActivity { current ->
                             assertEquals(expected, current.session.imageCommands.snapshot().context.requested)
@@ -178,24 +252,28 @@ class ImageCommandsAndroidTest {
                         }
                     }
 
-                    onView(withText("Contraste léger + / original (SDR seulement)")).inRoot(isDialog())
-                        .perform(scrollTo(), click())
-                    awaitSubmitted(activity, .12f, 0f)
+                    changeImage(.12f, 0f) {
+                        onView(withText("Contraste léger + / original (SDR seulement)")).inRoot(isDialog())
+                            .perform(scrollTo(), click())
+                    }
                     assertPreserved(ImageSettings(.12f, 0f, false))
 
-                    onView(withText("Éclaircir légèrement / original (SDR seulement)")).inRoot(isDialog())
-                        .perform(scrollTo(), click())
-                    awaitSubmitted(activity, .12f, .06f)
+                    changeImage(.12f, .06f) {
+                        onView(withText("Éclaircir légèrement / original (SDR seulement)")).inRoot(isDialog())
+                            .perform(scrollTo(), click())
+                    }
                     assertPreserved(ImageSettings(.12f, .06f, false))
 
                     val comparison = "Comparer à l’original : désactiver les traitements"
-                    onView(withText(comparison)).inRoot(isDialog()).perform(scrollTo(), click())
-                    awaitSubmitted(activity, 0f, 0f)
+                    changeImage(0f, 0f) {
+                        onView(withText(comparison)).inRoot(isDialog()).perform(scrollTo(), click())
+                    }
                     onView(withText(comparison)).inRoot(isDialog()).check(matches(isChecked()))
                     assertPreserved(ImageSettings(.12f, .06f, true))
 
-                    onView(withText(comparison)).inRoot(isDialog()).perform(click())
-                    awaitSubmitted(activity, .12f, .06f)
+                    changeImage(.12f, .06f) {
+                        onView(withText(comparison)).inRoot(isDialog()).perform(scrollTo(), click())
+                    }
                     onView(withText(comparison)).inRoot(isDialog()).check(matches(not(isChecked())))
                     assertPreserved(ImageSettings(.12f, .06f, false))
                 }
@@ -252,15 +330,17 @@ class ImageCommandsAndroidTest {
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 val activity = AtomicReference<MainActivity>()
+                val renderedFrames = RenderedFrames()
                 scenario.onActivity { current ->
                     activity.set(current)
+                    current.session.player.addListener(renderedFrames)
                     current.session.open(SavedMedia("android.resource://${current.packageName}/${R.raw.demonstration}",
                         "Synthetic expert-image fixture"))
                     current.setFullscreen(true)
                 }
                 waitFor("The actual video and fixture voice did not become ready") {
                     val session = activity.get().session
-                    session.player.playbackState == Player.STATE_READY && session.video.format != null && session.speech.isReady
+                    session.player.playbackState == Player.STATE_READY && session.video.format != null && session.speech.isReady && renderedFrames.count > 0
                 }
                 scenario.onActivity { current ->
                     assertTrue("Opening a paused synthetic video synthesized text", observed().isEmpty())
@@ -291,6 +371,13 @@ class ImageCommandsAndroidTest {
                         assertEquals(ImageSettings(), current.session.imageCommands.snapshot().context.requested)
                         assertFalse(requireNotNull(baseline).narration.wantsPlayback)
                         assertNull(requireNotNull(baseline).narration.speakingId)
+                    }
+                    fun changeImage(contrast: Float, brightness: Float, action: () -> Unit) {
+                        val before = checkpoint(activity, renderedFrames)
+                        action()
+                        awaitSubmitted(activity, contrast, brightness, requireNotNull(baseline), renderedFrames, before) {
+                            assertEquals("An image submission triggered actual synthesis", listOf(preview), observed())
+                        }
                     }
                     fun assertPreserved(expected: ImageSettings) {
                         scenario.onActivity { current ->
@@ -342,29 +429,28 @@ class ImageCommandsAndroidTest {
                             }
                         assertPreserved(ImageSettings())
                         captureExpertScreenshot("expert-image-invalid-number")
-                        onView(withId(R.id.image_adjustment_input)).inRoot(isDialog())
-                            .perform(replaceText("+0,125"), closeSoftKeyboard())
-                        onView(withText("Appliquer")).inRoot(isDialog()).perform(click())
-                        invalidEditorOpen = false
+                        changeImage(.125f, 0f) {
+                            onView(withId(R.id.image_adjustment_input)).inRoot(isDialog())
+                                .perform(replaceText("+0,125"), closeSoftKeyboard())
+                            onView(withText("Appliquer")).inRoot(isDialog()).perform(click())
+                            invalidEditorOpen = false
+                        }
                     }
-                    awaitSubmitted(activity, .125f, 0f)
                     assertPreserved(ImageSettings(.125f, 0f))
                     reportContains(R.id.image_contrast_value, "0,125")
 
-                    enter(R.id.image_brightness_edit, "−0.175")
-                    awaitSubmitted(activity, .125f, -.175f)
+                    changeImage(.125f, -.175f) { enter(R.id.image_brightness_edit, "−0.175") }
                     assertPreserved(ImageSettings(.125f, -.175f))
-                    press(R.id.image_contrast_increase)
-                    press(R.id.image_brightness_decrease)
-                    awaitSubmitted(activity, .135f, -.185f)
+                    changeImage(.135f, -.175f) { press(R.id.image_contrast_increase) }
+                    assertPreserved(ImageSettings(.135f, -.175f))
+                    changeImage(.135f, -.185f) { press(R.id.image_brightness_decrease) }
                     assertPreserved(ImageSettings(.135f, -.185f))
                     press(R.id.image_adjustment_refresh)
                     reportContains(R.id.image_adjustment_requested, "0,135")
                     reportContains(R.id.image_adjustment_submitted, "0,135")
                     assertPreserved(ImageSettings(.135f, -.185f))
 
-                    press(R.id.image_original_comparison)
-                    awaitSubmitted(activity, 0f, 0f)
+                    changeImage(0f, 0f) { press(R.id.image_original_comparison) }
                     onView(withId(R.id.image_original_comparison)).inRoot(isDialog()).check(matches(isChecked()))
                     assertPreserved(ImageSettings(.135f, -.185f, true))
                     press(R.id.image_contrast_increase)
@@ -378,8 +464,7 @@ class ImageCommandsAndroidTest {
                     assertPreserved(ImageSettings(0f, 0f, true))
                     onView(withId(R.id.image_original_comparison)).inRoot(isDialog())
                         .perform(scrollTo()).check(matches(isChecked()))
-                    press(R.id.image_original_comparison)
-                    awaitSubmitted(activity, 0f, 0f)
+                    changeImage(0f, 0f) { press(R.id.image_original_comparison) }
                     assertPreserved(ImageSettings())
                     onView(withId(R.id.image_original_comparison)).inRoot(isDialog()).check(matches(not(isChecked())))
 

@@ -11,6 +11,7 @@ Ce journal présente les étapes principales vérifiables dans l’historique du
 - Descriptions détaillées de chaque paramètre d’image, de cadrage, de marges, de redimensionnement, de zoom, de déplacement et de luminosité de l’écran, avec unités, bornes, procédure et limites.
 - Conservation des algorithmes de vocalisation, du mixage, du rendu et du regroupement existant des effets ; aucune bibliothèque supplémentaire ni changement de version.
 - Sept scénarios JVM et un scénario Android ajoutés aux fichiers de tests d’image existants, avec conservation des tests précédents ; effectifs exigés 44, 53 et 71.
+- Premier passage Android documenté avec deux échecs répétés : défilement avant le second clic de comparaison et synchronisation avec le retour à l’état prêt après envoi des effets. Les contrôles de voix, de transport, d’audio et d’état final restent exigés.
 
 Le périmètre, les explications et les contrôles figurent dans
 [Interface d’image — étape 4](docs/INTERFACE_IMAGE_ETAPE_4.md). Les résultats

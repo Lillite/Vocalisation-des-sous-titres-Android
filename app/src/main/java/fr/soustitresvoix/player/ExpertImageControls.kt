@@ -240,7 +240,7 @@ internal class ExpertImageControls(
                 text.replace(',', '.').toBigDecimalOrNull() else null
             val problem = when {
                 numeric == null -> "Valeur refusée : saisis un nombre décimal de 24 caractères au maximum, avec une virgule ou un point."
-                !field.contains(numeric) -> "Valeur refusée : ${field.subject} doit rester entre ${field.bounds()}. Aucune valeur n’a été modifiée."
+                !field.contains(numeric) -> "Valeur refusée : ${field.subject} doit rester dans la plage de ${field.bounds()}. Aucune valeur n’a été modifiée."
                 else -> null
             }
             if (problem != null) {
