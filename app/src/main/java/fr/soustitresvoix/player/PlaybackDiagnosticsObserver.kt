@@ -200,6 +200,19 @@ internal class PlaybackDiagnosticsObserver(private val session: PlaybackSession)
                 "Signal de parole transmis au processeur : ${session.movieAudio.speaking}."),
             observed = count(session.movieAudio.processedSamples, DiagnosticSource.AUDIO_PROCESSOR,
                 "Échantillons individuels de tous les canaux cumulés depuis le début de session, y compris sans atténuation ; aucune preuve d’atténuation instantanée."))
+        val dsp = session.movieAudio.dsp
+        val dspState = dsp?.snapshot
+        capabilities += (dsp?.capability ?: CapabilityDiagnostic("audio.expert_dsp", CapabilityStatus.UNKNOWN,
+            DiagnosticSource.NOT_EXPOSED, "Ce composant ne déclare pas de traitement audio avancé.")).copy(
+            requested = flag(session.prefs.movieAudioSettings().dsp.enabled, DiagnosticSource.USER_PREFERENCE),
+            configured = dspState?.let { flag(it.submittedSettings.enabled, DiagnosticSource.PLAYER_CONFIGURATION,
+                "Révision soumise ${it.submittedRevision} ; la réception par le thread audio est distincte.") },
+            observed = dspState?.observation?.let { observation -> observation.consumedRevision?.let { revision ->
+                text("révision reçue=$revision, trames=${observation.processedFrames}, transition=${observation.transitioning}, " +
+                    "trames limitées=${observation.limitedFrames}, échantillons écrêtés après arrondi ou invalides=${observation.clippedSamples}",
+                    DiagnosticSource.AUDIO_PROCESSOR,
+                    "Dernier flux PCM observé, compteurs depuis le dernier flush/reset ; pas nécessairement le nouveau média déjà ouvert, ni une mesure acoustique.")
+            } })
         capabilities += CapabilityDiagnostic("audio.movie_volume", CapabilityStatus.SUPPORTED,
             DiagnosticSource.PLAYER_CONFIGURATION, "Consigne de volume du film entre 0 et 1. La valeur configurée peut être intermédiaire pendant un fondu ; pas une mesure acoustique de la sortie.",
             requested = decimal(session.prefs.movieVolume, DiagnosticSource.USER_PREFERENCE),

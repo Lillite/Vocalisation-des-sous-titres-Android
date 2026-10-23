@@ -26,6 +26,7 @@ Le catalogue présente des informations datées et distingue moteurs Android, mo
 | Comprendre les commandes d’image validées, leurs refus et leurs limites | [Commandes d’image — étape 3](COMMANDES_IMAGE_ETAPE_3.md) |
 | Utiliser et vérifier les réglages fins et les descriptions de l’image | [Interface d’image — étape 4](INTERFACE_IMAGE_ETAPE_4.md) |
 | Comprendre les six commandes du son du film, les fondus et leurs limites | [Commandes audio — étape 5](COMMANDES_AUDIO_ETAPE_5.md) |
+| Saisir les valeurs audio et régler égaliseur paramétrique, préampli, balance, mono et limiteur | [Audio avancé — étape 6](AUDIO_EXPERT_ETAPE_6.md) |
 | Compiler, exécuter les tests et vérifier l’APK signé | [Procédure de validation](../TESTING.md) |
 | Organiser une modification et son intégration dans `main` | [Contribution](../CONTRIBUTING.md) |
 | Lire les consignes applicables aux agents de développement | [Consignes de développement](../AGENTS.md) |

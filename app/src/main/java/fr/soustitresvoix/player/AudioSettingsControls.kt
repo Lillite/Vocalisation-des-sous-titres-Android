@@ -14,10 +14,11 @@ import fr.soustitresvoix.core.AudioCommandDecision
 import fr.soustitresvoix.core.AudioCommandPort
 import fr.soustitresvoix.core.AudioCommandRejection
 import fr.soustitresvoix.core.AudioCommandRequest
+import fr.soustitresvoix.core.AudioNumericInput
 import fr.soustitresvoix.core.AudioSettings
 import kotlin.math.roundToInt
 
-/** Existing step controls, descriptions and observations; all writes go through the borrowed port. */
+/** Step controls, exact decimal editors and observations; all writes go through the borrowed port. */
 internal class AudioSettingsControls(
     private val activity: Activity,
     private val port: AudioCommandPort,
@@ -66,11 +67,13 @@ internal class AudioSettingsControls(
 
     private fun level(title: String, description: String, normal: Boolean) {
         view.addView(label(description))
-        val caption = label("", heading = true); view.addView(caption)
+        val caption = label("", heading = true).apply {
+            id = if (normal) R.id.audio_movie_value else R.id.audio_duck_value
+        }; view.addView(caption)
         fun value(settings: AudioSettings) = if (normal) settings.movieVolume else settings.duckVolume
-        fun change(value: Float) {
+        fun change(value: Float): String? {
             val settings = port.snapshot().context.requested
-            submit(if (normal) AudioCommand.SetLevels(value, settings.duckVolume)
+            return submit(if (normal) AudioCommand.SetLevels(value, settings.duckVolume)
                 else AudioCommand.SetLevels(settings.movieVolume, value))
         }
         val row = LinearLayout(activity)
@@ -84,12 +87,18 @@ internal class AudioSettingsControls(
             }
         }
         view.addView(row)
+        view.addView(button(activity.getString(R.string.audio_numeric_title, title),
+            if (normal) R.id.audio_movie_edit else R.id.audio_duck_edit) {
+            AudioNumberDialog.show(activity, view, title, AudioNumericInput.PERCENT,
+                AudioNumericInput.percent(value(port.snapshot().context.requested)), description) {
+                change(it.movePointLeft(2).toFloat())
+            }
+        })
         view.addView(button(if (normal) "Rétablir le volume du film à 100 %" else "Rétablir le son pendant la voix à 25 %",
             if (normal) R.id.audio_movie_reset else R.id.audio_duck_reset) { change(if (normal) 1f else .25f) })
         refreshers += { settings ->
             val level = value(settings)
-            val percent = (level * 100).roundToInt()
-            caption.text = activity.getString(R.string.audio_level_caption, title, percent)
+            caption.text = activity.getString(R.string.audio_precise_level_caption, title, AudioNumericInput.percent(level))
             // Gestures can leave a fractional percent that rounds to a bound.
             // Keep the last step available until the actual level reaches it.
             controls[0].isEnabled = level > 0f
@@ -97,7 +106,9 @@ internal class AudioSettingsControls(
         }
     }
 
-    private enum class Timing { ATTACK, RELEASE, HOLD }
+    private enum class Timing(val editId: Int) {
+        ATTACK(R.id.audio_attack_edit), RELEASE(R.id.audio_release_edit), HOLD(R.id.audio_hold_edit)
+    }
 
     private fun timing(title: String, description: String, timing: Timing, step: Int, default: Int) {
         view.addView(label(description))
@@ -107,9 +118,9 @@ internal class AudioSettingsControls(
             Timing.RELEASE -> settings.releaseMs
             Timing.HOLD -> settings.holdMs
         }
-        fun change(value: Int) {
+        fun change(value: Int): String? {
             val current = port.snapshot().context.requested
-            submit(AudioCommand.SetDuckingTiming(
+            return submit(AudioCommand.SetDuckingTiming(
                 if (timing == Timing.ATTACK) value else current.attackMs,
                 if (timing == Timing.RELEASE) value else current.releaseMs,
                 if (timing == Timing.HOLD) value else current.holdMs))
@@ -124,6 +135,10 @@ internal class AudioSettingsControls(
             }
         }
         view.addView(row)
+        view.addView(button(activity.getString(R.string.audio_numeric_title, title), timing.editId) {
+            AudioNumberDialog.show(activity, view, title, AudioNumericInput.MILLISECONDS,
+                value(port.snapshot().context.requested).toString(), description) { change(it.intValueExact()) }
+        })
         view.addView(button("Rétablir $title : $default ms") { change(default) })
         refreshers += { settings ->
             val current = value(settings)
@@ -133,8 +148,9 @@ internal class AudioSettingsControls(
         }
     }
 
-    private fun submit(command: AudioCommand) {
-        if (activity.isFinishing || activity.isDestroyed) return
+    /** Null means accepted; a readable refusal keeps a numeric editor open. */
+    private fun submit(command: AudioCommand): String? {
+        if (activity.isFinishing || activity.isDestroyed) return AudioCommandText.rejection(AudioCommandRejection.CLOSED)
         val decision = port.submit(AudioCommandRequest(generation, command))
         result.text = when (decision) {
             is AudioCommandDecision.Rejected -> AudioCommandText.rejection(decision.reason)
@@ -143,6 +159,7 @@ internal class AudioSettingsControls(
                     is AudioCommand.SetLevels -> "Niveaux enregistrés ; cible appliquée immédiatement au volume du lecteur."
                     is AudioCommand.SetDuckingTiming -> "Durées enregistrées pour les prochaines transitions. Le fondu déjà planifié conserve ses durées."
                     is AudioCommand.SetSpectralDucking -> "Préférence enregistrée et transmise au processeur du film ; résultat acoustique non mesuré."
+                    is AudioCommand.SetDsp -> "Réglages DSP enregistrés ; application aux prochains échantillons compatibles."
                 }
         }
         refresh()
@@ -150,6 +167,7 @@ internal class AudioSettingsControls(
             if (view.isAttachedToWindow && !activity.isFinishing && !activity.isDestroyed)
                 result.requestRectangleOnScreen(Rect(0, 0, result.width, result.height), true)
         }
+        return if (decision is AudioCommandDecision.Rejected) AudioCommandText.rejection(decision.reason) else null
     }
 
     /** Refreshing never issues a command, including when updating the checkbox. */
@@ -168,7 +186,7 @@ internal class AudioSettingsControls(
         }
     }
 
-    private fun percent(value: Float?) = value?.let { "${(it * 100).roundToInt()} %" } ?: "non établi"
+    private fun percent(value: Float?) = value?.let { "${AudioNumericInput.percent(it)} %" } ?: "non établi"
     private fun yesNo(value: Boolean?) = when (value) { true -> "oui"; false -> "non"; null -> "non établi" }
     private fun dp(value: Int) = (value * activity.resources.displayMetrics.density).toInt()
     private fun label(value: String, heading: Boolean = false) = TextView(activity).apply {
@@ -189,5 +207,7 @@ internal object AudioCommandText {
         AudioCommandRejection.OUT_OF_RANGE -> "Modification refusée : volumes de 0 à 100 % ; durées de 0 à 2 000 ms. Aucune valeur modifiée."
         AudioCommandRejection.CAPABILITY_UNAVAILABLE -> "Activation refusée : ce composant ne permet pas l’atténuation spectrale. Aucune valeur modifiée."
         AudioCommandRejection.CAPABILITY_UNKNOWN -> "Activation refusée : la disponibilité de l’atténuation spectrale n’est pas déclarée par ce composant. Aucune valeur modifiée."
+        AudioCommandRejection.DSP_CAPABILITY_UNAVAILABLE -> "Activation refusée : le traitement audio avancé est indisponible avec ce composant. Aucune valeur modifiée."
+        AudioCommandRejection.DSP_CAPABILITY_UNKNOWN -> "Activation refusée : la disponibilité du traitement audio avancé n’est pas déclarée par ce composant. Aucune valeur modifiée."
     }
 }

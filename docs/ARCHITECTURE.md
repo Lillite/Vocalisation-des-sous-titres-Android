@@ -2,7 +2,7 @@
 
 [Index de la documentation](README.md) · [Compilation et validation](../TESTING.md)
 
-Cette vue décrit les comportements de l’édition **0.3.2** et les cinq premières étapes
+Cette vue décrit les comportements de l’édition **0.3.2** et les six premières étapes
 préparatoires sur cette branche. Le projet sépare la logique de
 narration indépendante d’Android, les adaptateurs du lecteur et l’interface. Les
 invariants ci-dessous sont des exigences à préserver lors des modifications ; les
@@ -16,7 +16,7 @@ des instances propres à cette session :
 | Contrat | Implémentation par défaut | Responsabilité |
 |---|---|---|
 | `PlaybackBackend` | `Media3PlaybackBackend` | Posséder ExoPlayer, assembler ses renderers et ouvrir ses sources |
-| `MovieAudio` | `Media3MovieAudio` | Posséder l’unique `SpeechBandProcessor` installé dans le sink du film |
+| `MovieAudio` / `MovieDsp` | `Media3MovieAudio` / `ExpertAudioProcessor` | Posséder le `SpeechBandProcessor` historique, puis le processeur avancé optionnel installés dans le même sink du film |
 | `VideoRendererFactory` / `VideoOutput` | `CinemaVideoRendererFactory` / sortie du backend | Construire le renderer existant et transmettre effets, format et stratégie de fréquence |
 | `SubtitleSource` / `SubtitleIndexer` | `Media3SubtitleSource` / adaptateur de `FullSubtitleIndexer` | Extraction pendant la lecture et indexation complète annulable |
 | `NarrationController` | `ExistingNarrationController` | Déléguer les événements à `NarrationMachine` et retourner tous ses effets dans le même ordre |
@@ -159,15 +159,16 @@ pour le guide de chaque paramètre et les exigences de régression.
 ## Commandes du son du film
 
 `core/AudioCommands.kt` expose un port indépendant d’Android pour les six réglages
-existants du film. `PlaybackSession.audioCommands` le possède, car le volume est
+historiques du film et le groupe des traitements avancés. `PlaybackSession.audioCommands` le possède, car le volume est
 configuré sur son `Player`, tandis que le filtre spectral appartient à son unique
-`MovieAudio`. Le contrat ne possède aucun second processeur, sink ou ordonnanceur.
+`MovieAudio`. Le port de commandes ne crée pas de processeur, de sink ou d’ordonnanceur.
 
 | Commande | Validation et application |
 |---|---|
 | `SetLevels` | Deux valeurs finies entre 0 et 1, validées ensemble ; le ratio multiplie le volume normal pendant la parole. Un changement réel remplace le fondu courant par la cible immédiate. |
 | `SetDuckingTiming` | Trois durées entières de 0 à 2 000 ms validées ensemble ; les prochaines transitions les utilisent, sans reconstruire celles déjà planifiées. |
 | `SetSpectralDucking` | Activation explicite sous déclaration de capacité ; seule la propriété `enabled` du processeur existant change. Désactiver reste possible si la capacité est inconnue. |
+| `SetDsp` | Configuration avancée immuable, validée entièrement ; soumission au processeur déjà installé. Les paramètres actifs exigent une capacité déclarée. Désactiver ou préparer une configuration désactivée reste possible. |
 
 Le validateur pur vérifie d’abord fermeture et génération, puis les valeurs et
 la capacité applicable. Le ticket capturé par le producteur est invalidé à chaque
@@ -176,7 +177,7 @@ conservées ; ce ticket ne réinitialise aucun réglage audio. Une acceptation
 identique retourne avant écriture, interruption d’essai ou annulation de fondu.
 La comparaison numérique traite les deux signes de zéro de la même façon.
 
-Après validation d’un changement, la session enregistre les six valeurs dans une
+Après validation d’un changement, la session enregistre les valeurs audio dans une
 seule édition des préférences et ne modifie que les composants concernés. Aucun
 appel à `refreshSettings()`, aucune commande de narration et aucune demande de
 synthèse ne fait partie de ce chemin. Le traitement des effets `Duck`, son attente
@@ -200,12 +201,62 @@ l’écran. La case spectrale ne déclenche aucune commande pendant l’actualis
 Le panneau général conserve sa pause et son application des réglages vocaux
 historiques ; Volumes rapides ne passe pas par ce parcours.
 
+Les saisies numériques conservent le ticket d’origine dans leurs sous-dialogues.
+`AudioNumericInput` vérifie une grammaire explicite, les unités et les bornes avec
+`BigDecimal`, avant conversion vers `Float`, `Double` ou entier. Un refus conserve
+le texte ; une annulation ne soumet rien. Les champs compagnons sont relus à
+l’application pour éviter d’écraser une modification plus récente d’un autre champ.
+
 Le détail des durées, de leur anticipation et des contrôles de non-régression
 figure dans [Commandes du son du film — étape 5](COMMANDES_AUDIO_ETAPE_5.md).
 
+## Traitements avancés du film
+
+`AudioDspSettings` possède cinq bandes sous forme de champs immuables, sans liste
+mutable partagée. `AudioDspPolicy` vérifie tous les paramètres, même désactivés,
+puis normalise seulement les signes de zéro pour les comparaisons. Le groupe
+versionné persiste séparément des préférences vocales ; une représentation
+invalide revient au DSP globalement désactivé.
+
+`Media3MovieAudio` installe d’abord le `SpeechBandProcessor` historique, puis un
+`ExpertAudioProcessor` distinct. Le nouveau composant reçoit seulement le film
+en PCM16 mono ou stéréo. Son bypass compatible reste installé afin qu’une
+activation ne reconstruise ni le lecteur ni le sink. `configure` prépare un
+format ; `onFlush` construit l’état correspondant au format devenu actif ;
+`onReset` retire les observations et l’état de flux explicitement.
+
+Le moteur pur `AudioDspEngine` applique préampli, cinq biquads paramétriques,
+moyenne mono éventuelle, balance puis limiteur lié entre les canaux. Le calcul
+interne utilise des `Double` ; l’adaptateur quantifie une seule fois sa sortie
+en PCM16. Les changements de chaîne utilisent deux filtres stables en fondu
+de 20 ms, avec regroupement des demandes rapprochées vers la dernière cible.
+Les modifications du seul limiteur conservent les états des biquads. Un plafond
+de limiteur consommé s’applique immédiatement, y compris pendant le fondu ;
+le retour au bypass libère son gain restant progressivement.
+
+Le moteur ne rééchantillonne pas, ne retire ni n’ajoute de trame et n’accède à
+aucun composant de narration. Une fréquence inapplicable est signalée sans être
+déplacée. Le limiteur porte sur les crêtes des échantillons à cette sortie,
+pas sur les crêtes inter-échantillons, la sonie ou la sortie acoustique.
+
+Les configurations passent vers le thread audio par une publication immuable
+avec numéro de révision. L’adaptateur publie ensuite un `AudioDspObservation`
+immuable à la fin d’un bloc : révision consommée, format, cible, transition,
+bandes ignorées, compteurs et crête PCM quantifiée. `AudioDspSnapshot` conserve
+séparément la dernière soumission. Une lecture d’observation ne traite pas de
+buffer et ne demande pas de voix. Ces faits concernent le dernier flux vu :
+ils ne sont pas automatiquement réattribués à un nouveau média.
+
+Les états et les compteurs DSP repartent à zéro au renouvellement du flux ;
+le compteur spectral historique conserve sa portée de session. Un format
+compatible sans trame conserve une révision consommée absente. Le passthrough,
+l’offload, le flottant et le multicanal ne constituent pas des parcours traités
+par ce processeur. Les détails de chaque réglage et leurs limites figurent
+dans [Saisie et audio avancé — étape 6](AUDIO_EXPERT_ETAPE_6.md).
+
 ## Noyau indépendant d’Android
 
-Le module [`core`](../core/src/main/kotlin/fr/soustitresvoix/core/) contient la logique de narration, le traitement du texte, la planification adaptative, la validation des fichiers WAV, le cache et les mesures.
+Le module [`core`](../core/src/main/kotlin/fr/soustitresvoix/core/) contient la logique de narration, le traitement du texte, la planification adaptative, la validation des fichiers WAV, le cache, les mesures, les contrats de commande et le traitement audio avancé indépendant d’Android.
 
 `NarrationMachine` est une machine à états déterministe. Les événements de lecture, pause, déplacement, nouveau sous-titre, disponibilité de la voix et fin ou échec d’une phrase produisent une liste ordonnée d’effets. Chaque énoncé dispose d’un identifiant : un callback ancien ne doit pas terminer une nouvelle phrase ou provoquer une reprise indue.
 

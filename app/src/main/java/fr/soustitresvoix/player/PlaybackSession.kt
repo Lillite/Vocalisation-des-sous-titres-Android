@@ -58,7 +58,7 @@ class PlaybackSession(
             // Never consult a released player or processor; preferences remain available.
             return if (state.closed) AudioCommandSnapshot(state, null, null, null, null)
             else AudioCommandSnapshot(state, player.volume, movieAudio.enabled,
-                movieAudio.speaking, movieAudio.processedSamples)
+                movieAudio.speaking, movieAudio.processedSamples, movieAudio.dsp?.snapshot)
         }
 
         override fun submit(request: AudioCommandRequest): AudioCommandDecision {
@@ -70,6 +70,8 @@ class PlaybackSession(
                 prefs.saveMovieAudioSettings(settings)
                 if (settings.spectralDucking != before.requested.spectralDucking)
                     movieAudio.enabled = settings.spectralDucking
+                if (settings.dsp != before.requested.dsp)
+                    movieAudio.dsp?.submit(settings.dsp)
                 if (settings.movieVolume != before.requested.movieVolume || settings.duckVolume != before.requested.duckVolume)
                     applyMixImmediately()
                 // Timing changes are consumed by the next existing setDucked call.
@@ -84,7 +86,8 @@ class PlaybackSession(
         check(Looper.myLooper() == handler.looper) { "Audio commands require the session thread." }
         return AudioCommandContext(mediaEpoch, closed,
             if (closed) CapabilityStatus.UNKNOWN else movieAudio.diagnosticCapability().status,
-            prefs.movieAudioSettings())
+            prefs.movieAudioSettings(),
+            if (closed) CapabilityStatus.UNKNOWN else movieAudio.dsp?.capability?.status ?: CapabilityStatus.UNKNOWN)
     }
     private val subtitleSource: SubtitleSource = components.createSubtitles(context)
     private val indexingWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
@@ -181,6 +184,7 @@ class PlaybackSession(
     init {
         video.setEffects(emptyList())
         movieAudio.enabled = prefs.bool("spectralDucking")
+        movieAudio.dsp?.submit(prefs.movieAudioSettings().dsp)
         speech.firstAudioLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.FIRST_AUDIO, it) }
         speech.synthesisLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.SYNTHESIS, it) }
         speech.cacheLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.CACHE, it) }
@@ -460,6 +464,7 @@ class PlaybackSession(
             prefs.movieVolume.toString(), prefs.duckVolume.toString(), prefs.voiceVolume.toString(),
             prefs.int("duckAttack",160,0,2000).toString(), prefs.int("duckRelease",500,0,2000).toString(),
             prefs.int("duckHold",350,0,2000).toString(), prefs.bool("spectralDucking").toString(),
+            "expertAudio.v1=${prefs.movieAudioSettings().dsp}",
             prefs.bool("matchFrameRate",true).toString(), prefs.bool("preferSoftware").toString(),
             prefs.int("imageMode",0,0,2).toString(), visual.margins.toString(), visual.contrast.toString(),
             visual.brightness.toString(), visual.bypass.toString(), visual.detailedScaling.toString(),

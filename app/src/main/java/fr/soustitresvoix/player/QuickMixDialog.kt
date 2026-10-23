@@ -17,6 +17,7 @@ object QuickMixDialog {
         fun dp(n: Int) = (n * activity.resources.displayMetrics.density).toInt()
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8)) }
         val generation = session.audioCommands.snapshot().context.generation
+        column.addView(AudioDspControls.openButton(activity, column, session.audioCommands, generation))
         val voiceColumn = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         fun level(label: String, minimum: Int, get: () -> Float, set: (Float) -> Unit) {
             val title = TextView(activity).apply { textSize = 18f; setTextColor(Color.WHITE) }; voiceColumn.addView(title)

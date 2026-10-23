@@ -52,6 +52,7 @@ class AdvancedSettings(private val activity: Activity, private val session: Play
         }.setNegativeButton("Fermer", null).show()
     }
     fun populate(column: LinearLayout) {
+        val audioGeneration = session.audioCommands.snapshot().context.generation
         column.addView(text("Moteurs et voix naturelles"))
         column.addView(button("Choisir le moteur vocal de CE lecteur") {
             val engines = session.speech.engines()
@@ -111,6 +112,7 @@ class AdvancedSettings(private val activity: Activity, private val session: Play
         column.addView(text("Les segments sont des phrases ou des morceaux longs à une frontière de mot. La reprise n’essaie pas de deviner un mot à partir du temps écoulé."))
         column.addView(button("Reprendre explicitement la voix et la vidéo") { session.resumeVoice() })
         column.addView(text("Mélange sonore"))
+        column.addView(AudioDspControls.openButton(activity, column, session.audioCommands, audioGeneration))
         column.addView(AudioSettingsControls(activity, session.audioCommands, includeLevels = false).view)
         column.addView(text("Filtres facultatifs — l’affichage original reste intact"))
         check(column, "Ignorer les étiquettes MAJUSCULES suivies de deux-points", "skipSpeakers")

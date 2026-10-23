@@ -14,9 +14,11 @@ internal object AudioSettingsDescriptions {
 
     const val MOVIE_VOLUME = "Règle le volume normal du film de 0 à 100 %, avec 100 % par défaut. " +
         "Zéro rend le film silencieux. Ce réglage ne change ni le volume de la voix ni celui du téléphone. " +
-        "Dans « Volumes rapides », les boutons partent du pourcentage entier affiché et ajoutent ou retirent " +
+        "Dans « Volumes rapides », les boutons arrondissent d’abord le pourcentage à l’entier le plus proche, puis ajoutent ou retirent " +
         "5 points, avec arrêt aux bornes : " +
-        "53 % plus 5 points donne 58 %. Une modification applique immédiatement la nouvelle cible, réduite si la voix " +
+        "53 % plus 5 points donne 58 % ; 37,5 % devient 38 %, puis 43 % après une augmentation. " +
+        "Saisir permet d’entrer directement un pourcentage décimal, par exemple 37,5. La valeur retenue par le lecteur est affichée. " +
+        "Une modification applique immédiatement la nouvelle cible, réduite si la voix " +
         "est signalée active, et remplace le fondu ou l’attente de remontée en cours. " +
         "Le bouton de réinitialisation de ce panneau rétablit 100 %. Dans « Voix et confort », utilise le curseur. " +
         "Ce pourcentage est une consigne, pas une mesure du son entendu."
@@ -24,29 +26,33 @@ internal object AudioSettingsDescriptions {
     const val DUCK_VOLUME = "Règle la part du volume normal conservée pendant la voix, de 0 à 100 %, avec 25 % par défaut. " +
         "Ce pourcentage multiplie le volume normal : un film à 60 % avec ce réglage à 25 % reçoit une cible de 15 %. " +
         "Zéro coupe le film pendant la voix ; 100 % supprime la baisse uniforme, mais un filtre spectral activé peut " +
-        "encore agir. Dans « Volumes rapides », les boutons ajoutent ou retirent 5 points au pourcentage entier " +
-        "affiché, avec arrêt aux bornes. " +
+        "encore agir. Dans « Volumes rapides », les boutons arrondissent d’abord à l’entier le plus proche, puis ajoutent ou retirent " +
+        "5 points, avec arrêt aux bornes. Saisir permet un pourcentage décimal, par exemple 19,125. " +
+        "La valeur retenue par le lecteur est affichée. " +
         "Une modification recalcule immédiatement le niveau selon l’état de la voix et remplace le fondu ou " +
         "l’attente en cours. Le bouton de réinitialisation de ce panneau rétablit 25 %. " +
         "Dans « Voix et confort », utilise le curseur. La voix narrée garde son propre volume."
 
     const val ATTACK = "Règle la durée demandée pour baisser progressivement le film lorsque la narration signale " +
         "une voix active. Plage : de 0 à 2 000 millisecondes ; valeur par défaut : 160 ms. " +
-        "Les boutons ajoutent ou retirent 40 ms, avec arrêt aux bornes. Une valeur plus longue rend la baisse " +
+        "Les boutons ajoutent ou retirent 40 ms, avec arrêt aux bornes. Saisir permet toute durée entière de cette plage, par exemple 275 ms. " +
+        "Une valeur plus longue rend la baisse " +
         "plus progressive ; zéro demande l’application de la cible au prochain passage du lecteur. " +
         "Le changement concerne la prochaine baisse, sans recommencer le fondu déjà planifié. " +
         "Le bouton de réinitialisation rétablit 160 ms. Cette durée ne règle ni le débit ni le démarrage de la voix."
 
     const val RELEASE = "Règle la durée demandée pour remonter progressivement au volume normal, après l’attente " +
         "avant remontée. Plage : de 0 à 2 000 millisecondes ; valeur par défaut : 500 ms. " +
-        "Les boutons ajoutent ou retirent 100 ms, avec arrêt aux bornes. Une valeur plus longue ralentit le retour " +
+        "Les boutons ajoutent ou retirent 100 ms, avec arrêt aux bornes. Saisir permet toute durée entière de cette plage, par exemple 875 ms. " +
+        "Une valeur plus longue ralentit le retour " +
         "du film ; zéro supprime le fondu de remontée, mais ne supprime pas l’attente qui le précède. " +
         "Le changement concerne la prochaine remontée planifiée et ne modifie pas celle déjà en cours ou en attente. " +
         "Le bouton de réinitialisation rétablit 500 ms. Une voix terminée ne signifie donc pas un volume déjà rétabli."
 
     const val HOLD = "Règle l’attente minimale demandée avant de remonter le film lorsque la voix n’est plus " +
         "signalée active. Plage : de 0 à 2 000 millisecondes ; valeur par défaut : 350 ms. " +
-        "Les boutons ajoutent ou retirent 50 ms, avec arrêt aux bornes. Si la lecture est toujours demandée " +
+        "Les boutons ajoutent ou retirent 50 ms, avec arrêt aux bornes. Saisir permet toute durée entière de cette plage, par exemple 425 ms. " +
+        "Si la lecture est toujours demandée " +
         "et qu’un prochain sous-titre de la piste choisie est connu dans les 1 200 ms, l’attente peut être prolongée " +
         "jusqu’à ce début plus 150 ms. Zéro retire l’attente minimale, sans désactiver cette anticipation. " +
         "Le changement concerne la prochaine remontée planifiée, sans modifier une attente déjà programmée. " +

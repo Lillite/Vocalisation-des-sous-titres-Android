@@ -123,6 +123,14 @@ existant. Les commandes des panneaux, des curseurs et du geste de volume passent
 par la même validation. Les demandes identiques laissent les fondus continuer ;
 les paramètres disposent d’explications et de retours individuels aux valeurs
 par défaut dans « Volumes rapides ».
+La sixième étape ajoute la saisie numérique précise des pourcentages et des
+durées, puis des traitements du film en PCM16 mono ou stéréo : égaliseur
+paramétrique à cinq bandes, préampli, balance, mélange mono et limiteur de
+crêtes numériques. Leur activation générale est désactivée par défaut ; les
+descriptions expliquent chaque unité, plage, défaut, transition et limite.
+Les observations distinguent une demande soumise, sa consommation par le
+processeur et la crête numérique du dernier bloc, sans les présenter comme une
+mesure acoustique ou une preuve de traitement du média courant.
 La demande du 22 octobre 2026 prévoit plusieurs étapes avant toute livraison
 d’application.
 Le code de départ est conservé sur
@@ -135,27 +143,34 @@ sur `backup/etape-2-validee-20261022-0319dcb`. Le point de retour de l’étape 
 [`c96b687`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/c96b687f91b2c9f7fadfc44383c8d346047cd30e),
 sur `backup/etape-3-validee-20261023-c96b687`. Le point de retour de l’étape 4 est
 [`8feafda`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/8feafda50a272cbca9972cf1c948dce5afd269e7),
-sur `backup/etape-4-validee-20261023-8feafda`. Le travail de l’étape 5 se trouve sur
-`work/etape-5-commandes-audio-20261023`.
+sur `backup/etape-4-validee-20261023-8feafda`. Le point de retour de l’étape 5 est
+[`647de93`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/647de93e99ef778cfa3199f3c225e1fc0b759baf),
+sur `backup/etape-5-validee-20261023-647de93`. Le travail de l’étape 6 se trouve sur
+`work/etape-6-audio-expert-20261023`.
 
 Le périmètre, les invariants et les contrôles sont détaillés dans
 [Modularisation — étape 1](docs/MODULARISATION_ETAPE_1.md),
 [Capacités et observations — étape 2](docs/CAPACITES_ETAPE_2.md),
 [Commandes d’image — étape 3](docs/COMMANDES_IMAGE_ETAPE_3.md),
-[Interface d’image — étape 4](docs/INTERFACE_IMAGE_ETAPE_4.md) et
-[Commandes du son du film — étape 5](docs/COMMANDES_AUDIO_ETAPE_5.md). Les règles de
+[Interface d’image — étape 4](docs/INTERFACE_IMAGE_ETAPE_4.md),
+[Commandes du son du film — étape 5](docs/COMMANDES_AUDIO_ETAPE_5.md) et
+[Saisie et audio avancé — étape 6](docs/AUDIO_EXPERT_ETAPE_6.md). Les règles de
 vocalisation, le mixage audio et les traitements graphiques existants restent
-à préserver. Les contrôles attendus de l’étape 5 sont 50 tests du noyau, 64 tests
-JVM de l’application et deux passages complets de 73 tests Android ; leur réussite
-doit être vérifiée sur l’exécution associée au commit concerné.
+à préserver. Les résultats détaillés de l’étape 5 sont conservés dans la
+[demande nº 7](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/7).
+Les nouveaux réglages et traitements exigent leur propre validation sur les
+sources de l’étape 6, avec les régressions précédentes et les contrôles de
+signaux synthétiques ; les effectifs et résultats sont consignés dans la
+demande de fusion correspondant au commit exécuté.
 Ce travail reste sur une branche séparée, avec une demande de fusion en brouillon,
 jusqu’à la livraison demandée ultérieurement. Le lien de téléchargement ci-dessus
 désigne toujours l’édition publiée 0.3.2.
 
-Après validation des commandes audio, l’incrément proposé est une saisie précise
-des pourcentages et des durées au-dessus de ce même contrat, avec erreurs visibles,
-annulation et protection des demandes anciennes. La vocalisation conserve ses
-règles ; l’évaluation de moteurs de lecture alternatifs reste une étape séparée.
+Après validation de l’étape 6, la suite proposée est un compresseur paramétrable
+du film avec tests de dynamique, puis des profils et une comparaison A/B
+contrôlée, puis l’extension prudente des formats et du multicanal. La
+vocalisation conserve ses règles ; l’évaluation de moteurs de lecture
+alternatifs reste une décision séparée.
 
 | Besoin | Document |
 | --- | --- |

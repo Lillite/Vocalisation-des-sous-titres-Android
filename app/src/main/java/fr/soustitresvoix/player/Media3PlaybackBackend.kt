@@ -23,10 +23,12 @@ import fr.soustitresvoix.core.CapabilityStatus
 import fr.soustitresvoix.core.DiagnosticSource
 import java.util.concurrent.ConcurrentHashMap
 
-/** Owns the unchanged film processor; construct a new instance for each session. */
+/** Owns the historical film processor and separate expert DSP, once per session. */
 @UnstableApi
 class Media3MovieAudio : MovieAudio {
     private val processor = SpeechBandProcessor()
+    private val expertProcessor = ExpertAudioProcessor()
+    override val dsp: MovieDsp get() = expertProcessor
 
     override var enabled: Boolean
         get() = processor.enabled
@@ -37,7 +39,7 @@ class Media3MovieAudio : MovieAudio {
     override val processedSamples: Long get() = processor.processedSamples
 
     override fun createSink(context: Context): AudioSink =
-        DefaultAudioSink.Builder(context).setAudioProcessors(arrayOf(processor)).build()
+        DefaultAudioSink.Builder(context).setAudioProcessors(arrayOf(processor, expertProcessor)).build()
 
     override fun diagnosticCapability() = CapabilityDiagnostic(
         "audio.spectral_ducking", CapabilityStatus.CONDITIONAL, DiagnosticSource.APPLICATION_POLICY,

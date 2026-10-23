@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="audio_precise_level_caption">%1$s : %2$s %%</string>
+    <string name="audio_numeric_title">Saisir %1$s</string>
+    <string name="audio_numeric_bounds">%1$s — unité : %2$s. Plage : %3$s à %4$s.</string>
+    <string name="audio_numeric_decimal_help">Saisis un nombre avec une virgule ou un point, sans ajouter l’unité. Un signe moins est permis si la plage l’autorise. Au maximum 24 caractères ; aucun séparateur de milliers ni notation scientifique. Appliquer ne modifie que ce paramètre. Annuler conserve les réglages.</string>
+    <string name="audio_numeric_integer_help">Saisis un nombre entier, sans ajouter l’unité et sans séparateur de milliers. Au maximum 24 caractères ; aucune décimale ni notation scientifique. Appliquer ne modifie que ce paramètre. Annuler conserve les réglages.</string>
+    <string name="audio_numeric_too_long">Valeur refusée : au maximum 24 caractères. Aucune valeur modifiée.</string>
+    <string name="audio_numeric_invalid">Valeur refusée : saisis un nombre, sans unité, sans séparateur de milliers ni notation scientifique. Utilise une virgule ou un point pour les décimales.</string>
+    <string name="audio_numeric_invalid_integer">Valeur refusée : saisis un nombre entier, sans unité, sans séparateur de milliers, sans décimale ni notation scientifique.</string>
+    <string name="audio_numeric_integer_required">Valeur refusée : ce réglage exige un nombre entier, sans virgule ni point. Aucune valeur modifiée.</string>
+    <string name="audio_numeric_out_of_range">Valeur refusée : reste entre %1$s et %2$s %3$s. Aucune valeur modifiée.</string>
+    <string name="audio_numeric_apply">Appliquer</string>
+    <string name="audio_numeric_cancel">Annuler</string>
+</resources>

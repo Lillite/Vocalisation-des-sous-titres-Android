@@ -11,10 +11,10 @@ Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcou
 | Étape | Contrôles exigés |
 | --- | --- |
 | Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 50 tests JVM du noyau, 64 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 50 tests du noyau et des 64 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Variante debug | 77 tests JVM du noyau, 92 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 77 tests du noyau et des 92 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
 | Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
-| Android 36 | Deux passages complets des 73 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
+| Android 36 | Deux passages complets des 75 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
 | Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
 
 Ces effectifs incluent les suites de la version 0.3.2 et les compléments de la
@@ -31,7 +31,11 @@ existants. La [cinquième étape](docs/COMMANDES_AUDIO_ETAPE_5.md) ajoute six te
 au noyau, onze tests JVM de raccordement et d’interface audio, ainsi que deux
 scénarios Android. Les totaux 40/41/69 de l’étape 2, 44/46/70 de l’étape 3 et
 44/53/71 de l’étape 4 restent propres à leurs états historiques ; les effectifs
-exigés sur cette branche sont 50/64/73. Ces nombres sont des critères à contrôler,
+de l’étape 5 sont 50/64/73. La [sixième étape](docs/AUDIO_EXPERT_ETAPE_6.md)
+ajoute 27 méthodes noyau, 28 méthodes JVM de l’application et deux scénarios
+Android ; le scénario ASS de l’étape 5 est aussi étendu aux commandes DSP.
+Les effectifs exigés sur cette branche sont **77/92/75**.
+Ces nombres sont des critères à contrôler,
 pas une preuve d’exécution :
 consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
 Aucun test antérieur n'est retiré. Lorsqu'un test est
@@ -420,6 +424,151 @@ passage. Ne pas compter des rapports anciens, ni une tâche `UP-TO-DATE` ou
 `FROM-CACHE`, comme une nouvelle exécution. Une sonde isolée en échec reste une
 preuve distincte de la suite permanente ; son ancien XML ne doit pas être
 additionné aux résultats d’un autre passage.
+
+### Contrôles de l’audio expert de l’étape 6
+
+Le point de retour est le commit `647de93e99ef778cfa3199f3c225e1fc0b759baf`,
+conservé sur `backup/etape-5-validee-20261023-647de93`. La branche de travail
+de cette étape conserve les dix fichiers sensibles de narration, sous-titres,
+traitement spectral et rendu vidéo identiques à ce point de retour. Le nouveau
+DSP est un composant séparé ; ses préférences concernent exclusivement le film.
+
+Les contrôles supplémentaires exigés sont les suivants :
+
+| Groupe | Méthodes nouvelles | Propriétés vérifiées |
+|---|---:|---|
+| Saisie numérique pure | 6 | Décimaux exacts avant conversion, virgule/point, bornes, syntaxe entière des durées, valeurs invalides, affichage. |
+| DSP pur | 18 | Bypass des 65 536 valeurs PCM16, préampli analytique, égalisation sur sinusoïdes, Q, annulation boost/cut, Nyquist, mono/balance, canaux indépendants, stabilité, plafond lié stéréo, relâchement, transitions et rafales. |
+| Commandes DSP | 3 | Refus atomique, capacités, fermeture/ticket, groupes indépendants et demandes identiques. |
+| Saisie numérique JVM | 7 | Vrais champs et boutons, cinq réglages historiques, refus persistant, annulation, champs compagnons, ticket initial, durée de vie et grande police. |
+| Interface DSP JVM | 8 | Cinq bandes, nombres et cases, réinitialisations, erreurs, capacités, observations sans mutation, panneaux imbriqués et grande police. |
+| Adaptateur PCM JVM | 9 | Vrais AudioProcessor et pipeline Media3, frames partielles, configure différé, flush/reset, bypass exact, mono/stéréo, formats non traités, révisions et publications concurrentes. |
+| Intégration session JVM | 4 | Phrase/file conservées, seul processeur installé commandé, refus/no-op sans mutation, persistance exacte, repli désactivé des préférences corrompues et empreinte du banc d’essai distinguant chaque paramètre DSP. |
+| Android | 2 | Traitement de PCM effectivement décodé par Media3 depuis un WAV stéréo synthétique ; vrais éditeurs numériques et panneaux DSP avec erreurs, annulation, refus après réouverture et absence de synthèse vocale supplémentaire. |
+
+Le scénario ASS existant de l’étape 5 modifie aussi le DSP pendant chaque
+occurrence réellement reçue par le service TTS de test. Il conserve les mêmes
+six textes attendus, les répétitions légitimes, les identifiants distincts et
+les vérifications de terminaison. Les contrôles de pause, de déplacement,
+de reprise et de callbacks périmés restent présents.
+
+Les essais de DSP utilisent des signaux synthétiques et des comparaisons de
+valeurs numériques, pas une évaluation subjective de qualité sonore. Le test
+Android de PCM observe la sortie quantifiée du processeur installé et vérifie
+préamplification, limitation et retour au bypass. Ces observations ne prouvent
+pas la crête acoustique après les autres traitements, le DAC ou le casque.
+L’émulateur et la voix déterministe de test ne remplacent pas une vraie voix,
+TalkBack, Bluetooth ou des essais prolongés sur le téléphone cible.
+
+Les cinq captures nouvelles attendues à chaque passage Android sont
+`expert-audio-precise-invalid`, `expert-dsp-overview`, `expert-dsp-band`,
+`expert-dsp-observations` et `expert-dsp-stale-editor`. Elles complètent les
+six captures d’image et d’audio déjà attendues par passage ; elles montrent
+uniquement les portions et états capturés, pas tous les contrôles simultanément.
+
+#### Premiers contrôles ciblés du 23 octobre 2026
+
+Le premier lancement local du noyau s’est arrêté avant toute tâche de test,
+car l’environnement restreint refusait les sockets locales requises par
+Gradle. Les anciens XML ont été identifiés comme périmés et n’ont pas été
+comptés. L’exécution avec la permission système nécessaire a ensuite lancé
+les 77 méthodes : 76 réussites et un échec d’oracle sur le zéro signé.
+
+L’expression du test `-0.0.toRawBits()` appliquait le moins au résultat entier
+de `toRawBits()`, au lieu d’interroger le flottant négatif. Elle a été corrigée
+en `(-0.0).toRawBits()`. Les assertions de normalisation précédentes réussissaient ;
+aucun algorithme DSP n’a été changé pour contourner ce test. La relance ciblée
+a réussi **77/77**, sans méthode ignorée ou manquante et avec sources du noyau
+inchangées pendant ce passage. Ce résultat ne constitue pas une validation
+des interfaces Android, du lint, des APK ou de la future version finale.
+
+Le premier passage ciblé de l’application a compilé les sources de production
+et les 75 méthodes instrumentées, puis exécuté 38 méthodes JVM : 35 réussites
+et trois échecs. Le compteur d’écrêtage de l’adaptateur comptait certains
+écarts flottants avant arrondi comme des saturations, alors que le résultat
+PCM16 arrondi restait représentable. Il compte désormais les valeurs non
+finies et les valeurs arrondies réellement hors plage ; les cas situés à
+un quart et trois quarts de pas au-delà des rails sont vérifiés séparément.
+Le plafond du limiteur et la vérification d’absence d’écrêtage restent exigés.
+
+Un test d’annulation vérifiait la fermeture du bouton standard `AlertDialog`
+avant le traitement de son message par le looper Robolectric en mode
+`PAUSED`. Il attend désormais ce traitement, avec l’assertion de fermeture
+et l’absence de commande inchangées. Le troisième échec concernait la
+géométrie du dialogue en grande police. Une première correction de l’oracle
+a ajouté une passe explicite de mesure et de positionnement dans une fenêtre
+de 320 × 480 dp ; elle n’a pas résolu cet échec.
+
+Le deuxième passage ciblé a exécuté les mêmes 38 méthodes : **37 réussites
+et un échec de grande police**. Les neuf méthodes de l’adaptateur et le cas
+d’annulation ont réussi ; la hauteur du contenu et celle du viewport étaient
+toutes deux de 286 dans l’oracle restant. Les sources sont restées inchangées
+pendant chacun des passages. Aucun de ces deux passages ne constitue une
+validation complète ; l’échec de géométrie doit être expliqué et corrigé avant
+la validation finale. Les journaux et résultats bruts sont conservés séparément.
+
+Une sonde de la seule méthode de grande police a ensuite employé les métriques
+de texte natives de Robolectric et le thème de l’application. Elle a démontré
+un texte effectivement agrandi et défilant : 17 lignes d’aide, contenu de
+2 885 pixels et viewport de 265 pixels. Elle a ensuite échoué sur un autre
+oracle : `minimumHeight` désigne la propriété de `View`, alors que le champ
+configure `minHeight` de `TextView`. Le test contrôle désormais cette propriété
+et la hauteur réellement mesurée, sans supprimer l’exigence de 56 dp.
+
+Cette analyse a aussi révélé un défaut de production distinct : l’appel à
+`setSingleLine(true)` rétablissait une contrainte d’une ligne après la définition
+du minimum en pixels. Le minimum de 56 dp est maintenant fixé après cet appel.
+La sonde précédente reste en échec ; cette correction et les oracles renforcés
+doivent réussir lors du passage suivant. Aucun comportement vocal n’est modifié.
+
+La revue du scénario Espresso a aussi identifié un défilement inadapté au
+rapport audio, plus haut que sa fenêtre. L’action révèle maintenant son début
+par un rectangle borné ; l’assertion de visibilité et la vérification du texte
+complet restent présentes. Cette correction est issue de la revue de code,
+pas d’un échec instrumenté déjà observé. Le test PCM Android vérifie le retour
+à la crête de référence ; la copie exacte de toutes les valeurs PCM16 est
+établie séparément par les tests du noyau et de l’adaptateur.
+
+Une autre revue a identifié l’absence des nouveaux paramètres DSP dans
+l’empreinte des réglages du banc d’essai. Le groupe canonique complet est
+désormais inclus : deux essais dont le DSP diffère ne sont plus considérés
+comme exécutés avec les mêmes réglages. Une méthode de régression vérifie
+chaque champ, les préférences latentes, les demandes identiques, la restauration
+exacte et le zéro signé. Elle ne lance pas un essai de performance synthétique
+et ne mesure pas un gain de vitesse. Cet ajout porte l’effectif JVM de
+l’application de 91 à 92.
+
+#### Contrôle ciblé de la grande police et passage complet local
+
+La seconde sonde native de grande police a réussi, **1/1**, avec la méthode
+attendue et des sources stables. À une densité de 1 et une police agrandie
+à 200 %, le champ mesure 67 pixels pour un minimum configuré de 56 pixels ;
+l’aide occupe 17 lignes et le contenu de 2 885 pixels défile dans un viewport
+de 265 pixels. Les assertions de retour à la ligne, de défilement, d’absence
+d’ellipse, d’erreur persistante et d’absence de commande ont toutes réussi.
+
+Le premier passage local complet de l’étape 6, après nettoyage, a exécuté
+82 tâches Gradle et réussi **77/77 tests du noyau et 92/92 tests de
+l’application**. Les rapports ont été contrôlés contre l’inventaire exact
+des méthodes : aucun échec, erreur, test ignoré, manquant, inattendu ou dupliqué.
+Les 176 fichiers inventoriés sont restés inchangés pendant ce passage et les
+dix fichiers sensibles correspondent octet pour octet au point de retour
+de l’étape 5.
+
+Le rapport lint debug contient **46 avertissements et un indice**, exactement
+les mêmes que ceux du point de retour : aucun ajout ni retrait. Les deux APK
+debug ont été compilés ; le manifeste, les permissions, les signatures et
+les alignements ont été vérifiés. Les **75 méthodes Android sont compilées
+et inventoriées**, mais ne sont pas présentées comme exécutées dans ce passage
+local. La documentation est ensuite complétée avec ce compte rendu ; la CI
+doit valider le commit final, ses variantes debug/release et les deux passages
+instrumentés avant de conclure à une validation Android.
+
+Les autres résultats, les éventuelles corrections et les preuves finales
+doivent identifier le commit exact de la proposition dans GitHub Actions.
+Les anciens résultats de l’étape 5 ne sont pas une preuve des sources de cette étape.
+La demande de l’utilisateur réserve la fusion et la livraison à une instruction
+ultérieure ; cette validation ne vaut pas publication d’une application.
 
 ## APK signé pour installation
 

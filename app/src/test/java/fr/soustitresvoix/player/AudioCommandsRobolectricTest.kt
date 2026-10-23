@@ -31,6 +31,8 @@ import fr.soustitresvoix.core.AudioCommandDecision
 import fr.soustitresvoix.core.AudioCommandRejection
 import fr.soustitresvoix.core.AudioCommandRequest
 import fr.soustitresvoix.core.AudioSettings
+import fr.soustitresvoix.core.AudioDspSettings
+import fr.soustitresvoix.core.AudioEqBand
 import fr.soustitresvoix.core.CapabilityStatus
 import fr.soustitresvoix.core.ExistingNarrationController
 import fr.soustitresvoix.core.LatencyWindow
@@ -740,9 +742,165 @@ class AudioCommandsRobolectricTest {
         }
     }
 
+    @Test fun advancedDspChangesPreserveActiveNarrationAndOnlySubmitToTheInstalledProcessor() {
+        val components = RecordingComponents()
+        val session = create(components)
+        try {
+            session.previewVoice()
+            advance(160)
+            assertTrue(session.machine.cues(10_000_000, listOf("Panneau.", "Encore.", "Encore."),
+                identities = listOf("dsp-panel", "dsp-repeat-1", "dsp-repeat-2")).isEmpty())
+            val voice = voiceState(session, components)
+            val notifications = components.notifications
+            val original = session.audioCommands.snapshot()
+            val desired = AudioDspSettings(enabled = true, preampDb = -5.25, balance = .35, mono = true,
+                limiterCeilingDb = -2.5, limiterReleaseMs = 275,
+                band3 = AudioEqBand(true, 1765.25, 3.5, 2.25))
+            components.commands.clear()
+            seedBenchmark(session)
+            assertTrue(accepted(session, AudioCommand.SetDsp(desired)).changed)
+            assertEquals(listOf("audio.dsp.submit"), components.commands)
+            assertEquals(voice, voiceState(session, components))
+            assertEquals(notifications, components.notifications)
+            assertEquals(1, components.audio.sinkCreations)
+            assertFalse(session.playbackBenchmark.active)
+            assertEquals(desired, session.audioCommands.snapshot().context.requested.dsp)
+            assertEquals(original.context.requested.copy(dsp = desired), session.audioCommands.snapshot().context.requested)
+            assertEquals(AudioDspSettings(), original.context.requested.dsp)
+            assertEquals(desired, requireNotNull(session.audioCommands.snapshot().dsp).submittedSettings)
+            components.commands.clear()
+            repeat(3) { session.audioCommands.snapshot() }
+            assertTrue(components.commands.isEmpty())
+            assertEquals(voice, voiceState(session, components))
+        } finally { session.close() }
+    }
+
+    @Test fun advancedDspNoOpsRefusalsAndClosedSnapshotsDoNotMutateTheSession() {
+        val components = RecordingComponents()
+        val session = create(components)
+        try {
+            session.previewVoice()
+            advance(80)
+            val voice = voiceState(session, components)
+            val settings = session.audioCommands.snapshot().context.requested
+            val beforeDsp = session.audioCommands.snapshot().dsp
+            components.commands.clear()
+            seedBenchmark(session)
+            assertFalse(accepted(session, AudioCommand.SetDsp(AudioDspSettings(preampDb = -0.0))).changed)
+            assertEquals(AudioCommandDecision.Rejected(0, AudioCommandRejection.NON_FINITE_VALUE),
+                submit(session, AudioCommand.SetDsp(AudioDspSettings(preampDb = Double.NaN))))
+            for ((status, reason) in listOf(CapabilityStatus.UNAVAILABLE to AudioCommandRejection.DSP_CAPABILITY_UNAVAILABLE,
+                CapabilityStatus.UNKNOWN to AudioCommandRejection.DSP_CAPABILITY_UNKNOWN)) {
+                components.audio.dspAvailability = status
+                assertEquals(AudioCommandDecision.Rejected(0, reason),
+                    submit(session, AudioCommand.SetDsp(AudioDspSettings(enabled = true))))
+            }
+            assertTrue(session.playbackBenchmark.active)
+            assertEquals(settings, session.audioCommands.snapshot().context.requested)
+            assertEquals(beforeDsp, session.audioCommands.snapshot().dsp)
+            assertEquals(voice, voiceState(session, components))
+            assertTrue(components.commands.isEmpty())
+            val oldGeneration = session.audioCommands.snapshot().context.generation
+            session.close()
+            components.commands.clear()
+            components.backend.failOnAnyPlayerAccess = true
+            assertNull(session.audioCommands.snapshot().dsp)
+            assertEquals(AudioCommandDecision.Rejected(oldGeneration, AudioCommandRejection.CLOSED),
+                session.audioCommands.submit(AudioCommandRequest(oldGeneration,
+                    AudioCommand.SetDsp(AudioDspSettings(enabled = true)))))
+            assertTrue(components.commands.isEmpty())
+        } finally { session.close() }
+    }
+
+    @Test fun benchmarkIdentityDistinguishesEveryDspControlAndRestoresWithTheSamePreferences() {
+        val components = RecordingComponents()
+        val session = create(components)
+        try {
+            // Invoke the real identity assembly without starting playback or
+            // publishing synthetic performance measurements. Inputs other
+            // than DSP stay fixed, including tracks and the voice identity.
+            val method = PlaybackSession::class.java.getDeclaredMethod("benchmarkSettingsFingerprint")
+                .apply { isAccessible = true }
+            fun fingerprint() = method.invoke(session) as String
+            val defaults = AudioDspSettings()
+            val reference = fingerprint()
+            val voice = voiceState(session, components)
+            val alternatives = buildList {
+                add(defaults.copy(enabled = true))
+                add(defaults.copy(preampDb = -3.5))
+                add(defaults.copy(balance = -.25))
+                add(defaults.copy(mono = true))
+                add(defaults.copy(limiterEnabled = false))
+                add(defaults.copy(limiterCeilingDb = -3.0))
+                add(defaults.copy(limiterReleaseMs = 275))
+                for (index in 0 until 5) {
+                    val band = defaults.band(index)
+                    add(defaults.withBand(index, band.copy(enabled = true)))
+                    add(defaults.withBand(index, band.copy(frequencyHz = band.frequencyHz + .25)))
+                    add(defaults.withBand(index, band.copy(gainDb = 2.5)))
+                    add(defaults.withBand(index, band.copy(q = 1.25)))
+                }
+            }
+            val observed = mutableSetOf(reference)
+            for (settings in alternatives) {
+                assertTrue(accepted(session, AudioCommand.SetDsp(settings)).changed)
+                val changed = fingerprint()
+                assertNotEquals("Distinct DSP preferences must not share a benchmark settings identity", reference, changed)
+                assertTrue("Each individual DSP control must be represented in the identity", observed.add(changed))
+                assertFalse(accepted(session, AudioCommand.SetDsp(settings)).changed)
+                assertEquals("An identical request must keep the same benchmark settings identity", changed, fingerprint())
+                assertTrue(accepted(session, AudioCommand.SetDsp(defaults)).changed)
+                assertEquals("Restoring all preferences must restore the identity", reference, fingerprint())
+                assertEquals(voice, voiceState(session, components))
+            }
+            assertFalse(accepted(session, AudioCommand.SetDsp(defaults.copy(preampDb = -0.0, balance = -0.0,
+                band1 = defaults.band1.copy(gainDb = -0.0)))).changed)
+            assertEquals("Signed zero is the same configuration", reference, fingerprint())
+            assertEquals(voice, voiceState(session, components))
+        } finally { session.close() }
+    }
+
+    @Test fun expertPreferencesRoundTripPreciselyAndCorruptGroupsFallBackWithoutChangingVoice() {
+        val prefs = PlayerPreferences(context)
+        prefs.voiceVolume = .45f
+        prefs.speechRate = 1.15f
+        val desired = AudioDspSettings(enabled = true, preampDb = -7.125, balance = -.375, mono = true,
+            limiterCeilingDb = -2.125, limiterReleaseMs = 275,
+            band1 = AudioEqBand(true, 37.5, -2.375, .375),
+            band5 = AudioEqBand(true, 17654.375, 5.125, 4.375))
+        prefs.saveMovieAudioSettings(AudioSettings(.375f, .125f, 275, 715, 325, true, desired))
+        val fresh = PlayerPreferences(context)
+        assertEquals(desired, fresh.movieAudioSettings().dsp)
+        assertEquals(.45f, fresh.voiceVolume, 0f)
+        assertEquals(1.15f, fresh.speechRate, 0f)
+        val session = create(RecordingComponents())
+        try { assertEquals(desired, requireNotNull(session.audioCommands.snapshot().dsp).submittedSettings) }
+        finally { session.close() }
+        val encoded = AudioDspPreferences.encode(desired)
+        for (corrupt in listOf("{", encoded.replace("\"version\":1", "\"version\":2"),
+            encoded.replace("\"preampDb\":-7.125", "\"preampDb\":999"),
+            encoded.replace("\"preampDb\":-7.125", "\"preampDb\":\"-7.125\""),
+            encoded.replace("\"enabled\":true", "\"enabled\":\"true\""),
+            encoded.replace("\"limiterReleaseMs\":275", "\"limiterReleaseMs\":275.5"), "x".repeat(4097))) {
+            context.getSharedPreferences("player", Context.MODE_PRIVATE).edit().putString(AudioDspPreferences.KEY, corrupt).commit()
+            assertEquals(AudioDspSettings(), fresh.movieAudioSettings().dsp)
+            assertEquals(.375f, fresh.movieVolume, 0f)
+            assertEquals(.45f, fresh.voiceVolume, 0f)
+            assertEquals(1.15f, fresh.speechRate, 0f)
+        }
+    }
+
     private class RecordingAudio(private val commands: MutableList<String>) : MovieAudio {
         private val actual = Media3MovieAudio()
         var availability = CapabilityStatus.CONDITIONAL
+        var dspAvailability = CapabilityStatus.CONDITIONAL
+        override val dsp: MovieDsp = object : MovieDsp by actual.dsp {
+            override val capability get() = actual.dsp.capability.copy(status = dspAvailability)
+            override fun submit(settings: AudioDspSettings) {
+                commands += "audio.dsp.submit"
+                actual.dsp.submit(settings)
+            }
+        }
         var sinkCreations = 0
         override var enabled: Boolean
             get() = actual.enabled

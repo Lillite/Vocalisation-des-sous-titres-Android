@@ -28,6 +28,8 @@ import fr.soustitresvoix.core.AudioCommand
 import fr.soustitresvoix.core.AudioCommandDecision
 import fr.soustitresvoix.core.AudioCommandRequest
 import fr.soustitresvoix.core.AudioSettings
+import fr.soustitresvoix.core.AudioDspSettings
+import fr.soustitresvoix.core.AudioEqBand
 import fr.soustitresvoix.core.NarrationMachine
 import java.io.File
 import java.util.Collections
@@ -120,6 +122,8 @@ class AudioCommandsAndroidTest {
                         accepted(session, AudioCommand.SetLevels(movie, ratio))
                         accepted(session, AudioCommand.SetDuckingTiming(160 + index * 40, 500 + index * 100, 350 + index * 50))
                         accepted(session, AudioCommand.SetSpectralDucking(index % 2 == 0))
+                        accepted(session, AudioCommand.SetDsp(speechDsp(index)))
+                        assertEquals(speechDsp(index), requireNotNull(session.audioCommands.snapshot().dsp).submittedSettings)
                         assertEquals("The film target is normal volume × retained ratio", movie * ratio,
                             session.player.volume, .00001f)
                         assertEquals(before, session.machine.snapshot())
@@ -191,7 +195,8 @@ class AudioCommandsAndroidTest {
                 assertTrue("The real player or voice failed: $errors", errors.isEmpty())
                 scenario.onActivity { current ->
                     val session = current.session
-                    assertEquals(AudioSettings(.7f, .4f, 360, 1_000, 600, false), session.audioCommands.snapshot().context.requested)
+                    assertEquals(AudioSettings(.7f, .4f, 360, 1_000, 600, false, speechDsp(5)),
+                        session.audioCommands.snapshot().context.requested)
                     assertEquals(.7f, session.player.volume, .00001f)
                     assertFalse(session.player.playWhenReady)
                     assertFalse(session.machine.snapshot().wantsPlayback)
@@ -206,6 +211,12 @@ class AudioCommandsAndroidTest {
             video?.delete(); subtitles?.delete()
         }
     }
+
+    private fun speechDsp(index: Int) = AudioDspSettings(enabled = true,
+        preampDb = -3.0 - index, balance = if (index % 2 == 0) -.25 else .25,
+        mono = index % 2 == 0, limiterCeilingDb = -1.0 - index / 2.0,
+        limiterReleaseMs = 100 + index * 25,
+        band3 = AudioEqBand(true, 750.0 + index * 125, 2.0 + index / 2.0, 1.0 + index / 4.0))
 
     private fun screenshot(name: String) {
         require(name.matches(Regex("[a-z-]+")))

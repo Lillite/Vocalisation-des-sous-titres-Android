@@ -14,6 +14,8 @@ import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
 import fr.soustitresvoix.core.CapabilityDiagnostic
 import fr.soustitresvoix.core.CapabilityStatus
 import fr.soustitresvoix.core.DiagnosticSource
+import fr.soustitresvoix.core.AudioDspSettings
+import fr.soustitresvoix.core.AudioDspSnapshot
 
 /** Platform declarations for a named codec; never a CPU/GPU utilization measure. */
 data class DecoderClassification(val hardwareAccelerated: Boolean, val softwareOnly: Boolean)
@@ -57,10 +59,20 @@ interface MovieAudio {
     var enabled: Boolean
     var speaking: Boolean
     val processedSamples: Long
+    /** Null means no declared advanced processor; do not pretend an unsupported command took effect. */
+    val dsp: MovieDsp? get() = null
     fun createSink(context: Context): AudioSink
     fun diagnosticCapability(): CapabilityDiagnostic = CapabilityDiagnostic(
         "audio.spectral_ducking", CapabilityStatus.UNKNOWN, DiagnosticSource.NOT_EXPOSED,
         "Ce composant ne déclare pas les conditions de son traitement audio.")
+}
+
+/** Independent film-only processor, installed once in the same sink as the existing speech attenuation. */
+interface MovieDsp {
+    val capability: CapabilityDiagnostic
+    val snapshot: AudioDspSnapshot
+    /** Publish an immutable validated configuration; never flush, recreate the sink or command speech. */
+    fun submit(settings: AudioDspSettings)
 }
 
 /** Creates a fresh renderer from the backend's configured Media3 builder. */

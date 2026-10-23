@@ -22,6 +22,7 @@ internal object PlaybackDiagnosticText {
         "video.scaling" to "Redimensionnement détaillé",
         "video.frame_rate" to "Adaptation de fréquence",
         "audio.spectral_ducking" to "Atténuation expérimentale du film",
+        "audio.expert_dsp" to "Égaliseur paramétrique et traitements audio du film",
         "audio.movie_volume" to "Volume du film",
         "audio.duck_ratio" to "Proportion du son du film pendant la voix",
         "audio.duck_timing" to "Durées de baisse, d’attente et de remontée du film",

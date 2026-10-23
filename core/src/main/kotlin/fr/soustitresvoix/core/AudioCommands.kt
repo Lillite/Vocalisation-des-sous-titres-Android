@@ -1,13 +1,14 @@
 package fr.soustitresvoix.core
 
-/** Existing film settings only. Voice gain, voice timing and system volume are separate. */
+/** Film settings only. Voice gain, voice timing and system volume are separate. */
 data class AudioSettings(
     val movieVolume: Float = 1f,
     val duckVolume: Float = .25f,
     val attackMs: Int = 160,
     val releaseMs: Int = 500,
     val holdMs: Int = 350,
-    val spectralDucking: Boolean = false
+    val spectralDucking: Boolean = false,
+    val dsp: AudioDspSettings = AudioDspSettings()
 )
 
 /** Each group is validated atomically; a rejected request is never clamped or partly saved. */
@@ -17,6 +18,8 @@ sealed interface AudioCommand {
     /** These durations apply to the next transition; an existing transition retains its timing. */
     data class SetDuckingTiming(val attackMs: Int, val releaseMs: Int, val holdMs: Int) : AudioCommand
     data class SetSpectralDucking(val enabled: Boolean) : AudioCommand
+    /** Full immutable DSP group; fields are validated together before any persistence or submission. */
+    data class SetDsp(val settings: AudioDspSettings) : AudioCommand
 }
 
 /** Retain this generation from the original producer, including delayed dialogs and gestures. */
@@ -26,12 +29,14 @@ data class AudioCommandContext(
     val generation: Long,
     val closed: Boolean,
     val spectralAvailability: CapabilityStatus,
-    val requested: AudioSettings
+    val requested: AudioSettings,
+    val dspAvailability: CapabilityStatus = CapabilityStatus.UNKNOWN
 )
 
 enum class AudioCommandRejection {
     CLOSED, STALE_MEDIA, NON_FINITE_VALUE, OUT_OF_RANGE,
-    CAPABILITY_UNAVAILABLE, CAPABILITY_UNKNOWN
+    CAPABILITY_UNAVAILABLE, CAPABILITY_UNKNOWN,
+    DSP_CAPABILITY_UNAVAILABLE, DSP_CAPABILITY_UNKNOWN
 }
 
 sealed interface AudioCommandDecision {
@@ -69,12 +74,29 @@ object AudioCommandPolicy {
                 }
                 context.requested.copy(spectralDucking = command.enabled)
             }
+            is AudioCommand.SetDsp -> {
+                when (AudioDspPolicy.validate(command.settings)) {
+                    AudioDspProblem.NON_FINITE -> return reject(AudioCommandRejection.NON_FINITE_VALUE)
+                    AudioDspProblem.OUT_OF_RANGE -> return reject(AudioCommandRejection.OUT_OF_RANGE)
+                    null -> Unit
+                }
+                val dsp = AudioDspPolicy.canonicalize(command.settings)
+                // Disabled configurations may be prepared even without an installed processor.
+                // Any changed enabled configuration requires a declared compatible implementation.
+                if (dsp.enabled && dsp != context.requested.dsp) when (context.dspAvailability) {
+                    CapabilityStatus.UNAVAILABLE -> return reject(AudioCommandRejection.DSP_CAPABILITY_UNAVAILABLE)
+                    CapabilityStatus.UNKNOWN -> return reject(AudioCommandRejection.DSP_CAPABILITY_UNKNOWN)
+                    CapabilityStatus.SUPPORTED, CapabilityStatus.CONDITIONAL -> Unit
+                }
+                context.requested.copy(dsp = dsp)
+            }
         }
         // Numerical equality deliberately treats the two signed zeros as the same level.
         val before = context.requested
         val changed = requested.movieVolume != before.movieVolume || requested.duckVolume != before.duckVolume ||
             requested.attackMs != before.attackMs || requested.releaseMs != before.releaseMs ||
-            requested.holdMs != before.holdMs || requested.spectralDucking != before.spectralDucking
+            requested.holdMs != before.holdMs || requested.spectralDucking != before.spectralDucking ||
+            requested.dsp != AudioDspPolicy.canonicalize(before.dsp)
         return AudioCommandDecision.Accepted(request.generation, requested, changed)
     }
 }
@@ -90,7 +112,8 @@ data class AudioCommandSnapshot(
     val configuredVolume: Float?,
     val spectralEnabled: Boolean?,
     val speaking: Boolean?,
-    val processedSamples: Long?
+    val processedSamples: Long?,
+    val dsp: AudioDspSnapshot? = null
 )
 
 /** Session-thread contract; opening another medium invalidates tickets, not persistent preferences. */

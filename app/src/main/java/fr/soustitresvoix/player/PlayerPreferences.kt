@@ -50,7 +50,8 @@ class PlayerPreferences(context: Context) {
     /** Existing preference keys and defaults are preserved across every media opening. */
     internal fun movieAudioSettings() = AudioSettings(movieVolume, duckVolume,
         int("duckAttack", 160, 0, 2000), int("duckRelease", 500, 0, 2000),
-        int("duckHold", 350, 0, 2000), bool("spectralDucking"))
+        int("duckHold", 350, 0, 2000), bool("spectralDucking"),
+        AudioDspPreferences.decode(runCatching { p.getString(AudioDspPreferences.KEY, null) }.getOrNull()))
     /** Called only after command validation; grouped values become visible in one preference edit. */
     internal fun saveMovieAudioSettings(settings: AudioSettings) {
         p.edit {
@@ -60,6 +61,7 @@ class PlayerPreferences(context: Context) {
             putInt("duckRelease", settings.releaseMs)
             putInt("duckHold", settings.holdMs)
             putBoolean("spectralDucking", settings.spectralDucking)
+            putString(AudioDspPreferences.KEY, AudioDspPreferences.encode(settings.dsp))
         }
     }
     val adaptiveMax get() = int("adaptiveMax", 180, 100, 250) / 100f

@@ -2,6 +2,25 @@
 
 Ce journal présente les étapes principales vérifiables dans l’historique du dépôt. Les rapports détaillés restent accessibles dans l’[index documentaire](docs/README.md). Les numéros ci-dessous désignent les versions de l’application ; les correspondances avec les publications GitHub figurent dans l’[historique](docs/HISTORIQUE_BRANCHES.md).
 
+## En préparation — Saisie et traitements audio avancés, étape 6
+
+- Point de retour de l’étape 5 conservé au commit `647de93e99ef778cfa3199f3c225e1fc0b759baf`, sur `backup/etape-5-validee-20261023-647de93` ; travail séparé sur `work/etape-6-audio-expert-20261023`.
+- Saisie des pourcentages décimaux et des millisecondes entières : point ou virgule, validation décimale avant conversion, bornes explicites, annulation sans mutation et conservation du texte refusé. Maintien des pas et des retours aux défauts historiques.
+- Nouveau processeur du film après le filtre spectral historique : préampli, cinq bandes paramétriques avec fréquence/gain/Q, balance, mélange mono et limiteur lié entre les canaux. Traitement général désactivé par défaut, paramètres persistants et retours aux défauts ciblés.
+- Traitement limité au PCM16 mono/stéréo réellement reçu. Les bandes au-delà du domaine du format sont signalées sans déplacement automatique de leur fréquence ; le multicanal, le flottant, le passthrough et l’offload ne sont pas annoncés comme traités.
+- Transitions de chaîne sur 20 ms avec deux jeux de filtres stables ; conservation des états lors d’un changement du seul limiteur ou d’un paramètre latent. Plafond numérique de limiteur effectif dès consommation, relâchement exponentiel et retour progressif au bypass exact.
+- Paramètres regroupés dans une configuration immuable et validée. Persistance versionnée indépendante des préférences vocales ; configuration enregistrée invalide ramenée aux défauts avec DSP désactivé.
+- Observations séparant soumission, consommation, cible, transition, format du dernier flux, bandes inapplicables, compteurs et crête PCM quantifiée. Ces observations ne sont pas présentées comme attribuées automatiquement à la nouvelle vidéo ni comme une mesure acoustique.
+- Propriété explicite des sous-dialogues, ticket d’ouverture conservé, refus visibles et fermeture des enfants avec leur panneau propriétaire. Les réglages compagnons sont relus avant une modification individuelle.
+- Inclusion de tous les paramètres DSP canoniques dans l’empreinte des réglages du banc d’essai ; distinction des configurations et restauration de l’identité avec les mêmes préférences.
+- Tests de parsing, politique, réponse fréquentielle, canaux, limiteur, transitions, format et intégration, à exécuter avec les régressions de narration existantes. Les résultats et corrections doivent être attachés aux sources réellement testées dans la demande de fusion et `TESTING.md`.
+
+Le guide [Saisie et traitements audio avancés — étape 6](docs/AUDIO_EXPERT_ETAPE_6.md)
+décrit tous les paramètres, les règles d’application et les limites. Aucun
+algorithme de vocalisation n’est remplacé. Cette étape ne change pas la version
+publiée et ne livre pas d’APK. La suite proposée concerne la dynamique contrôlée,
+puis les profils/comparaisons et les formats multicanaux après validation.
+
 ## En préparation — Commandes du son du film, étape 5
 
 - Point de retour de l’étape 4 conservé au commit `8feafda50a272cbca9972cf1c948dce5afd269e7`, sur `backup/etape-4-validee-20261023-8feafda` ; travail séparé sur `work/etape-5-commandes-audio-20261023`.
