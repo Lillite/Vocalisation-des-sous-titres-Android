@@ -2,6 +2,22 @@
 
 Ce journal présente les étapes principales vérifiables dans l’historique du dépôt. Les rapports détaillés restent accessibles dans l’[index documentaire](docs/README.md). Les numéros ci-dessous désignent les versions de l’application ; les correspondances avec les publications GitHub figurent dans l’[historique](docs/HISTORIQUE_BRANCHES.md).
 
+## En préparation — Commandes du son du film, étape 5
+
+- Point de retour de l’étape 4 conservé au commit `8feafda50a272cbca9972cf1c948dce5afd269e7`, sur `backup/etape-4-validee-20261023-8feafda` ; travail séparé sur `work/etape-5-commandes-audio-20261023`.
+- Contrat audio indépendant d’Android pour les deux niveaux, les trois durées et l’activation du filtre spectral existant ; validation de la durée de vie, des valeurs finies et bornées et de la capacité spectrale.
+- Écriture groupée des préférences après acceptation, refus sans effet partiel et retour immédiat pour les demandes identiques. Les niveaux modifiés remplacent le fondu courant ; les durées modifiées concernent les transitions suivantes.
+- Raccordement de Volumes rapides, des réglages avancés, des deux curseurs généraux et du geste de volume. Descriptions détaillées, pas existants, remises aux valeurs par défaut par paramètre et état du son en lecture seule.
+- Protection des demandes issues d’une ancienne ouverture, y compris à URI identique, et conservation des préférences audio entre les médias. Les volumes enregistrés non finis reviennent à une valeur par défaut finie à la lecture.
+- Maintien du processeur PCM, des règles de narration, de synthèse, d’extraction et de rendu ; aucun nouveau moteur, dépendance ou changement de version.
+- Contrôles de validation, fondus non nuls, files vocales, répétitions légitimes, interruptions, paramètres et cycle de vie. Les résultats sont attachés aux sources réellement exécutées dans la demande de fusion et dans `TESTING.md`.
+- La revue a retiré le nouveau rafraîchissement général du chemin des commandes audio : dans l’activité, il pouvait aussi déclencher une préparation vocale. Les contrôles audio actualisent leur propre présentation. Un refus des curseurs généraux est affiché dans leur dialogue, sans passer par le message global qui pouvait quitter le plein écran.
+
+Le guide [Commandes du son du film — étape 5](docs/COMMANDES_AUDIO_ETAPE_5.md)
+décrit chaque paramètre et ses limites. L’étape reste séparée de `main`, sans
+livraison d’APK. La suite proposée est une saisie audio précise au-dessus du même
+contrat, avec validation des pourcentages et des millisecondes.
+
 ## En préparation — Interface d’image, étape 4
 
 - Point de retour de l’étape 3 conservé au commit `c96b687f91b2c9f7fadfc44383c8d346047cd30e`, sur `backup/etape-3-validee-20261023-c96b687` ; travail séparé sur `work/etape-4-interface-image-20261023`.

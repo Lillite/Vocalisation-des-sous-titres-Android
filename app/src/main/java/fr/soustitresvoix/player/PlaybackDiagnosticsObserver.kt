@@ -199,11 +199,21 @@ internal class PlaybackDiagnosticsObserver(private val session: PlaybackSession)
             configured = flag(session.movieAudio.enabled, DiagnosticSource.PLAYER_CONFIGURATION,
                 "Signal de parole transmis au processeur : ${session.movieAudio.speaking}."),
             observed = count(session.movieAudio.processedSamples, DiagnosticSource.AUDIO_PROCESSOR,
-                "Échantillons cumulés depuis le début de session, y compris sans atténuation ; aucune preuve d’atténuation instantanée."))
+                "Échantillons individuels de tous les canaux cumulés depuis le début de session, y compris sans atténuation ; aucune preuve d’atténuation instantanée."))
         capabilities += CapabilityDiagnostic("audio.movie_volume", CapabilityStatus.SUPPORTED,
-            DiagnosticSource.PLAYER_CONFIGURATION, "Volume du film configuré, pas mesure acoustique de la sortie.",
+            DiagnosticSource.PLAYER_CONFIGURATION, "Consigne de volume du film entre 0 et 1. La valeur configurée peut être intermédiaire pendant un fondu ; pas une mesure acoustique de la sortie.",
             requested = decimal(session.prefs.movieVolume, DiagnosticSource.USER_PREFERENCE),
             configured = decimal(player.volume, DiagnosticSource.PLAYER_CONFIGURATION), observed = null)
+        capabilities += CapabilityDiagnostic("audio.duck_ratio", CapabilityStatus.SUPPORTED,
+            DiagnosticSource.APPLICATION_POLICY,
+            "Multiplicateur du volume normal pendant la voix, entre 0 et 1. Exemple : 0,60 × 0,25 = 0,15. La cible peut ne pas être atteinte pendant le fondu.",
+            requested = decimal(session.prefs.duckVolume, DiagnosticSource.USER_PREFERENCE))
+        val audio = session.prefs.movieAudioSettings()
+        capabilities += CapabilityDiagnostic("audio.duck_timing", CapabilityStatus.SUPPORTED,
+            DiagnosticSource.APPLICATION_POLICY,
+            "Durées demandées pour les prochaines transitions, en millisecondes. Une transition déjà planifiée conserve ses durées. L’attente peut être prolongée pour une réplique proche ; la latence réelle n’est pas mesurée ici.",
+            requested = text("baisse=${audio.attackMs} ms, remontée=${audio.releaseMs} ms, attente minimale=${audio.holdMs} ms",
+                DiagnosticSource.USER_PREFERENCE))
         capabilities += CapabilityDiagnostic("subtitle.selection",
             if (selected == null) CapabilityStatus.UNKNOWN else CapabilityStatus.SUPPORTED, DiagnosticSource.PLAYER_STATE,
             "Sélection attribuable au média courant, sans nom de fichier, libellé de piste ni texte de sous-titre.",

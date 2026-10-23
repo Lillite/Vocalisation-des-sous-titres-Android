@@ -14,6 +14,9 @@ import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import fr.soustitresvoix.core.AudioCommand
+import fr.soustitresvoix.core.AudioCommandDecision
+import fr.soustitresvoix.core.AudioCommandRequest
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -50,6 +53,7 @@ class CinemaView(
     private var dx = 0f; private var dy = 0f
     private var startX = 0f; private var startY = 0f
     private var startVolume = 1f; private var startBrightness = 0.5f
+    private var audioGestureGeneration = 0L
     private var startPosition = 0L
     private var dragSeek: Long? = null
     private var scaling = false
@@ -154,6 +158,7 @@ class CinemaView(
         })
         val gesture = GestureDetector(activity, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(event: MotionEvent): Boolean {
+                audioGestureGeneration = session.audioCommands.snapshot().context.generation
                 startX = event.x; startY = event.y; startVolume = prefs.movieVolume
                 startBrightness = activity.window.attributes.screenBrightness.takeIf { it >= 0 } ?: 0.5f
                 startPosition = session.player.currentPosition; moved = false; dragSeek = null; return true
@@ -178,8 +183,11 @@ class CinemaView(
                 } else if (!horizontal && prefs.bool("gestureLevels", true)) {
                     val change = (startY - event.y) / height.coerceAtLeast(1)
                     if (startX > width / 2) {
-                        prefs.movieVolume = (startVolume + change).coerceIn(0f, 1f); session.updateMix()
-                        tell("Volume film ${(prefs.movieVolume * 100).roundToInt()} %")
+                        val current = session.audioCommands.snapshot().context.requested
+                        val result = session.audioCommands.submit(AudioCommandRequest(audioGestureGeneration,
+                            AudioCommand.SetLevels((startVolume + change).coerceIn(0f, 1f), current.duckVolume)))
+                        if (result is AudioCommandDecision.Rejected) tell(AudioCommandText.rejection(result.reason))
+                        else tell("Volume film ${(prefs.movieVolume * 100).roundToInt()} %")
                     } else {
                         activity.window.attributes = activity.window.attributes.apply { screenBrightness = (startBrightness + change).coerceIn(0.01f, 1f) }
                         tell("Luminosité ${(activity.window.attributes.screenBrightness * 100).roundToInt()} %")

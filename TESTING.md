@@ -11,10 +11,10 @@ Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcou
 | Étape | Contrôles exigés |
 | --- | --- |
 | Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 44 tests JVM du noyau, 53 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 44 tests du noyau et des 53 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Variante debug | 50 tests JVM du noyau, 64 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 50 tests du noyau et des 64 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
 | Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
-| Android 36 | Deux passages complets des 71 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
+| Android 36 | Deux passages complets des 73 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
 | Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
 
 Ces effectifs incluent les suites de la version 0.3.2 et les compléments de la
@@ -27,16 +27,19 @@ La [troisième étape](docs/COMMANDES_IMAGE_ETAPE_3.md) ajoute quatre tests de
 validation des commandes d’image, cinq tests JVM de leur raccordement et un
 scénario instrumenté supplémentaire. La [quatrième étape](docs/INTERFACE_IMAGE_ETAPE_4.md)
 ajoute sept scénarios JVM et un scénario Android aux fichiers de tests d’image
-existants. Les totaux 40/41/69 de l’étape 2 et 44/46/70 de l’étape 3 restent
-propres à leurs états historiques ; les effectifs exigés sur cette branche sont
-44/53/71. Ces nombres sont des critères à contrôler, pas une preuve d’exécution :
+existants. La [cinquième étape](docs/COMMANDES_AUDIO_ETAPE_5.md) ajoute six tests
+au noyau, onze tests JVM de raccordement et d’interface audio, ainsi que deux
+scénarios Android. Les totaux 40/41/69 de l’étape 2, 44/46/70 de l’étape 3 et
+44/53/71 de l’étape 4 restent propres à leurs états historiques ; les effectifs
+exigés sur cette branche sont 50/64/73. Ces nombres sont des critères à contrôler,
+pas une preuve d’exécution :
 consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
 Aucun test antérieur n'est retiré. Lorsqu'un test est
 ajouté, mettre à jour les effectifs attendus dans le workflow ou dans
 `tools/run-device-tests.sh` ; ne jamais retirer un test pour retrouver un nombre
 attendu. Les contrôles des rapports refusent les tests manquants, ignorés,
-échoués ou dupliqués. L'instrumentation compare aussi les méthodes exécutées à
-l'inventaire des sources. Les dates des rapports doivent correspondre au passage
+échoués ou dupliqués. Les quatre suites JVM et les deux passages Android
+comparent aussi les méthodes exécutées à l’inventaire des sources. Les dates des rapports doivent correspondre au passage
 en cours.
 
 La variante debug est compilée et vérifiée sur la JVM. Les deux exécutions
@@ -205,6 +208,202 @@ Les dix fichiers sensibles de narration, de sous-titres, d’audio et du rendere
 doivent rester identiques au point de retour de l’étape 3. Toute limite ou
 correction découverte pendant la validation doit rester attribuable au passage
 et au commit concernés, avec les échecs intermédiaires conservés.
+
+### Contrôles des commandes audio de l’étape 5
+
+Les six tests de `AudioCommandsTest` doivent vérifier les bornes inclusives des
+volumes et des durées, les valeurs non finies, les refus atomiques, les groupes
+de paramètres indépendants, la priorité des tickets périmés et de la fermeture,
+les valeurs identiques et le zéro signé. L’activation du filtre dépend de sa
+capacité déclarée ; sa désactivation reste possible. Une validation pure ne doit
+modifier aucun état ni prétendre mesurer un signal sonore.
+
+Les onze tests de `AudioCommandsRobolectricTest` exercent le vrai port de session,
+avec Media3 et une voix contrôlée. Les tests historiques de volume, de gestes,
+de diagnostic et de composition restent requis.
+
+| Scénario | Oracle requis |
+|---|---|
+| Phrase active et file | Modifier les groupes audio en conservant l’identifiant vocal, les demandes déjà émises, les textes en attente et le transport. |
+| Refus et absence de changement | Ne modifier ni préférences, ni volume, ni filtre, ni benchmark, ni fondu lorsque la commande est invalide ou identique. |
+| Baisse, maintien et remontée | Utiliser les durées non nulles et vérifier les valeurs intermédiaires puis la cible ; un volume explicite annule les anciens callbacks sans redémarrer la voix. |
+| Changement de durée | Conserver la transition déjà planifiée et prendre la nouvelle durée lors de la suivante. |
+| Réplique proche | Conserver la prolongation existante de l’attente entre deux sous-titres ; changer la préférence ne reprogramme pas le maintien déjà engagé. |
+| Remplacement et fermeture | Refuser un ancien ticket après réouverture, conserver les préférences audio et ne pas consulter le lecteur libéré lors d’un instantané fermé. |
+| Pause, déplacement et débranchement | Empêcher une commande audio et un ancien callback vocal de reprendre la lecture. |
+| Consultation et préférences invalides | Lire sans commande et utiliser un défaut fini pour une préférence de volume non finie. |
+| Contrôles réels | Modifier et réinitialiser les six réglages, respecter les bornes, expliquer les refus et restaurer la case du filtre refusée. |
+| Grande police et durée de vie | Vérifier le défilement, les explications et les contrôles ; consulter sans mutation et refuser une action depuis une activité détruite. |
+| Réglages généraux périmés | Refuser un curseur issu d’une ancienne ouverture, rétablir sa valeur conservée et afficher la raison dans le dialogue, sans changer le mode plein écran ni préparer une voix. |
+
+Les deux scénarios de `AudioCommandsAndroidTest` doivent utiliser la vraie
+activité, Media3 et le service vocal de fixture. La trace IPC doit recenser
+exactement les demandes attendues ; l’absence de perte de sous-titre, la
+conservation des répétitions réelles et le comportement des callbacks périmés
+restent contrôlés. Le parcours des réglages passe par les contrôles visibles et
+leur défilement normal. Une compilation de ce fichier ne valide pas son
+exécution : les deux passages complets des 73 tests Android restent nécessaires.
+
+Les instantanés audio distinguent les valeurs demandées, le volume configuré au
+lecteur et les signaux du processeur. Le compteur PCM cumule les échantillons de
+canaux, y compris le passage sans atténuation ; son augmentation et un filtre
+activé ne prouvent pas une atténuation audible. Les tests du processeur PCM
+existants restent exécutés. Les dix fichiers sensibles doivent rester identiques
+au point de retour validé de l’étape 4. Aucun résultat ne constitue un essai de
+TalkBack, d’une voix externe ou du son physique du téléphone cible.
+
+#### Premier passage ciblé du 23 octobre 2026
+
+Les 50 tests du noyau ont réussi. Les quatre classes ciblées de l’application
+ont exécuté 17 méthodes : 16 réussites et un échec dans le nouveau scénario de
+grande police. Ce test sélectionnait un unique `ScrollView` dans toute la fenêtre
+`AlertDialog`, qui en contient plusieurs. La sélection vise désormais le
+panneau audio défilant identifié par son contenu, tout en conservant les
+assertions de lisibilité, d’accès et d’absence de mutation. Les rapports de cet
+échec restent conservés ; une nouvelle validation complète doit porter sur
+la correction.
+
+Deux méthodes d’interface avaient été ajoutées avant la compilation de
+l’application, après le démarrage du lanceur ciblé configuré pour 15 méthodes.
+Son contrôle initial a donc aussi refusé le total 17. L’audit des XML bruts a
+retrouvé exactement les 17 identités présentes dans ces quatre classes, sans
+méthode absente ni dupliquée, avec le même échec réel de défilement. Ce passage
+ciblé ne constitue pas une validation réussie de l’étape.
+
+#### Premier passage complet local du 23 octobre 2026
+
+Après cette première correction, les 50 tests du noyau ont de nouveau réussi.
+Les 63 tests de l’application ont tous été exécutés, avec 62 réussites et un
+échec du même scénario de grande police : la collecte des boutons de toute la
+fenêtre incluait les boutons négatif et neutre du gabarit Android, masqués et
+sans texte dans ce dialogue. L’oracle porte désormais sur les contrôles du
+panneau audio, y compris sa case du filtre, et conserve les vérifications de
+libellé, de focus, de dimensions et de texte non tronqué. Les sources n’ont pas changé
+pendant ce passage et les dix fichiers sensibles sont restés identiques au
+point de retour. Gradle s’est arrêté avant la production du rapport lint et
+la fin de la compilation ; ce passage n’établit donc pas une réussite du lint
+ou des APK.
+
+#### Correction identifiée pendant la revue de l’interface générale
+
+La revue du code a identifié un problème distinct des deux échecs de sélection
+du test de grande police : le refus d’une commande depuis les réglages généraux
+utilisait le message global de l’activité. Celui-ci pouvait rester derrière le
+dialogue et faire quitter le plein écran. Le refus est présenté dans le dialogue
+lui-même, avec une zone perceptible et défilante, et la valeur du contrôle est
+restaurée. Le parcours audio évite également le rappel général d’actualisation,
+qui peut déclencher une préparation vocale. Un onzième scénario JVM vérifie le
+parcours réel des deux curseurs concernés après remplacement du média.
+Cette découverte vient de la revue ; elle n’est pas présentée comme un échec
+observé dans le premier passage Gradle. Les effectifs finaux attendus deviennent
+50 tests du noyau, 64 tests de l’application et 73 tests Android.
+
+#### Deuxième passage complet local du 23 octobre 2026
+
+Les 50 tests du noyau ont réussi. Les 64 tests de l’application ont tous été
+exécutés, avec 63 réussites et un échec. Les scénarios de grande police et de
+refus des curseurs généraux ont réussi. Le scénario de maintien avant une
+réplique proche a constaté un volume de 1,0 alors qu’il attendait encore 0,25 à
+la milliseconde précédant l’échéance qu’il avait calculée. Les rapports bruts
+conservent cette divergence. L’analyse a identifié une première faiblesse de
+l’oracle : le test calculait son délai à partir d’une position lue auparavant,
+alors que la fin de phrase réautorise la lecture avant de planifier la remontée.
+La position réellement lue par le mixage pouvait donc avoir avancé entre les
+deux calculs. Les traces de ce passage ne suffisent pas à attribuer à elles
+seules l’échec à cette différence ; les vérifications suivantes sont décrites
+ci-dessous.
+
+Le scénario attend désormais la vraie pause Confort et une barrière du thread
+Media3 avant d’installer le sous-titre proche. Il observe ensuite, sans les
+modifier, les deux lectures réelles de position consommées lors de la
+planification de la remontée après la fin de phrase. Ces entrées réelles
+servent à calculer l’échéance attendue ; les assertions juste avant cette
+échéance et à son terme restent inchangées. Le journal JUnit conserve la
+position de préparation, les positions consommées et le délai attendu. Aucun
+retard arbitraire, nouvelle tentative ni changement de la règle audio n’est
+introduit pour faire réussir le scénario. Les sources sont restées stables
+pendant le passage en échec. Le rapport lint n’a pas été produit avant l’arrêt
+de Gradle : ce passage ne le valide pas.
+
+Le lanceur local utilise ensuite `--continue` pour laisser se terminer les
+tâches indépendantes de lint et de compilation même si une suite échoue. Il
+exige toujours un code de sortie global nul, la réussite de chaque contrôle
+et les identités exactes de tous les tests ; cette option ne transforme aucun
+échec en réussite et les passages précédents restent conservés séparément.
+
+#### Troisième passage complet et sondes de diagnostic du 23 octobre 2026
+
+Avec `--continue`, les 82 tâches nécessaires ont été exécutées. Les 50 tests du
+noyau ont réussi ; les 64 tests de l’application ont été exécutés avec 63
+réussites et un échec du scénario de réplique proche. Ce nouvel échec intervient
+avant la vérification de l’échéance : une seule lecture de position a été
+observée au lieu des deux attendues. L’anticipation n’avait donc pas trouvé
+l’entrée proche attendue dans ce parcours. Les règles audio de production
+n’ont pas été modifiées pour adapter ce scénario.
+
+Une trace de diagnostic a été ajoutée avant cette assertion pour conserver la
+clé de piste indexée, la piste courante, les positions réellement lues et le
+contenu temporel de l’index. Une sonde limitée à cette méthode a réussi, puis
+une sonde unique de ses onze méthodes de classe a réussi. Dans les deux cas,
+la piste était déjà `external-subtitle`, les positions lues étaient `[0, 0]`,
+le sous-titre proche commençait à 900 ms et le maintien attendu était de
+1 050 ms. **Ces deux sondes n’ont pas reproduit l’échec précédent et ne
+prouvent donc pas à elles seules sa cause.** Elles ne remplacent pas une
+validation complète.
+
+Le helper de préparation attend désormais explicitement la sélection de
+`external-subtitle` lorsqu’un fichier externe est fourni. Auparavant il
+acceptait toute piste de texte non nulle, qui pouvait encore être une
+sélection provisoire avant le choix asynchrone du fichier externe ; ce n’est
+pas une précondition suffisante pour indexer un futur sous-titre sur la bonne
+piste. Le scénario conserve la barrière après la pause Confort, l’observation
+sans substitution des lectures réelles et les assertions exactes juste avant
+et à l’échéance. Les traces restent dans les XML pour rendre un éventuel
+nouvel échec analysable ; aucun résultat de sonde n’est substitué à un passage
+complet en échec.
+
+Les deux APK debug ont été compilés pendant le troisième passage. Le rapport
+lint comportait 58 avertissements et un indice, contre 49 avertissements et un
+indice au point de retour : dix nouveaux signalements ont été refusés, tandis
+qu’un ancien avait disparu. Ils concernaient neuf constructions de texte dans
+les deux panneaux audio et la nouvelle écriture groupée des préférences. Les
+textes sont désormais placés dans des ressources avec paramètres ; l’écriture
+groupée utilise l’extension KTX tout en gardant une seule application des
+préférences. Les anciens signalements sur les mêmes lignes du panneau rapide
+sont aussi corrigés. Aucune règle lint n’est ignorée. La compilation des APK
+n’efface ni l’échec JVM ni ces ajouts : le troisième passage reste refusé.
+
+#### Quatrième passage complet et contrôle lint final du 23 octobre 2026
+
+Le quatrième passage complet a exécuté 82 tâches Gradle : les **50 tests du
+noyau et les 64 tests de l’application ont tous réussi**, sans erreur, test
+ignoré, manquant, inattendu ou dupliqué. Les identités ont été comparées aux
+sources. Le scénario de réplique proche a observé la piste externe attendue,
+les positions `[0, 0]` et le maintien de 1 050 ms ; les deux assertions de part
+et d’autre de son échéance ont réussi.
+
+Les APK debug de l’application et de l’instrumentation ont été compilés ; le
+manifeste de l’application, ses permissions, les deux signatures et leurs
+alignements ont été vérifiés. Les sources sont restées identiques pendant ce
+passage et les dix fichiers sensibles correspondent au point de retour de
+l’étape 4. L’inventaire trouve 73 méthodes Android, mais leur compilation et
+cet inventaire ne constituent pas une exécution sur Android.
+
+Le contrôle comparatif de lint a encore refusé un nouveau signalement `Typos` :
+le dictionnaire interprétait le mot français « existant » dans une description
+comme une faute anglaise. Les dix ajouts du passage précédent avaient disparu,
+ainsi que trois avertissements historiques au total. Le libellé a été simplifié
+en « Volume de la voix : », sans ignorer la règle lint ni changer un algorithme.
+Le quatrième passage complet reste donc distingué du contrôle suivant.
+
+Après cette seule reformulation, un **contrôle ciblé de lint et des ressources**
+a réussi : **46 avertissements et un indice, aucun ajout par rapport au point
+de retour, trois anciens signalements retirés**. Les 155 fichiers source
+inventoriés sont restés stables pendant ce contrôle. Aucun test n’a été
+réexécuté dans ce passage ciblé et aucune nouvelle compilation d’APK n’y est
+revendiquée. La CI doit vérifier le commit final complet, avec les variantes
+debug et release puis les deux passages instrumentés ; ses rapports doivent
+rester liés au commit exact avant de conclure à la validation Android.
 
 Les tests JVM ne remplacent pas l'instrumentation. Sur un émulateur Android
 démarré, exécuter séparément `bash tools/run-device-tests.sh`. Les tests du

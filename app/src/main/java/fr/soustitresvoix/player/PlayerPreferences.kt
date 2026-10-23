@@ -1,6 +1,8 @@
 package fr.soustitresvoix.player
 
 import android.content.Context
+import androidx.core.content.edit
+import fr.soustitresvoix.core.AudioSettings
 import fr.soustitresvoix.core.NarrationMachine
 
 class PlayerPreferences(context: Context) {
@@ -15,10 +17,10 @@ class PlayerPreferences(context: Context) {
         get() = p.getFloat("speechRate", 1.0f).coerceIn(0.6f, 2f)
         set(v) { p.edit().putFloat("speechRate", v.coerceIn(0.6f, 2f)).apply() }
     var movieVolume: Float
-        get() = p.getFloat("movieVolume", 1f).coerceIn(0f, 1f)
+        get() = p.getFloat("movieVolume", 1f).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: 1f
         set(v) { p.edit().putFloat("movieVolume", v.coerceIn(0f, 1f)).apply() }
     var duckVolume: Float
-        get() = p.getFloat("duckVolume", 0.25f).coerceIn(0f, 1f)
+        get() = p.getFloat("duckVolume", 0.25f).takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: .25f
         set(v) { p.edit().putFloat("duckVolume", v.coerceIn(0f, 1f)).apply() }
     var voiceVolume: Float
         get() = p.getFloat("voiceVolume", 1f).coerceIn(0.1f, 1f)
@@ -45,6 +47,21 @@ class PlayerPreferences(context: Context) {
     fun putInt(key: String, value: Int) { p.edit().putInt(key, value).apply() }
     fun bool(key: String, default: Boolean = false) = p.getBoolean(key, default)
     fun putBool(key: String, value: Boolean) { p.edit().putBoolean(key, value).apply() }
+    /** Existing preference keys and defaults are preserved across every media opening. */
+    internal fun movieAudioSettings() = AudioSettings(movieVolume, duckVolume,
+        int("duckAttack", 160, 0, 2000), int("duckRelease", 500, 0, 2000),
+        int("duckHold", 350, 0, 2000), bool("spectralDucking"))
+    /** Called only after command validation; grouped values become visible in one preference edit. */
+    internal fun saveMovieAudioSettings(settings: AudioSettings) {
+        p.edit {
+            putFloat("movieVolume", settings.movieVolume)
+            putFloat("duckVolume", settings.duckVolume)
+            putInt("duckAttack", settings.attackMs)
+            putInt("duckRelease", settings.releaseMs)
+            putInt("duckHold", settings.holdMs)
+            putBoolean("spectralDucking", settings.spectralDucking)
+        }
+    }
     val adaptiveMax get() = int("adaptiveMax", 180, 100, 250) / 100f
     val resumePolicy get() = NarrationMachine.ResumePolicy.values()[int("resumePolicy", 0, 0, 2)]
     val cacheEnabled get() = bool("cache", true)

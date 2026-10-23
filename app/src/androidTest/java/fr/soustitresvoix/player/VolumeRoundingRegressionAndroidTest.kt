@@ -53,7 +53,7 @@ class VolumeRoundingRegressionAndroidTest {
                             }
                             val action = if (delta > 0) "augmenter" else "diminuer"
                             views.filterIsInstance<Button>().single {
-                                it.contentDescription?.toString() == "$label : $action de cinq pour cent"
+                                it.contentDescription?.toString() == "$label : $action de cinq points de pourcentage"
                             }.performClick()
                             assertEquals("$label : ${percent + delta} %", caption.text.toString())
                         }

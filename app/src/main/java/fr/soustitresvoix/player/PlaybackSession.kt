@@ -29,6 +29,13 @@ import fr.soustitresvoix.core.SpeechTools
 import fr.soustitresvoix.core.PlaybackBenchmark
 import fr.soustitresvoix.core.PlaybackDiagnosticSnapshot
 import fr.soustitresvoix.core.ImageCommandPort
+import fr.soustitresvoix.core.AudioCommandContext
+import fr.soustitresvoix.core.AudioCommandDecision
+import fr.soustitresvoix.core.AudioCommandPolicy
+import fr.soustitresvoix.core.AudioCommandPort
+import fr.soustitresvoix.core.AudioCommandRequest
+import fr.soustitresvoix.core.AudioCommandSnapshot
+import fr.soustitresvoix.core.CapabilityStatus
 import java.io.File
 
 @UnstableApi
@@ -44,6 +51,41 @@ class PlaybackSession(
     val visual = VisualTools(this)
     val imageCommands: ImageCommandPort get() = visual
     val movieAudio: MovieAudio = components.createMovieAudio()
+    /** The player volume and the installed PCM processor share this session-owned boundary. */
+    val audioCommands: AudioCommandPort = object : AudioCommandPort {
+        override fun snapshot(): AudioCommandSnapshot {
+            val state = audioCommandContext()
+            // Never consult a released player or processor; preferences remain available.
+            return if (state.closed) AudioCommandSnapshot(state, null, null, null, null)
+            else AudioCommandSnapshot(state, player.volume, movieAudio.enabled,
+                movieAudio.speaking, movieAudio.processedSamples)
+        }
+
+        override fun submit(request: AudioCommandRequest): AudioCommandDecision {
+            val before = audioCommandContext()
+            val decision = AudioCommandPolicy.validate(request, before)
+            if (decision is AudioCommandDecision.Accepted && decision.changed) {
+                val settings = decision.requested
+                finishPlaybackBenchmark("Mélange sonore modifié : essai interrompu")
+                prefs.saveMovieAudioSettings(settings)
+                if (settings.spectralDucking != before.requested.spectralDucking)
+                    movieAudio.enabled = settings.spectralDucking
+                if (settings.movieVolume != before.requested.movieVolume || settings.duckVolume != before.requested.duckVolume)
+                    applyMixImmediately()
+                // Timing changes are consumed by the next existing setDucked call.
+                // No pause, speech method, narration command, focus change or sink recreation.
+                // Do not call onChanged: MainActivity's general refresh also prepares speech.
+                // Audio controls refresh their own values; the existing UI ticker remains.
+            }
+            return decision
+        }
+    }
+    private fun audioCommandContext(): AudioCommandContext {
+        check(Looper.myLooper() == handler.looper) { "Audio commands require the session thread." }
+        return AudioCommandContext(mediaEpoch, closed,
+            if (closed) CapabilityStatus.UNKNOWN else movieAudio.diagnosticCapability().status,
+            prefs.movieAudioSettings())
+    }
     private val subtitleSource: SubtitleSource = components.createSubtitles(context)
     private val indexingWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
     private var indexer: SubtitleIndexer? = null
@@ -618,9 +660,14 @@ class PlaybackSession(
         }
         onChanged()
     }
-    fun updateMix() {
+    internal fun updateMix() {
+        if (closed) return
         finishPlaybackBenchmark("Mélange sonore modifié : essai interrompu")
+        applyMixImmediately()
+    }
+    private fun applyMixImmediately() {
         fade?.let { handler.removeCallbacks(it) }
+        fade = null
         player.volume = (prefs.movieVolume * if (ducked) prefs.duckVolume else 1f).coerceIn(0f, 1f)
     }
     private fun setDucked(value: Boolean) {

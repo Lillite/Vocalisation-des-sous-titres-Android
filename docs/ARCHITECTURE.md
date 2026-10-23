@@ -2,7 +2,7 @@
 
 [Index de la documentation](README.md) · [Compilation et validation](../TESTING.md)
 
-Cette vue décrit les comportements de l’édition **0.3.2** et les quatre premières étapes
+Cette vue décrit les comportements de l’édition **0.3.2** et les cinq premières étapes
 préparatoires sur cette branche. Le projet sépare la logique de
 narration indépendante d’Android, les adaptateurs du lecteur et l’interface. Les
 invariants ci-dessous sont des exigences à préserver lors des modifications ; les
@@ -155,6 +155,53 @@ de fenêtre sans activer à lui seul le mode adaptatif Android. La comparaison
 neutralise les corrections, marges et Lanczos mais conserve le cadrage et les
 transformations de surface. Voir [Interface d’image — étape 4](INTERFACE_IMAGE_ETAPE_4.md)
 pour le guide de chaque paramètre et les exigences de régression.
+
+## Commandes du son du film
+
+`core/AudioCommands.kt` expose un port indépendant d’Android pour les six réglages
+existants du film. `PlaybackSession.audioCommands` le possède, car le volume est
+configuré sur son `Player`, tandis que le filtre spectral appartient à son unique
+`MovieAudio`. Le contrat ne possède aucun second processeur, sink ou ordonnanceur.
+
+| Commande | Validation et application |
+|---|---|
+| `SetLevels` | Deux valeurs finies entre 0 et 1, validées ensemble ; le ratio multiplie le volume normal pendant la parole. Un changement réel remplace le fondu courant par la cible immédiate. |
+| `SetDuckingTiming` | Trois durées entières de 0 à 2 000 ms validées ensemble ; les prochaines transitions les utilisent, sans reconstruire celles déjà planifiées. |
+| `SetSpectralDucking` | Activation explicite sous déclaration de capacité ; seule la propriété `enabled` du processeur existant change. Désactiver reste possible si la capacité est inconnue. |
+
+Le validateur pur vérifie d’abord fermeture et génération, puis les valeurs et
+la capacité applicable. Le ticket capturé par le producteur est invalidé à chaque
+ouverture de média, même identique, ainsi qu’à la fermeture. Les préférences sont
+conservées ; ce ticket ne réinitialise aucun réglage audio. Une acceptation
+identique retourne avant écriture, interruption d’essai ou annulation de fondu.
+La comparaison numérique traite les deux signes de zéro de la même façon.
+
+Après validation d’un changement, la session enregistre les six valeurs dans une
+seule édition des préférences et ne modifie que les composants concernés. Aucun
+appel à `refreshSettings()`, aucune commande de narration et aucune demande de
+synthèse ne fait partie de ce chemin. Le traitement des effets `Duck`, son attente
+de réplique proche, le signal `speaking` et le lissage PCM restent existants.
+La notification générale `onChanged` n’est pas appelée par ces commandes : son
+parcours dans l’activité peut lancer une préparation vocale. Les contrôles audio
+actualisent leur propre état ; l’actualisation périodique existante reste distincte.
+
+`AudioCommandSnapshot` expose préférences demandées, volume configuré, activation
+du filtre, signal de parole et compteur de traitement. Le volume peut être entre
+deux cibles pendant un fondu. Le compteur additionne les échantillons de tous les
+canaux depuis le début de session, y compris le passage sans atténuation ; il ne
+mesure pas une atténuation acoustique. Après fermeture, les observations sont
+absentes et le lecteur libéré n’est pas relu.
+
+Les panneaux, curseurs et gestes de volume utilisent ce port. `AudioSettingsControls`
+présente les pas existants, les retours individuels aux défauts, les explications
+et un état actualisé explicitement, sans boucle de suivi supplémentaire. Un refus
+rétablit les valeurs enregistrées, affiche le motif et demande son défilement à
+l’écran. La case spectrale ne déclenche aucune commande pendant l’actualisation.
+Le panneau général conserve sa pause et son application des réglages vocaux
+historiques ; Volumes rapides ne passe pas par ce parcours.
+
+Le détail des durées, de leur anticipation et des contrôles de non-régression
+figure dans [Commandes du son du film — étape 5](COMMANDES_AUDIO_ETAPE_5.md).
 
 ## Noyau indépendant d’Android
 

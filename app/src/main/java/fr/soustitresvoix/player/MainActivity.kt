@@ -29,6 +29,9 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import fr.soustitresvoix.core.SubtitleImport
 import fr.soustitresvoix.core.NarrationMachine
+import fr.soustitresvoix.core.AudioCommand
+import fr.soustitresvoix.core.AudioCommandDecision
+import fr.soustitresvoix.core.AudioCommandRequest
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Locale
@@ -424,6 +427,24 @@ class MainActivity : ComponentActivity() {
     }
     private fun settingsDialog() {
         session.pause()
+        val audioGeneration = session.audioCommands.snapshot().context.generation
+        val audioResult = text("Les deux volumes du film utilisent les réglages audio validés.", 16f).apply {
+            id = R.id.audio_settings_general_result
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        fun changeFilmAudio(command: AudioCommand) {
+            if (closed || isFinishing || isDestroyed) return
+            val result = session.audioCommands.submit(AudioCommandRequest(audioGeneration, command))
+            audioResult.text = when (result) {
+                is AudioCommandDecision.Rejected -> AudioCommandText.rejection(result.reason)
+                is AudioCommandDecision.Accepted -> if (result.changed) "Niveaux du film enregistrés ; cible appliquée au lecteur."
+                    else "Valeur déjà demandée : aucun changement."
+            }
+            if (result is AudioCommandDecision.Rejected) audioResult.post {
+                if (audioResult.isAttachedToWindow && !closed && !isFinishing && !isDestroyed)
+                    audioResult.requestRectangleOnScreen(android.graphics.Rect(0, 0, audioResult.width, audioResult.height), true)
+            }
+        }
         var pendingBenchmarkSeconds: Int? = null
         lateinit var dialog: AlertDialog
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8)) }
@@ -445,7 +466,8 @@ class MainActivity : ComponentActivity() {
         column.addView(text("Confort et Adaptatif conservent les phrases complètes. Le mode Continu peut couper les phrases trop longues.", 16f))
         check("Afficher aussi les sous-titres à l’écran", prefs.showSubtitles) { prefs.showSubtitles = it }
         check("Ne pas lire les indications entre crochets, par exemple [musique]", prefs.skipDescriptions) { session.beforeSettingsChange(); prefs.skipDescriptions = it }
-        fun slider(label: String, from: Int, to: Int, value: Int, unit: String, change: (Int) -> Unit) {
+        fun slider(label: String, from: Int, to: Int, value: Int, unit: String,
+            readCurrent: (() -> Int)? = null, change: (Int) -> Unit) {
             val caption = text("$label : $value$unit", 18f); column.addView(caption)
             column.addView(SeekBar(this).apply {
                 id = View.generateViewId(); caption.labelFor = id
@@ -454,16 +476,27 @@ class MainActivity : ComponentActivity() {
                     override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
                     override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
                     override fun onProgressChanged(seekBar: SeekBar, p: Int, fromUser: Boolean) {
-                        caption.text = "$label : ${p + from}$unit"; seekBar.contentDescription = caption.text
                         if (fromUser) change(p + from)
+                        val actual = readCurrent?.invoke() ?: (p + from)
+                        caption.text = "$label : $actual$unit"; seekBar.contentDescription = caption.text
+                        if (seekBar.progress != actual - from) seekBar.progress = actual - from
                     }
                 })
             })
         }
         slider("Vitesse de la voix", 60, 200, (prefs.speechRate * 100).roundToInt(), " %") { session.beforeSettingsChange(); prefs.speechRate = it / 100f }
         slider("Volume de la voix", 10, 100, (prefs.voiceVolume * 100).roundToInt(), " %") { prefs.voiceVolume = it / 100f }
-        slider("Volume habituel du film", 0, 100, (prefs.movieVolume * 100).roundToInt(), " %") { prefs.movieVolume = it / 100f }
-        slider("Son du film conservé pendant la voix", 0, 100, (prefs.duckVolume * 100).roundToInt(), " %") { prefs.duckVolume = it / 100f }
+        column.addView(text(AudioSettingsDescriptions.MOVIE_VOLUME, 16f))
+        slider("Volume habituel du film", 0, 100, (prefs.movieVolume * 100).roundToInt(), " %",
+            readCurrent = { (prefs.movieVolume * 100).roundToInt() }) {
+            changeFilmAudio(AudioCommand.SetLevels(it / 100f, session.audioCommands.snapshot().context.requested.duckVolume))
+        }
+        column.addView(text(AudioSettingsDescriptions.DUCK_VOLUME, 16f))
+        slider("Son du film conservé pendant la voix", 0, 100, (prefs.duckVolume * 100).roundToInt(), " %",
+            readCurrent = { (prefs.duckVolume * 100).roundToInt() }) {
+            changeFilmAudio(AudioCommand.SetLevels(session.audioCommands.snapshot().context.requested.movieVolume, it / 100f))
+        }
+        column.addView(audioResult)
         slider("Taille des sous-titres", 22, 60, prefs.subtitleSp.toInt(), " sp") { prefs.subtitleSp = it.toFloat() }
         column.addView(button("Choisir une voix hors ligne") { voiceDialog() })
         column.addView(button("Écouter un essai de la voix") { session.refreshSettings(); session.previewVoice() })

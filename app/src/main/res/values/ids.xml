@@ -30,4 +30,12 @@
     <item type="id" name="image_adjustment_error" />
     <item type="id" name="image_framing_state" />
     <item type="id" name="image_screen_state" />
+    <item type="id" name="audio_settings_state" />
+    <item type="id" name="audio_settings_result" />
+    <item type="id" name="audio_settings_refresh" />
+    <item type="id" name="audio_spectral_toggle" />
+    <item type="id" name="audio_spectral_reset" />
+    <item type="id" name="audio_movie_reset" />
+    <item type="id" name="audio_duck_reset" />
+    <item type="id" name="audio_settings_general_result" />
 </resources>

@@ -117,6 +117,12 @@ La quatrième étape expose ce contrat dans une interface d’image avec pas de
 0,01, saisie décimale, remise à zéro ciblée et état des corrections. Chaque
 paramètre d’image, de cadrage, de zoom et de luminosité de l’écran dispose d’une
 description de son effet, de son utilisation et de ses limites.
+La cinquième étape ajoute une frontière de commandes pour les six réglages du
+son du film : niveaux, durées de baisse et de remontée, attente et filtre spectral
+existant. Les commandes des panneaux, des curseurs et du geste de volume passent
+par la même validation. Les demandes identiques laissent les fondus continuer ;
+les paramètres disposent d’explications et de retours individuels aux valeurs
+par défaut dans « Volumes rapides ».
 La demande du 22 octobre 2026 prévoit plusieurs étapes avant toute livraison
 d’application.
 Le code de départ est conservé sur
@@ -127,26 +133,29 @@ sur `backup/etape-1-validee-20261022-a093e79`. Le point de retour de l’étape 
 [`0319dcb`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/0319dcb9b0cfd71be4231849306f0b248e1dbe02),
 sur `backup/etape-2-validee-20261022-0319dcb`. Le point de retour de l’étape 3 est
 [`c96b687`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/c96b687f91b2c9f7fadfc44383c8d346047cd30e),
-sur `backup/etape-3-validee-20261023-c96b687`. Le travail de l’étape 4 se trouve sur
-`work/etape-4-interface-image-20261023`.
+sur `backup/etape-3-validee-20261023-c96b687`. Le point de retour de l’étape 4 est
+[`8feafda`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/8feafda50a272cbca9972cf1c948dce5afd269e7),
+sur `backup/etape-4-validee-20261023-8feafda`. Le travail de l’étape 5 se trouve sur
+`work/etape-5-commandes-audio-20261023`.
 
 Le périmètre, les invariants et les contrôles sont détaillés dans
 [Modularisation — étape 1](docs/MODULARISATION_ETAPE_1.md),
 [Capacités et observations — étape 2](docs/CAPACITES_ETAPE_2.md),
-[Commandes d’image — étape 3](docs/COMMANDES_IMAGE_ETAPE_3.md) et
-[Interface d’image — étape 4](docs/INTERFACE_IMAGE_ETAPE_4.md). Les règles de
+[Commandes d’image — étape 3](docs/COMMANDES_IMAGE_ETAPE_3.md),
+[Interface d’image — étape 4](docs/INTERFACE_IMAGE_ETAPE_4.md) et
+[Commandes du son du film — étape 5](docs/COMMANDES_AUDIO_ETAPE_5.md). Les règles de
 vocalisation, le mixage audio et les traitements graphiques existants restent
-à préserver. Les contrôles attendus de l’étape 4 sont 44 tests du noyau, 53 tests
-JVM de l’application et deux passages complets de 71 tests Android ; leur réussite
+à préserver. Les contrôles attendus de l’étape 5 sont 50 tests du noyau, 64 tests
+JVM de l’application et deux passages complets de 73 tests Android ; leur réussite
 doit être vérifiée sur l’exécution associée au commit concerné.
 Ce travail reste sur une branche séparée, avec une demande de fusion en brouillon,
 jusqu’à la livraison demandée ultérieurement. Le lien de téléchargement ci-dessus
 désigne toujours l’édition publiée 0.3.2.
 
-Après validation de l’interface d’image, l’incrément proposé est une frontière de
-commandes expertes pour l’audio du film, avec les mêmes distinctions entre
-demandes, disponibilité et effets réellement constatés. La vocalisation conserve
-ses règles ; l’évaluation de moteurs de lecture alternatifs reste une étape séparée.
+Après validation des commandes audio, l’incrément proposé est une saisie précise
+des pourcentages et des durées au-dessus de ce même contrat, avec erreurs visibles,
+annulation et protection des demandes anciennes. La vocalisation conserve ses
+règles ; l’évaluation de moteurs de lecture alternatifs reste une étape séparée.
 
 | Besoin | Document |
 | --- | --- |
