@@ -11,10 +11,10 @@ Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcou
 | Étape | Contrôles exigés |
 | --- | --- |
 | Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 44 tests JVM du noyau, 46 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 44 tests du noyau et des 46 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Variante debug | 44 tests JVM du noyau, 53 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 44 tests du noyau et des 53 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
 | Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
-| Android 36 | Deux passages complets des 70 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
+| Android 36 | Deux passages complets des 71 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
 | Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
 
 Ces effectifs incluent les suites de la version 0.3.2 et les compléments de la
@@ -25,9 +25,11 @@ du modèle de diagnostic, trois tests JVM de consultation et d'invalidation, et
 un scénario Android de consultation/copie avec observation des requêtes TTS.
 La [troisième étape](docs/COMMANDES_IMAGE_ETAPE_3.md) ajoute quatre tests de
 validation des commandes d’image, cinq tests JVM de leur raccordement et un
-scénario instrumenté supplémentaire. Les totaux 40/41/69 de l’étape 2 restent
-propres à son état historique ; les effectifs exigés sur cette branche sont
-44/46/70. Ces nombres sont des critères à contrôler, pas une preuve d’exécution :
+scénario instrumenté supplémentaire. La [quatrième étape](docs/INTERFACE_IMAGE_ETAPE_4.md)
+ajoute sept scénarios JVM et un scénario Android aux fichiers de tests d’image
+existants. Les totaux 40/41/69 de l’étape 2 et 44/46/70 de l’étape 3 restent
+propres à leurs états historiques ; les effectifs exigés sur cette branche sont
+44/53/71. Ces nombres sont des critères à contrôler, pas une preuve d’exécution :
 consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
 Aucun test antérieur n'est retiré. Lorsqu'un test est
 ajouté, mettre à jour les effectifs attendus dans le workflow ou dans
@@ -158,6 +160,40 @@ cible, ni le rendu HDR réel, ni les performances d’un autre moteur.
 Ces contrôles s’ajoutent aux exigences complètes du tableau initial. Les rapports
 doivent établir les effectifs et les résultats du commit testé ; aucun résultat
 des étapes 1 ou 2 ne vaut validation de l’étape 3.
+
+### Contrôles de l’interface d’image de l’étape 4
+
+Les sept scénarios ajoutés dans `ImageCommandsRobolectricTest` doivent exercer
+les vrais contrôles, avec les composants de lecture délégués au vrai lecteur
+et une voix contrôlée. Les cinq scénarios antérieurs restent requis.
+
+| Scénario | Oracle requis |
+|---|---|
+| Pas fins et bornes | Atteindre les bornes inclusives des deux corrections sans dérive, refuser le pas suivant et conserver une phrase active, sa file, le transport et l’audio. |
+| Saisie précise | Accepter point, virgule et valeurs intermédiaires comme 0,125 ; conserver cette précision lors d’un pas vers 0,135 ; refuser texte, valeurs hors bornes et notation non autorisée, sans filtrage silencieux ni écrêtage. |
+| Demandes et soumissions | Distinguer une valeur conservée d’un plan effectivement transmis, y compris sous comparaison ; les remises à zéro ne touchent que les corrections visées. |
+| Protections | Montrer les raisons HDR, capacité inconnue ou indisponible ; conserver les réglages refusés et restaurer la comparaison. |
+| Générations et fermeture | Garder le ticket d’origine d’une saisie ouverte avant remplacement du média ; fermer les dialogues et empêcher une commande tardive après fermeture. |
+| Aides et grandes polices | Vérifier la présence des descriptions et des libellés, les dimensions des contrôles, le défilement et la consultation sans commande dans une configuration de police agrandie. |
+| Commandes de cadrage et d’écran | Conserver le ticket du dialogue et d’une confirmation de recadrage ; refuser les commandes périmées et vérifier les consignes écran, dont le premier appui plus depuis le système à 60 %. |
+
+Le scénario Android ajouté dans `ImageCommandsAndroidTest` doit saisir les valeurs
+par les vrais contrôles, constater une erreur persistante sans changement,
+modifier la comparaison, remettre les corrections à zéro et attendre leurs
+soumissions réelles. Deux essais vocaux explicites doivent encadrer ces actions ;
+la trace IPC du service de fixture ne doit contenir que ces deux requêtes. La
+comparaison de l’état commence après le retour réel du volume du film au niveau
+demandé. Pause, position, choix de pistes, préférences et luminosité de fenêtre
+restent dans l’oracle. Le premier scénario Android d’image reste exécuté.
+
+Les vérifications de grandes polices et des propriétés d’accessibilité sur la
+JVM ne constituent pas un essai TalkBack. Les captures de la démonstration
+synthétique documentent une interface observée ; elles ne prouvent pas à elles
+seules l’intégralité du défilement, le rendu HDR ou le confort sur téléphone.
+Les dix fichiers sensibles de narration, de sous-titres, d’audio et du renderer
+doivent rester identiques au point de retour de l’étape 3. Toute limite ou
+correction découverte pendant la validation doit rester attribuable au passage
+et au commit concernés, avec les échecs intermédiaires conservés.
 
 Les tests JVM ne remplacent pas l'instrumentation. Sur un émulateur Android
 démarré, exécuter séparément `bash tools/run-device-tests.sh`. Les tests du

@@ -8,4 +8,26 @@
     <item type="id" name="cinema_controls" />
     <item type="id" name="cinema_play" />
     <item type="id" name="cinema_unlock" />
+    <item type="id" name="image_adjustment_requested" />
+    <item type="id" name="image_expert_controls" />
+    <item type="id" name="image_adjustment_submitted" />
+    <item type="id" name="image_adjustment_status" />
+    <item type="id" name="image_adjustment_result" />
+    <item type="id" name="image_adjustment_refresh" />
+    <item type="id" name="image_contrast_value" />
+    <item type="id" name="image_contrast_decrease" />
+    <item type="id" name="image_contrast_increase" />
+    <item type="id" name="image_contrast_edit" />
+    <item type="id" name="image_contrast_reset" />
+    <item type="id" name="image_brightness_value" />
+    <item type="id" name="image_brightness_decrease" />
+    <item type="id" name="image_brightness_increase" />
+    <item type="id" name="image_brightness_edit" />
+    <item type="id" name="image_brightness_reset" />
+    <item type="id" name="image_adjustments_reset" />
+    <item type="id" name="image_original_comparison" />
+    <item type="id" name="image_adjustment_input" />
+    <item type="id" name="image_adjustment_error" />
+    <item type="id" name="image_framing_state" />
+    <item type="id" name="image_screen_state" />
 </resources>

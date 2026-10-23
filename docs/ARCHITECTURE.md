@@ -2,7 +2,7 @@
 
 [Index de la documentation](README.md) · [Compilation et validation](../TESTING.md)
 
-Cette vue décrit les comportements de l’édition **0.3.2** et les trois premières étapes
+Cette vue décrit les comportements de l’édition **0.3.2** et les quatre premières étapes
 préparatoires sur cette branche. Le projet sépare la logique de
 narration indépendante d’Android, les adaptateurs du lecteur et l’interface. Les
 invariants ci-dessous sont des exigences à préserver lors des modifications ; les
@@ -113,6 +113,48 @@ la configuration envoyée, jamais une vérification des pixels ou de la qualité
 rendu. Les règles de narration et le traitement audio restent indépendants de ce
 port. Voir [Commandes d’image — étape 3](COMMANDES_IMAGE_ETAPE_3.md) pour les refus,
 les limites et les contrôles exigés.
+
+## Interface des réglages d’image
+
+`ExpertImageControls` présente le contrat d’image dans le dialogue de
+`CinemaView`. Il reçoit seulement le port de commande, un propriétaire de
+dialogues et une condition de durée de vie ; il n’accède ni au lecteur, ni au
+contrôleur de narration, ni aux préférences. `ImageSettingsDescriptions` contient
+les explications des paramètres et ne lit ni ne modifie aucun état.
+
+Les deux corrections disposent de pas décimaux de 0,01, d’une saisie précise et
+de retours à zéro. Une modification individuelle conserve l’autre correction
+au moment de la validation. Le sous-dialogue accepte une virgule ou un point,
+vérifie le format et les bornes avec `BigDecimal`, puis convertit la valeur en
+`Float` pour le contrat existant. Il refuse une saisie hors bornes même si sa
+conversion aurait arrondi à une borne autorisée. Les boutons de pas deviennent
+indisponibles lorsque le prochain pas dépasserait une borne, sans écrêtage.
+
+Le ticket est capturé à la création du panneau et reste celui des saisies
+différées. Une ouverture ultérieure, même à URI identique, ne réattribue pas une
+ancienne demande. Les erreurs conservent le texte saisi ; les refus du port
+restent visibles dans un dialogue et dans le résultat de la dernière demande.
+Une comparaison refusée rétablit l’état de sa case.
+
+Les valeurs demandées et la dernière soumission sont rendues à partir d’un même
+instantané. Une soumission d’une autre génération n’est pas présentée comme
+courante ; une soumission absente reste inconnue. Les indications de HDR, de
+comparaison et de disponibilité expliquent les protections sans les lever.
+`refresh()` ne soumet aucune commande et ne remplace pas le texte d’une saisie
+en cours. `CinemaView` l’appelle depuis son actualisation existante ; le panneau
+n’ajoute ni ordonnanceur d’effets ni boucle de temporisation.
+
+Les descriptions accompagnent les commandes existantes de géométrie, d’analyse
+et de luminosité de la fenêtre. Leurs effets restent distincts des deux
+corrections. Les commandes synchrones de ce dialogue, ainsi que la confirmation
+du mode recadré, vérifient aussi la génération capturée et la fermeture avant
+leur action. L’analyse asynchrone des marges conserve son mécanisme existant ;
+le ticket du panneau ne remplace pas le contrôle de son worker. En particulier,
+revenir à la luminosité système enlève une consigne
+de fenêtre sans activer à lui seul le mode adaptatif Android. La comparaison
+neutralise les corrections, marges et Lanczos mais conserve le cadrage et les
+transformations de surface. Voir [Interface d’image — étape 4](INTERFACE_IMAGE_ETAPE_4.md)
+pour le guide de chaque paramètre et les exigences de régression.
 
 ## Noyau indépendant d’Android
 

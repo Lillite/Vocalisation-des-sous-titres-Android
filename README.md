@@ -113,6 +113,10 @@ demandés, la configuration transmise et les faits réellement rapportés. La tr
 comparaison avec l’original à un contrat typé : valeurs bornées, refus explicites
 et demandes attachées à la génération du média. Une commande acceptée reste
 distincte d’un plan envoyé au rendu et d’un résultat mesuré dans les pixels.
+La quatrième étape expose ce contrat dans une interface d’image avec pas de
+0,01, saisie décimale, remise à zéro ciblée et état des corrections. Chaque
+paramètre d’image, de cadrage, de zoom et de luminosité de l’écran dispose d’une
+description de son effet, de son utilisation et de ses limites.
 La demande du 22 octobre 2026 prévoit plusieurs étapes avant toute livraison
 d’application.
 Le code de départ est conservé sur
@@ -121,24 +125,28 @@ L’étape 1 est également conservée au commit
 [`a093e79`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/a093e791b1413aefef6add027225b88c20657c6c),
 sur `backup/etape-1-validee-20261022-a093e79`. Le point de retour de l’étape 2 est
 [`0319dcb`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/0319dcb9b0cfd71be4231849306f0b248e1dbe02),
-sur `backup/etape-2-validee-20261022-0319dcb`. Le travail de l’étape 3 se trouve sur
-`work/etape-3-commandes-image-20261023`.
+sur `backup/etape-2-validee-20261022-0319dcb`. Le point de retour de l’étape 3 est
+[`c96b687`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/c96b687f91b2c9f7fadfc44383c8d346047cd30e),
+sur `backup/etape-3-validee-20261023-c96b687`. Le travail de l’étape 4 se trouve sur
+`work/etape-4-interface-image-20261023`.
 
 Le périmètre, les invariants et les contrôles sont détaillés dans
 [Modularisation — étape 1](docs/MODULARISATION_ETAPE_1.md),
-[Capacités et observations — étape 2](docs/CAPACITES_ETAPE_2.md) et
-[Commandes d’image — étape 3](docs/COMMANDES_IMAGE_ETAPE_3.md). Les règles de
+[Capacités et observations — étape 2](docs/CAPACITES_ETAPE_2.md),
+[Commandes d’image — étape 3](docs/COMMANDES_IMAGE_ETAPE_3.md) et
+[Interface d’image — étape 4](docs/INTERFACE_IMAGE_ETAPE_4.md). Les règles de
 vocalisation, le mixage audio et les traitements graphiques existants restent
-à préserver. Les contrôles attendus de l’étape 3 sont 44 tests du noyau, 46 tests
-JVM de l’application et deux passages complets de 70 tests Android ; leur réussite
+à préserver. Les contrôles attendus de l’étape 4 sont 44 tests du noyau, 53 tests
+JVM de l’application et deux passages complets de 71 tests Android ; leur réussite
 doit être vérifiée sur l’exécution associée au commit concerné.
 Ce travail reste sur une branche séparée, avec une demande de fusion en brouillon,
 jusqu’à la livraison demandée ultérieurement. Le lien de téléchargement ci-dessus
 désigne toujours l’édition publiée 0.3.2.
 
-Après validation de cette frontière, l’incrément proposé est un écran expert
-d’image utilisant ces commandes. L’audio et les moteurs de lecture alternatifs
-restent des étapes séparées.
+Après validation de l’interface d’image, l’incrément proposé est une frontière de
+commandes expertes pour l’audio du film, avec les mêmes distinctions entre
+demandes, disponibilité et effets réellement constatés. La vocalisation conserve
+ses règles ; l’évaluation de moteurs de lecture alternatifs reste une étape séparée.
 
 | Besoin | Document |
 | --- | --- |

@@ -2,6 +2,23 @@
 
 Ce journal présente les étapes principales vérifiables dans l’historique du dépôt. Les rapports détaillés restent accessibles dans l’[index documentaire](docs/README.md). Les numéros ci-dessous désignent les versions de l’application ; les correspondances avec les publications GitHub figurent dans l’[historique](docs/HISTORIQUE_BRANCHES.md).
 
+## En préparation — Interface d’image, étape 4
+
+- Point de retour de l’étape 3 conservé au commit `c96b687f91b2c9f7fadfc44383c8d346047cd30e`, sur `backup/etape-3-validee-20261023-c96b687` ; travail séparé sur `work/etape-4-interface-image-20261023`.
+- Réglages fins du contraste et de la luminosité de l’image par pas de 0,01, saisie décimale avec point ou virgule, remise à zéro individuelle ou conjointe ; maintien des raccourcis existants.
+- Vérification décimale des bornes avant conversion numérique, refus visibles sans écrêtage, conservation de la saisie en cas d’erreur et maintien du ticket d’ouverture dans les sous-dialogues.
+- Affichage distinct des valeurs demandées, du dernier plan transmis, de la disponibilité et des protections ; actualisation en lecture seule par le parcours d’interface existant.
+- Descriptions détaillées de chaque paramètre d’image, de cadrage, de marges, de redimensionnement, de zoom, de déplacement et de luminosité de l’écran, avec unités, bornes, procédure et limites.
+- Conservation des algorithmes de vocalisation, du mixage, du rendu et du regroupement existant des effets ; aucune bibliothèque supplémentaire ni changement de version.
+- Sept scénarios JVM et un scénario Android ajoutés aux fichiers de tests d’image existants, avec conservation des tests précédents ; effectifs exigés 44, 53 et 71.
+
+Le périmètre, les explications et les contrôles figurent dans
+[Interface d’image — étape 4](docs/INTERFACE_IMAGE_ETAPE_4.md). Les résultats
+doivent être rattachés au commit et à l’exécution réellement testés. Cette étape
+ne livre pas d’APK et reste séparée de `main` jusqu’à une instruction ultérieure.
+La suite proposée concerne les commandes expertes de l’audio du film, puis
+l’évaluation séparée d’autres moteurs de lecture.
+
 ## En préparation — Commandes d’image, étape 3
 
 - Point de retour de l’étape 2 conservé au commit `0319dcb9b0cfd71be4231849306f0b248e1dbe02`, sur `backup/etape-2-validee-20261022-0319dcb` ; travail sur `work/etape-3-commandes-image-20261023`.

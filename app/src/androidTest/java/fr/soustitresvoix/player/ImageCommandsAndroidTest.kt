@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.SystemClock
+import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -14,12 +15,15 @@ import androidx.media3.exoplayer.PlayerMessage
 import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.action.ViewActions.closeSoftKeyboard
+import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.action.ViewActions.scrollTo
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.ViewMatchers.isChecked
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.withText
+import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import fr.soustitresvoix.core.ImageSettings
@@ -203,6 +207,195 @@ class ImageCommandsAndroidTest {
                 }
                 instrument.waitForIdleSync()
                 assertEquals("Only the two explicit previews may reach the actual speech service",
+                    listOf(preview, preview), observed())
+                scenario.onActivity { current ->
+                    assertFalse(current.session.player.playWhenReady)
+                    assertFalse(current.session.machine.snapshot().wantsPlayback)
+                    assertNull(current.session.player.playerError)
+                }
+            }
+        } finally {
+            context.unregisterReceiver(receiver)
+            preferences.enginePackage = ""
+        }
+    }
+
+    private fun captureExpertScreenshot(name: String) {
+        require(name.matches(Regex("[a-z-]+")))
+        // Only the synthetic demonstration on the disposable CI emulator is
+        // captured. The existing device script archives this directory.
+        for (command in listOf("mkdir -p /sdcard/Download/cinema03-tests",
+            "screencap -p /sdcard/Download/cinema03-tests/$name.png")) {
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                instrument.uiAutomation.executeShellCommand(command)).use { it.readBytes() }
+        }
+    }
+
+    @Test fun expertPrecisionErrorsComparisonAndResetPreserveRealPlaybackAndVoiceRequests() {
+        val preview = "Bonjour. Cette voix lira les sous-titres de votre vidéo. Vous pouvez régler sa vitesse et le volume du film."
+        val requests = Collections.synchronizedList(mutableListOf<String>())
+        fun observed() = synchronized(requests) { requests.toList() }
+        val context = instrument.targetContext
+        val preferences = PlayerPreferences(context).apply {
+            enginePackage = instrument.context.packageName
+            voiceName = "fixture-fr"
+        }
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == FixtureSpeechService.ALL_REQUESTS_ACTION) {
+                    intent.getStringExtra("text")?.let { requests += it }
+                }
+            }
+        }
+        ContextCompat.registerReceiver(context, receiver,
+            IntentFilter(FixtureSpeechService.ALL_REQUESTS_ACTION), ContextCompat.RECEIVER_EXPORTED)
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                val activity = AtomicReference<MainActivity>()
+                scenario.onActivity { current ->
+                    activity.set(current)
+                    current.session.open(SavedMedia("android.resource://${current.packageName}/${R.raw.demonstration}",
+                        "Synthetic expert-image fixture"))
+                    current.setFullscreen(true)
+                }
+                waitFor("The actual video and fixture voice did not become ready") {
+                    val session = activity.get().session
+                    session.player.playbackState == Player.STATE_READY && session.video.format != null && session.speech.isReady
+                }
+                scenario.onActivity { current ->
+                    assertTrue("Opening a paused synthetic video synthesized text", observed().isEmpty())
+                    current.session.previewVoice()
+                }
+                waitFor("The first explicit positive-control preview did not finish") {
+                    observed().isNotEmpty() && activity.get().session.machine.snapshot().speakingId == null
+                }
+                assertEquals(listOf(preview), observed())
+                waitFor("The film volume did not actually recover after TTS") {
+                    val session = activity.get().session
+                    session.player.volume == session.prefs.movieVolume
+                }
+                onView(withText("Image / zoom")).perform(scrollTo(), click())
+                Closeable { onView(withText("Fermer")).inRoot(isDialog()).perform(click()) }.use {
+                    onView(withText("Image et cadrage")).inRoot(isDialog()).check(matches(isDisplayed()))
+                    var barrier: PlayerMessage? = null
+                    scenario.onActivity { current ->
+                        barrier = (current.session.playback as Media3PlaybackBackend).exoPlayer
+                            .createMessage { _, _ -> }.send()
+                    }
+                    assertTrue("The paused baseline was not acknowledged by ExoPlayer",
+                        requireNotNull(barrier).blockUntilDelivered(20_000))
+                    instrument.waitForIdleSync()
+                    var baseline: PausedState? = null
+                    scenario.onActivity { current ->
+                        baseline = state(current)
+                        assertEquals(ImageSettings(), current.session.imageCommands.snapshot().context.requested)
+                        assertFalse(requireNotNull(baseline).narration.wantsPlayback)
+                        assertNull(requireNotNull(baseline).narration.speakingId)
+                    }
+                    fun assertPreserved(expected: ImageSettings) {
+                        scenario.onActivity { current ->
+                            assertEquals(expected, current.session.imageCommands.snapshot().context.requested)
+                            assertEquals("An expert image action changed voice, transport, audio, preferences or screen brightness",
+                                baseline, state(current))
+                            assertEquals("An expert image action triggered actual synthesis", listOf(preview), observed())
+                            assertNull(current.session.player.playerError)
+                        }
+                    }
+                    fun press(id: Int) = onView(withId(id)).inRoot(isDialog()).perform(scrollTo(), click())
+                    fun reportContains(id: Int, value: String) {
+                        onView(withId(id)).inRoot(isDialog()).perform(scrollTo()).check(matches(isDisplayed()))
+                            .check { view, missing ->
+                                if (missing != null) throw missing
+                                assertTrue("The visible report did not explain $value",
+                                    (view as TextView).text.toString().contains(value, ignoreCase = true))
+                            }
+                    }
+                    fun enter(id: Int, value: String) {
+                        press(id)
+                        var editorOpen = true
+                        Closeable {
+                            if (editorOpen) onView(withText("Annuler")).inRoot(isDialog()).perform(click())
+                        }.use {
+                            onView(withId(R.id.image_adjustment_input)).inRoot(isDialog())
+                                .perform(replaceText(value), closeSoftKeyboard())
+                            onView(withText("Appliquer")).inRoot(isDialog()).perform(click())
+                            editorOpen = false
+                        }
+                    }
+
+                    reportContains(R.id.image_contrast_value, "0,00")
+                    captureExpertScreenshot("expert-image-parameters")
+                    press(R.id.image_contrast_edit)
+                    var invalidEditorOpen = true
+                    Closeable {
+                        if (invalidEditorOpen) onView(withText("Annuler")).inRoot(isDialog()).perform(click())
+                    }.use {
+                        onView(withId(R.id.image_adjustment_input)).inRoot(isDialog())
+                            .perform(replaceText("0,3000000001"), closeSoftKeyboard())
+                        onView(withText("Appliquer")).inRoot(isDialog()).perform(click())
+                        onView(withId(R.id.image_adjustment_input)).inRoot(isDialog())
+                            .check(matches(withText("0,3000000001")))
+                        onView(withId(R.id.image_adjustment_error)).inRoot(isDialog())
+                            .check(matches(isDisplayed())).check { view, missing ->
+                                if (missing != null) throw missing
+                                assertTrue("The invalid number has no visible explanation", (view as TextView).text.isNotBlank())
+                            }
+                        assertPreserved(ImageSettings())
+                        captureExpertScreenshot("expert-image-invalid-number")
+                        onView(withId(R.id.image_adjustment_input)).inRoot(isDialog())
+                            .perform(replaceText("+0,125"), closeSoftKeyboard())
+                        onView(withText("Appliquer")).inRoot(isDialog()).perform(click())
+                        invalidEditorOpen = false
+                    }
+                    awaitSubmitted(activity, .125f, 0f)
+                    assertPreserved(ImageSettings(.125f, 0f))
+                    reportContains(R.id.image_contrast_value, "0,125")
+
+                    enter(R.id.image_brightness_edit, "−0.175")
+                    awaitSubmitted(activity, .125f, -.175f)
+                    assertPreserved(ImageSettings(.125f, -.175f))
+                    press(R.id.image_contrast_increase)
+                    press(R.id.image_brightness_decrease)
+                    awaitSubmitted(activity, .135f, -.185f)
+                    assertPreserved(ImageSettings(.135f, -.185f))
+                    press(R.id.image_adjustment_refresh)
+                    reportContains(R.id.image_adjustment_requested, "0,135")
+                    reportContains(R.id.image_adjustment_submitted, "0,135")
+                    assertPreserved(ImageSettings(.135f, -.185f))
+
+                    press(R.id.image_original_comparison)
+                    awaitSubmitted(activity, 0f, 0f)
+                    onView(withId(R.id.image_original_comparison)).inRoot(isDialog()).check(matches(isChecked()))
+                    assertPreserved(ImageSettings(.135f, -.185f, true))
+                    press(R.id.image_contrast_increase)
+                    assertPreserved(ImageSettings(.145f, -.185f, true))
+                    press(R.id.image_adjustment_refresh)
+                    reportContains(R.id.image_adjustment_status, "comparaison")
+                    reportContains(R.id.image_adjustment_requested, "0,145")
+                    reportContains(R.id.image_adjustment_submitted, "0,00")
+                    captureExpertScreenshot("expert-image-comparison-report")
+                    press(R.id.image_adjustments_reset)
+                    assertPreserved(ImageSettings(0f, 0f, true))
+                    onView(withId(R.id.image_original_comparison)).inRoot(isDialog())
+                        .perform(scrollTo()).check(matches(isChecked()))
+                    press(R.id.image_original_comparison)
+                    awaitSubmitted(activity, 0f, 0f)
+                    assertPreserved(ImageSettings())
+                    onView(withId(R.id.image_original_comparison)).inRoot(isDialog()).check(matches(not(isChecked())))
+
+                    press(R.id.image_contrast_edit)
+                    onView(withId(R.id.image_adjustment_input)).inRoot(isDialog())
+                        .perform(replaceText("0,30"), closeSoftKeyboard())
+                    onView(withText("Annuler")).inRoot(isDialog()).perform(click())
+                    press(R.id.image_adjustment_refresh)
+                    assertPreserved(ImageSettings())
+                }
+                scenario.onActivity { current -> current.session.previewVoice() }
+                waitFor("The second explicit positive-control preview did not finish") {
+                    observed().size >= 2 && activity.get().session.machine.snapshot().speakingId == null
+                }
+                instrument.waitForIdleSync()
+                assertEquals("Only the two explicitly requested previews may reach the actual engine",
                     listOf(preview, preview), observed())
                 scenario.onActivity { current ->
                     assertFalse(current.session.player.playWhenReady)
