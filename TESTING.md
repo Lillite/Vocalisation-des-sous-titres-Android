@@ -1,6 +1,47 @@
 # Vérifications de régression
 
-## Édition Traduction 0.4.0 — contrôles locaux du 24 octobre 2026
+## Version publiée 0.4.0 — résultats de référence
+
+La [release 0.4.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0), publiée le **24 octobre 2026**, est issue du commit [`32864ba`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/32864ba732d834e71d87b887ae63f0d7bc09eb8c). Le [run Android 40053284969, tentative 1](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40053284969) a réellement réussi sur ce commit de `main`.
+
+| Contrôle exécuté | Résultat |
+| --- | --- |
+| Noyau JVM, debug | 87 réussites. |
+| Application JVM, debug | 137 réussites. |
+| Noyau JVM, release | 87 réussites. |
+| Application JVM, release | 137 réussites. |
+| Android 36, application et tests release, passage 1 | 82 réussites sur émulateur AOSP x86_64. |
+| Android 36, même paire d’APK release, passage 2 | 82 réussites. |
+| Total JUnit | **612 exécutions de 306 méthodes distinctes**, sans échec, erreur, méthode ignorée, manquante, inattendue ou dupliquée. |
+| Lint debug / release | **0 erreur et 51 avertissements dans chaque variante**. Les avertissements restent visibles dans les rapports ; ils ne sont pas supprimés pour obtenir ce résultat. |
+| Compilation et intégrité | Applications et APK de tests debug/release compilés ; manifestes, permissions, signatures, alignement, sources et empreintes contrôlés. |
+| Outils de publication | 19 tests Python comportementaux réussis dans le même run Android. |
+| Synchronisation et rangement documentaire | 13 + 7 tests Python réussis dans le [run 40053284958](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40053284958). |
+
+Les **39 tests Python** s’ajoutent aux 612 exécutions JUnit. Les outils utilisent des réponses contrôlées en mémoire : leur réussite ne représente pas 39 opérations réelles sur un compte fournisseur. Les recommandations lint concernent notamment KTX, les chaînes, les vues, l’accessibilité, les règles de sauvegarde et les versions de dépendances.
+
+### APK effectivement distribué
+
+Le [run de publication 40054994161](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40054994161) a réussi après la validation de `main`. Il a comparé le contenu de l’APK signé durablement à l’APK exact testé en CI, hors fichiers de signature, puis vérifié les téléchargements de l’APK et de `SHA256SUMS` avant de rendre la release publique. Aucune recompilation intermédiaire n’a remplacé l’APK testé.
+
+| Repère | Valeur vérifiée |
+| --- | --- |
+| Fichier | `SousTitresVoix-0.4.0-traduction.apk` |
+| Taille | 5 066 480 octets. |
+| Identité Android | `fr.soustitresvoix.player.translation` |
+| Version / code | `0.4.0` / `6` |
+| SHA-256 de l’APK | `30d1126392a9fd995867f599b12436b1e2d9e8e1d41bc60d20dca76c9b88f298` |
+| SHA-256 du certificat durable | `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d` |
+
+L’édition Traduction s’installe à côté de la stable 0.3.2. La signature de cette dernière n’étant plus accessible, les deux applications ont des identités et des signatures distinctes. La clé durable de la 0.4.0 est sauvegardée hors du dépôt ; aucune clé privée ne fait partie des assets publics. Voir les [instructions d’installation et de test sur téléphone](docs/TESTS_TELEPHONE.md).
+
+### Portée et limites de la validation
+
+Ces résultats attestent les sources, l’environnement et les scénarios exécutés. Ils ne garantissent pas l’absence de tout défaut. Les régressions utilisent de vraies classes Android/Media3 et des fichiers synthétiques ; les réponses de traduction et le service TTS sont contrôlés. **Les API de comptes personnels ou payants, la fidélité linguistique, les voix commerciales, TalkBack et les performances sur OnePlus 15 n’ont pas été validés par ces tests.** Les essais manuels restent à effectuer et à consigner séparément.
+
+Les résultats d’une ancienne étape ou les effectifs attendus d’un workflow ne remplacent jamais les rapports du commit effectivement distribué. Les éléments ci-dessous conservent les contrôles, les erreurs intermédiaires et leurs corrections.
+
+## Historique local de la traduction — 24 octobre 2026
 
 Le développement part de l’étape 6 `1942ba48ae3f9324b3c7d5b03ab8c9bf11463e09`.
 La nouvelle application porte l’identité `fr.soustitresvoix.player.translation`,
@@ -11,8 +52,8 @@ Les passages Gradle locaux ont réellement exécuté **87/87 tests du noyau et
 137/137 tests JVM de l’application**, en debug puis en release, sans échec,
 erreur, méthode ignorée, manquante, inattendue ou dupliquée. Les inventaires des
 sources ont été comparés aux XML JUnit. Les compilations des deux applications
-et de leurs APK de tests ont réussi. Les **82 méthodes instrumentées** sont
-compilées ; leur exécution Android doit être attestée séparément par la CI.
+et de leurs APK de tests ont réussi. À ce stade local, les **82 méthodes instrumentées** étaient
+compilées ; leur exécution Android a ensuite été attestée par les runs CI cités ci-dessus.
 
 Les lint debug/release ont réussi avec **zéro erreur**, respectivement **49 et
 50 avertissements** dans les rapports locaux. Les alertes comprennent les
@@ -45,21 +86,21 @@ présents. Les tests réseau n’utilisent aucun compte payant ni sous-titre per
 Ces contrôles ne prouvent pas la qualité sémantique d’une traduction, les droits
 d’un compte API, la qualité acoustique d’une voix, les performances du OnePlus 15
 ou TalkBack sur appareil. Les essais manuels et les résultats d’API réelles doivent
-rester distingués des tests contrôlés. Les résultats CI et de publication seront
-rattachés à leurs commits et exécutions réels.
+rester distingués des tests contrôlés. Les résultats CI et de publication sont
+rattachés à leurs commits et exécutions réels en tête de ce document.
 
 Le contrôle ciblé suivant a également reproduit une perte de la réplique courante
 après la seule commande de piste audio. La réinjection est maintenant effectuée
 pour ce cas, sans réutiliser une ancienne réplique après changement de piste texte.
 Les callbacks du renderer pendant l’attente normale d’une traduction ne sont plus
 présentés comme une erreur de correspondance. Le compte de la suite JVM augmente
-de 135 à 137 ; le passage complet CI doit attester ce nouvel inventaire.
+de 135 à 137 ; les passages complets CI ont ensuite attesté ce nouvel inventaire.
 
-Le mécanisme de publication a été soumis à 17 tests comportementaux hors réseau,
+Le mécanisme de publication a d’abord été soumis à 17 tests comportementaux hors réseau,
 conservés dans `tools/test-publish-verified-release.py` et exécutés en CI.
 Deux cas ont initialement échoué : changement concurrent de cible du brouillon et
 création d’un tag incorrect pendant les téléversements. Après déplacement des
-vérifications avant publication, les 17 cas passent. L’API GitHub ne fournit pas
+vérifications avant publication, les 17 cas passent. Deux tests supplémentaires de transport, décrits à la fin de ce document, portent ensuite cet inventaire à 19. L’API GitHub ne fournit pas
 de transaction atomique contre toute modification concurrente entre la dernière
 vérification et la publication ; aucune garantie absolue n’est revendiquée.
 
@@ -97,7 +138,7 @@ scénarios Android. Les totaux 40/41/69 de l’étape 2, 44/46/70 de l’étape 
 de l’étape 5 sont 50/64/73. La [sixième étape](docs/AUDIO_EXPERT_ETAPE_6.md)
 ajoute 27 méthodes noyau, 28 méthodes JVM de l’application et deux scénarios
 Android ; le scénario ASS de l’étape 5 est aussi étendu aux commandes DSP.
-Les effectifs exigés sur cette branche sont **87/137/82**.
+Les effectifs exigés pour la version 0.4.0 sont **87/137/82**.
 Ces nombres sont des critères à contrôler,
 pas une preuve d’exécution :
 consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
@@ -684,8 +725,11 @@ sur appareil ni une vérification TalkBack.
 
 ## APK signé pour installation
 
-L'identité d'installation de cette série est `fr.soustitresvoix.player.stable`.
-Conserver sa clé privée hors du dépôt pour permettre les prochaines mises à jour.
+L’identité d’installation de l’édition Traduction 0.4.0 est
+`fr.soustitresvoix.player.translation`. La stable 0.3.2 utilise séparément
+`fr.soustitresvoix.player.stable` ; une signature différente ne permet pas de la
+mettre à jour avec l’APK 0.4.0. Conserver la clé privée durable de l’édition
+Traduction hors du dépôt pour permettre ses prochaines mises à jour.
 La variable `SUBTITRES_SIGNING_PROPERTIES` désigne un fichier externe contenant
 `storeFile` (chemin du PKCS12), `storePassword`, `keyAlias` et `keyPassword`.
 Ne jamais versionner ni publier ce fichier ou la clé.
@@ -710,13 +754,19 @@ tests release, même si les sources sont identiques.
 
 Le [run 40044448351](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40044448351), sur la proposition `7907385bc7db418acaf38d5cce5e669858f3c61a`, a réellement exécuté 82 méthodes à chaque passage : **81 réussites et un échec**, deux fois, sans erreur, test ignoré, manquant ou dupliqué. Les suites JVM debug et release avaient chacune réussi 87 tests du noyau et 137 de l’application. Aucun APK de distribution n’a été produit par ce run en échec.
 
-L’échec unique est `actualTranslationPanelKeepsLabelsDescriptionsAndScrollableHelpAtDoubleFontScale`, à la recherche d’un unique `ScrollView` dans tout le dialogue. Android 36 ajoute un défilement interne au `AlertDialog` en plus de celui du formulaire : la sélection était ambiguë. Les contrôles précédents de taille de texte, d’explications fournisseurs, de labels et de clé masquée avaient passé. Le formulaire possède désormais un identifiant explicite ; le test cible ce formulaire, vérifie qu’il contient tous les champs et conserve ses assertions de dépassement et de défilement effectif. Le résultat d’un nouveau double passage reste nécessaire pour valider cette correction.
+L’échec unique est `actualTranslationPanelKeepsLabelsDescriptionsAndScrollableHelpAtDoubleFontScale`, à la recherche d’un unique `ScrollView` dans tout le dialogue. Android 36 ajoute un défilement interne au `AlertDialog` en plus de celui du formulaire : la sélection était ambiguë. Les contrôles précédents de taille de texte, d’explications fournisseurs, de labels et de clé masquée avaient passé. Le formulaire possède désormais l’identifiant explicite `translation_controls_scroll` ; le test cible ce formulaire, vérifie qu’il contient tous les champs et conserve ses assertions de dépassement et de défilement effectif.
+
+La correction a réussi sur le commit `3804260de5071b6314674181d520607b084291b7` dans le [run 40046561370](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40046561370) : 612 exécutions JVM/Android réussies. La [PR #9](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/9) a été fusionnée par un commit de fusion `2141c2024e7ba0fd2801a0dc0e2c86eebfbb29cf`, conservant l’historique des étapes précédentes.
 
 
 ### Correction du téléchargement GitHub avant publication — HTTP 415
 
 La validation du commit `2141c2024e7ba0fd2801a0dc0e2c86eebfbb29cf` a réussi dans le [run 40048404597, tentative 2](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40048404597) : **612 exécutions JVM/Android**, puis contrôle et signature durable de l’APK exact. Le [premier essai de publication 40051373135](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40051373135) s’est ensuite arrêté avec HTTP 415 au téléchargement de l’artefact Actions, **avant création d’un brouillon, d’une release ou du tag 0.4.0**. Les quatre versions historiques sont restées en place.
 
+La tentative 1 de ce run Android a été annulée par l’agent après une longue installation de FFmpeg, juste après sa fin et le début des contrôles debug. Cette annulation n’est pas présentée comme un échec des tests. La tentative 2 a repris et réussi le parcours complet, avec les 17 tests de publication alors présents. Cet APK candidat a ensuite été remplacé par celui du commit final `32864ba`, après correction et nouvelle validation des outils de publication.
+
 Le transport utilisait `Accept: application/octet-stream` pour tous les téléchargements. L’[API officielle des artefacts Actions](https://docs.github.com/en/rest/actions/artifacts?apiVersion=2026-03-10#download-an-artifact) demande l’en-tête JSON GitHub pour négocier sa redirection ZIP. La correction distingue ce seul endpoint ; les assets de release et les requêtes CDN conservent le type binaire, et le jeton reste limité à l’API GitHub. Les limites, refus de redirections non autorisées, contrôle du commit exact et invariants des trois fichiers ne sont pas modifiés.
 
-Deux nouveaux tests exercent les véritables méthodes `download` et `_request` avec un opener strict en mémoire. Sur l’ancien code, le nouveau cas Actions reproduit HTTP 415 : **18 tests réussis, un échec**. Après correction : **19/19 tests de publication**, **13/13 tests de synchronisation** et **7/7 tests de rangement documentaire** réussis, soit **39 méthodes Python**, sans requête réseau. Une nouvelle validation de la proposition et du commit final de main reste nécessaire avant de republier l’APK avec les outils corrigés.
+Deux nouveaux tests exercent les véritables méthodes `download` et `_request` avec un opener strict en mémoire. Sur l’ancien code, le nouveau cas Actions reproduit HTTP 415 : **18 tests réussis, un échec**. Après correction : **19/19 tests de publication**, **13/13 tests de synchronisation** et **7/7 tests de rangement documentaire** réussis, soit **39 méthodes Python**, sans requête réseau.
+
+La proposition corrigée `d3a74c15acdab24107c028fa02a816cc2975fdc1` a réussi le [run 40051967685](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40051967685), avec 612 exécutions JVM/Android et 19 tests de publication. La [PR #10](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/10) a ensuite été fusionnée dans `main` au commit `32864ba732d834e71d87b887ae63f0d7bc09eb8c`. Les validations finales de `main` et la publication réussie figurent en tête du document ; les échecs antérieurs sont conservés ici pour rendre les corrections vérifiables.

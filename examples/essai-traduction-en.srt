@@ -1,0 +1,19 @@
+1
+00:00:00,000 --> 00:00:12,000
+STATION ENTRANCE
+
+2
+00:00:02,000 --> 00:00:05,000
+Welcome. Please follow me.
+
+3
+00:00:06,000 --> 00:00:08,000
+Wait here.
+
+4
+00:00:09,000 --> 00:00:11,000
+Wait here.
+
+5
+00:00:13,000 --> 00:00:24,000
+The next train will arrive soon. We have enough time to finish this sentence before leaving.

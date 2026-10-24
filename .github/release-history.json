@@ -69,7 +69,7 @@
       "source_commit": "311d99052d287bb2227e85255740de201234e770",
       "title": "Sous-titres en voix 0.3.2 — Version stable",
       "prerelease": false,
-      "latest": true,
+      "latest": false,
       "notes": "docs/releases/0.3.2.md",
       "asset": {
         "id": 661164278,
@@ -79,6 +79,24 @@
         "version_name": "0.3.2",
         "version_code": 5,
         "application_id": "fr.soustitresvoix.player.stable"
+      }
+    },
+    {
+      "id": 422471931,
+      "tag": "v0.4.0",
+      "source_commit": "32864ba732d834e71d87b887ae63f0d7bc09eb8c",
+      "title": "Sous-titres en voix 0.4.0 — édition Traduction",
+      "prerelease": false,
+      "latest": true,
+      "notes": "docs/releases/0.4.0.md",
+      "asset": {
+        "id": 671065761,
+        "name": "SousTitresVoix-0.4.0-traduction.apk",
+        "size": 5066480,
+        "sha256": "30d1126392a9fd995867f599b12436b1e2d9e8e1d41bc60d20dca76c9b88f298",
+        "version_name": "0.4.0",
+        "version_code": 6,
+        "application_id": "fr.soustitresvoix.player.translation"
       }
     }
   ]

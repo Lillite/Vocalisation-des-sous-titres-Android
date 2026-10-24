@@ -10,7 +10,7 @@
 4. Indiquer explicitement la langue des sous-titres et les paramètres du compte. Une clé peut être laissée vide pour réutiliser une traduction complète en cache. Sa mémorisation chiffrée est facultative.
 5. Demander **Indexer la piste et estimer la traduction**. Cette étape lit le fichier mais ne crée aucun client réseau. Un index tronqué, vide ou non textuel est refusé.
 6. Vérifier le fournisseur, le nombre d’occurrences et le volume estimé, puis confirmer **Traduire / réutiliser le cache**. Cette confirmation autorise une nouvelle requête si le cache est absent ou invalide. Elle n’est pas une estimation de prix ni une consultation du quota du compte.
-7. Attendre la validation complète, choisir une voix française prête et appuyer sur Lire. La fin de traduction ne lance jamais automatiquement le film ou la voix.
+7. Attendre la validation complète. Si la vocalisation est activée, choisir une voix française prête, puis appuyer sur Lire. Sans vocalisation, aucune voix française n'est requise pour lire la vidéo. La fin de traduction ne lance jamais automatiquement le film ou la voix.
 
 La cible de cette première étape est le français. L’affichage vidéo conserve les sous-titres originaux ; la narration reçoit la traduction. Les filtres vocaux facultatifs restent applicables au texte traduit. La fidélité sémantique dépend du fournisseur : les contrôles structurels ne prouvent pas une traduction linguistiquement parfaite.
 
@@ -22,7 +22,7 @@ Les requêtes sont réparties en lots contigus de **20 occurrences et 4 000 unit
 
 Chaque lot doit fournir exactement une réponse textuelle non vide par occurrence, dans l’ordre contractuel de l’API. Une réponse manquante, supplémentaire, invalide en Unicode, nulle ou trop longue arrête le travail avant le lot suivant. Seul un résultat complet devient `TranslatedTrack`. Cette validation préserve la correspondance structurelle ; une API renvoyant du texte sémantiquement faux tout en respectant son contrat peut encore nécessiter une correction humaine.
 
-Pendant la lecture, la session résout l’occurrence originale puis vérifie son identité **et son texte source** avant de fournir la traduction au contrôleur vocal existant. Une divergence provoque une pause perceptible. Le texte original n’est jamais utilisé comme remplacement automatique d’une traduction absente. Le mode reste en attente jusqu’à une nouvelle traduction ou la commande explicite **Revenir à la piste originale**.
+Pendant la lecture, la session résout l’occurrence originale puis vérifie son identité **et son texte source** avant de fournir la traduction au contrôleur vocal existant. Une divergence provoque une pause perceptible. Le texte original n’est jamais utilisé comme remplacement automatique d’une traduction absente. Le mode reste en attente jusqu’à une nouvelle traduction ou la commande **Revenir explicitement à la piste originale**.
 
 La réplique déjà affichée à l’activation, au retour à l’original ou après une commande de piste audio seule est réinjectée dans la file pendant la pause. Un simple déplacement à position identique ne suffisait pas : un test a reproduit cette omission et contrôle maintenant le correctif. Les temps et identités passés au moteur de narration restent ceux des occurrences originales.
 
