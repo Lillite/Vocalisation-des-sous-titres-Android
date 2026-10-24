@@ -38,8 +38,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses < <(yes) >/dev/null
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;36.0.0"
+          if [[ ! -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" || ! -x "$ANDROID_HOME/build-tools/36.0.0/aapt2" ]]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses < <(yes) >/dev/null
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;36.0.0"
+          fi
       - name: Vérifier la provenance puis publier le fichier déjà signé
         env:
           GITHUB_TOKEN: ${{ github.token }}

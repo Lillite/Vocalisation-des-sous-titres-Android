@@ -180,7 +180,10 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
         })
         column.addView(text("Modèles locaux et Hugging Face : aucun runtime local de traduction n’est encore intégré dans cette étape. Un fichier GGUF, SafeTensors ou ONNX ne peut pas être importé ici. Le guide du projet décrit les candidats, leurs limites et les étapes restant à développer. Une traduction en cache fonctionne hors ligne ; ce n’est pas un moteur local."))
         panel = AlertDialog.Builder(activity).setTitle("Traduire les sous-titres en français")
-            .setView(ScrollView(activity).apply { addView(column, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)) })
+            .setView(ScrollView(activity).apply {
+                id = R.id.translation_controls_scroll
+                addView(column, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            })
             .setPositiveButton("Fermer", null).show().also { dialog ->
                 dialog.setOnDismissListener { if (generation == panelGeneration) invalidatePanel() }
             }

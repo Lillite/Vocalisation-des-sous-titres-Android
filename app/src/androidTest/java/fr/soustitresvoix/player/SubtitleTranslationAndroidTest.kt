@@ -334,7 +334,10 @@ class SubtitleTranslationAndroidTest {
                         assertEquals(4, fields.size)
                         for (field in fields) assertEquals(1, views.filterIsInstance<TextView>().count { it.labelFor == field.id })
                         assertEquals(1, fields.count { it.transformationMethod is PasswordTransformationMethod })
-                        val scroll = views.filterIsInstance<ScrollView>().single()
+                        // AlertDialog also owns an internal message ScrollView on
+                        // Android 36. Check the actual form, identified explicitly.
+                        val scroll = requireNotNull(panel.get().findViewById<ScrollView>(R.id.translation_controls_scroll))
+                        assertTrue(descendants(scroll).containsAll(fields))
                         assertTrue(scroll.getChildAt(0).height > scroll.height)
                         scroll.fullScroll(View.FOCUS_DOWN)
                         assertFalse(current.session.translation.busy)
@@ -342,7 +345,7 @@ class SubtitleTranslationAndroidTest {
                         assertFalse(current.session.player.playWhenReady)
                     }
                     await("Help at the bottom cannot be reached by scrolling") {
-                        descendants(panel.get()).filterIsInstance<ScrollView>().single().scrollY > 0
+                        panel.get().findViewById<ScrollView>(R.id.translation_controls_scroll)?.scrollY?.let { it > 0 } == true
                     }
                 } finally {
                     scenario.onActivity { current ->

@@ -704,3 +704,10 @@ principal, `debuggable=false`, sa signature avec `apksigner verify --verbose
 peut produire une variante release non signée : ce fichier ne doit pas être
 présenté comme APK installable. Un APK de tests debug ne remplace pas l'APK de
 tests release, même si les sources sont identiques.
+
+
+### Premier double passage Android de la traduction — 24 octobre 2026
+
+Le [run 40044448351](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40044448351), sur la proposition `7907385bc7db418acaf38d5cce5e669858f3c61a`, a réellement exécuté 82 méthodes à chaque passage : **81 réussites et un échec**, deux fois, sans erreur, test ignoré, manquant ou dupliqué. Les suites JVM debug et release avaient chacune réussi 87 tests du noyau et 137 de l’application. Aucun APK de distribution n’a été produit par ce run en échec.
+
+L’échec unique est `actualTranslationPanelKeepsLabelsDescriptionsAndScrollableHelpAtDoubleFontScale`, à la recherche d’un unique `ScrollView` dans tout le dialogue. Android 36 ajoute un défilement interne au `AlertDialog` en plus de celui du formulaire : la sélection était ambiguë. Les contrôles précédents de taille de texte, d’explications fournisseurs, de labels et de clé masquée avaient passé. Le formulaire possède désormais un identifiant explicite ; le test cible ce formulaire, vérifie qu’il contient tous les champs et conserve ses assertions de dépassement et de défilement effectif. Le résultat d’un nouveau double passage reste nécessaire pour valider cette correction.
