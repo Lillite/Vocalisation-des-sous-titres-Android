@@ -33,7 +33,7 @@ public final class FixtureSpeechService extends TextToSpeechService {
         if (packages == null) return;
         for (String target : packages) {
             if ("fr.soustitresvoix.player.cinema3".equals(target)
-                    || "fr.soustitresvoix.player.stable".equals(target)) {
+                    || "fr.soustitresvoix.player.translation".equals(target)) {
                 sendBroadcast(new Intent(ALL_REQUESTS_ACTION).setPackage(target)
                     .putExtra("text", request.getCharSequenceText().toString()));
             }
@@ -51,7 +51,7 @@ public final class FixtureSpeechService extends TextToSpeechService {
         if (packages == null) return;
         for (String target : packages) {
             if ("fr.soustitresvoix.player.cinema3".equals(target)
-                    || "fr.soustitresvoix.player.stable".equals(target)) {
+                    || "fr.soustitresvoix.player.translation".equals(target)) {
                 sendBroadcast(new Intent(OBSERVATION_ACTION).setPackage(target)
                     .putExtra("text", text).putExtra("event", event));
             }

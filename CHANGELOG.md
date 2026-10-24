@@ -2,6 +2,20 @@
 
 Ce journal présente les étapes principales vérifiables dans l’historique du dépôt. Les rapports détaillés restent accessibles dans l’[index documentaire](docs/README.md). Les numéros ci-dessous désignent les versions de l’application ; les correspondances avec les publications GitHub figurent dans l’[historique](docs/HISTORIQUE_BRANCHES.md).
 
+## 0.4.0 — Traduction avant lecture et consolidation des étapes 1 à 6
+
+- Nouvelle édition `fr.soustitresvoix.player.translation`, installable à côté de la stable 0.3.2. La clé de signature de cette dernière n’étant plus accessible, la 0.4.0 utilise une signature distincte sauvegardée hors du dépôt. Les réglages et fichiers importés privés sont propres à chaque édition ; aucune désinstallation de la 0.3.2 n’est nécessaire.
+- Traduction complète de la piste textuelle choisie vers le français avant lecture : Azure Translator, DeepL avec choix explicite du point d’accès, et serveur LibreTranslate HTTPS. La narration reçoit uniquement la traduction validée ; l’affichage vidéo conserve la piste originale.
+- Indexation sans réseau, langue source explicite, descriptions et liens propres à chaque moteur, estimation du volume puis confirmation avant tout envoi. Aucun compte ou abonnement créé automatiquement.
+- Identités, minutages, panneaux, occurrences simultanées et répétitions légitimes conservés. Lots bornés, réponses contrôlées et activation atomique ; une occurrence absente ou divergente provoque un refus perceptible sans substitution par le texte original.
+- Cache privé atomique de 32 Mio, lié au contenu, aux langues et au moteur/serveur. Réutilisation sans API, sans clé et hors ligne lorsqu’une piste complète correspondant aux paramètres est encore disponible.
+- Mémorisation facultative des clés par Android Keystore/AES-GCM ; séparation des clés et caches LibreTranslate selon le serveur, absence de relance automatique, HTTPS sans redirection et erreurs expurgées.
+- Annulations et changements de vidéo/piste protégés par génération et tâche. Correction de la réplique déjà visible lors de l’activation : remise en file explicite pendant la pause, sans reprise automatique.
+- Guide détaillé des comptes, moteurs et candidats locaux, installation et limites depuis Android. Aucun runtime de traduction local ni OCR intégré dans cette version.
+- Consolidation de la modularisation, des diagnostics, des commandes et interfaces image/audio des étapes 1 à 6 ; le DSP du film conserve son activation facultative et ses limites PCM16 mono/stéréo.
+
+Les résultats réellement exécutés et leurs limites figurent dans [TESTING.md](TESTING.md). [Guide de traduction](docs/GUIDE_MOTEURS_TRADUCTION.md) et [contrat d’intégration](docs/TRADUCTION_ETAPE_7.md).
+
 ## En préparation — Saisie et traitements audio avancés, étape 6
 
 - Point de retour de l’étape 5 conservé au commit `647de93e99ef778cfa3199f3c225e1fc0b759baf`, sur `backup/etape-5-validee-20261023-647de93` ; travail séparé sur `work/etape-6-audio-expert-20261023`.

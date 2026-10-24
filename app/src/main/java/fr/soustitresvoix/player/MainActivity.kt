@@ -41,6 +41,7 @@ import kotlin.math.roundToInt
 /** Accessible library controls and an independent immersive video presentation. */
 @UnstableApi
 class MainActivity : ComponentActivity() {
+    private lateinit var translationControls: SubtitleTranslationControls
     private lateinit var prefs: PlayerPreferences
     internal lateinit var session: PlaybackSession; private set
     private lateinit var playerView: PlayerView
@@ -59,7 +60,7 @@ class MainActivity : ComponentActivity() {
     private var cinema: CinemaView? = null
     private var savedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     private var scrubbing = false
-    private var message = "Ouvre une vidéo ou lance l’essai intégré. Les vidéos et les sous-titres restent sur le téléphone."
+    private var message = "Ouvre une vidéo ou lance l’essai intégré. La traduction en ligne envoie seulement le texte, après confirmation."
     private var messageIsError = false
     private var lastSaveMs = 0L
     private val ticker = object : Runnable {
@@ -84,6 +85,7 @@ class MainActivity : ComponentActivity() {
         })
         session = PlaybackSession(this, prefs, onChanged = { refreshUi() },
             onMessage = { text, error -> showMessage(text, error) }, onCaption = { })
+        translationControls = SubtitleTranslationControls(this, session)
         buildUi()
         if (!handleViewIntent(intent)) prefs.lastMedia()?.let { saved ->
             val scheme = Uri.parse(saved.uri).scheme
@@ -110,6 +112,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onDestroy() {
         closed = true; requestToken++; cinema?.close()
+        if (::translationControls.isInitialized) translationControls.close()
         main.removeCallbacksAndMessages(null); io.shutdownNow()
         if (::playerView.isInitialized) playerView.player = null
         if (::session.isInitialized) session.close()
@@ -256,6 +259,7 @@ class MainActivity : ComponentActivity() {
             if (session.media == null) showMessage("Ouvre d’abord une vidéo.", false) else pickDocument(OPEN_SUBTITLE)
         })
         column.addView(button("Choisir la piste de sous-titres") { chooseTrack(C.TRACK_TYPE_TEXT) })
+        column.addView(button("Traduire les sous-titres en français") { translationControls.show() })
         column.addView(button("Choisir la piste audio du film") { chooseTrack(C.TRACK_TYPE_AUDIO) })
         column.addView(button("Répéter la dernière phrase — met en pause") { session.repeatLast() })
         column.addView(button("Reprendre explicitement la voix") { session.resumeVoice() })
@@ -282,6 +286,7 @@ class MainActivity : ComponentActivity() {
         if (state.wantsPlayback || state.speakingId != null || session.isPreparing) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         session.prepareTick()
+        if (::translationControls.isInitialized) translationControls.refresh()
         cinema?.let { it.refresh(); return }
         if (!::playButton.isInitialized) return
         playButton.text = when { state.wantsPlayback -> "Pause"; state.speakingId != null -> "Arrêter la voix"; else -> "Lire" }
@@ -498,6 +503,7 @@ class MainActivity : ComponentActivity() {
         }
         column.addView(audioResult)
         slider("Taille des sous-titres", 22, 60, prefs.subtitleSp.toInt(), " sp") { prefs.subtitleSp = it.toFloat() }
+        column.addView(button("Traduire les sous-titres en français") { translationControls.show() })
         column.addView(button("Choisir une voix hors ligne") { voiceDialog() })
         column.addView(button("Écouter un essai de la voix") { session.refreshSettings(); session.previewVoice() })
         column.addView(button("Ouvrir les réglages vocaux Android") {
@@ -533,8 +539,8 @@ class MainActivity : ComponentActivity() {
     }
     private fun helpDialog() {
         session.pause()
-        AlertDialog.Builder(this).setTitle("Sous-titres en voix 0.3.2 — mode d’emploi et limites")
-            .setMessage("Ouvre une vidéo, choisis une piste textuelle et une voix dans la même langue. Le lecteur ne traduit pas.\n\nÉtirement intégral : toute l’image est visible, avec proportions modifiées. La protection interdit le zoom et les déplacements accidentels. Un recadrage de marges exige une confirmation distincte et peut être annulé.\n\nAdaptatif : la vitesse est calculée à partir du WAV préparé ou d’une estimation calibrée en lecture directe. Le plafond est réglable de 100 à 250 % de la vitesse de base, 180 % au départ. L’algorithme réserve le temps des segments restants et respecte la tolérance de retard choisie. Une pause reste possible si la phrase ne tient pas au plafond choisi ; aucun dialogue n’est résumé.\n\nPréparation : indexer le texte, puis préparer cinq minutes ou toute la vidéo. Le film reste en pause et ne reprend que sur commande. Le cache persiste mais sa capacité est limitée ; préparer toute la vidéo ne garantit pas que tous les fichiers audio tiennent encore en cache. Reste dans l’application pendant la préparation.\n\nLes filtres restent facultatifs. La ponctuation et les silences naturels ne sont pas supprimés. Si un modèle est modifié à l’intérieur d’un moteur, utilise le bouton signalant sa mise à jour.\n\nPGS, VobSub et sous-titres incrustés ne sont pas vocalisés. Pas de DRM, d’OCR, de traduction, d’audiodescription ni de lecture en arrière-plan. Les essais de décodeurs utilisent ceux déjà présents sur le téléphone. Les effets visuels sont réservés au SDR reconnu.\n\nLe lecteur n’a pas d’autorisation Internet. Les moteurs vocaux sont des applications externes. Aucun runtime neuronal vocal GPU/NPU n’est intégré. Les profils règlent l’anticipation et le cache, pas le matériel interne d’un moteur tiers.\n\nÉdition 0.3 installable à côté de la 0.1 et de la 0.2, avec réglages séparés. Aucun fichier original n’est modifié.")
+        AlertDialog.Builder(this).setTitle("Sous-titres en voix — Traduction 0.4.0 : mode d’emploi et limites")
+            .setMessage("Ouvre une vidéo, choisis une piste textuelle et une voix dans la même langue. Pour une piste étrangère, utilise Traduire les sous-titres en français, confirme le moteur et l’envoi, puis choisis une voix française. Seule une piste entièrement traduite peut être activée. La vidéo garde les sous-titres originaux à l’écran.\n\nÉtirement intégral : toute l’image est visible, avec proportions modifiées. La protection interdit le zoom et les déplacements accidentels. Un recadrage de marges exige une confirmation distincte et peut être annulé.\n\nAdaptatif : la vitesse est calculée à partir du WAV préparé ou d’une estimation calibrée en lecture directe. Le plafond est réglable de 100 à 250 % de la vitesse de base, 180 % au départ. L’algorithme réserve le temps des segments restants et respecte la tolérance de retard choisie. Une pause reste possible si la phrase ne tient pas au plafond choisi ; aucun dialogue n’est résumé.\n\nPréparation : indexer le texte, puis préparer cinq minutes ou toute la vidéo. Le film reste en pause et ne reprend que sur commande. Le cache persiste mais sa capacité est limitée ; préparer toute la vidéo ne garantit pas que tous les fichiers audio tiennent encore en cache. Reste dans l’application pendant la préparation.\n\nLes filtres restent facultatifs. La ponctuation et les silences naturels ne sont pas supprimés. Si un modèle est modifié à l’intérieur d’un moteur, utilise le bouton signalant sa mise à jour.\n\nPGS, VobSub et sous-titres incrustés ne sont pas vocalisés. Pas de DRM, d’OCR, d’audiodescription ni de lecture en arrière-plan. Les essais de décodeurs utilisent ceux déjà présents sur le téléphone. Les effets visuels sont réservés au SDR reconnu.\n\nLa permission Internet sert aux traductions explicitement demandées. Azure, DeepL ou le serveur LibreTranslate choisi reçoivent le texte, jamais la vidéo ou l’audio. Aucun moteur local de traduction n’est encore intégré. Les pistes traduites complètes en cache peuvent être réutilisées sans réseau. Les moteurs vocaux sont des applications externes. Aucun runtime neuronal vocal GPU/NPU n’est intégré. Les profils règlent l’anticipation et le cache, pas le matériel interne d’un moteur tiers.\n\nÉdition Traduction 0.4.0 installable à côté de la stable 0.3.2 et des anciennes éditions, avec réglages séparés. Aucun fichier original n’est modifié.")
             .setPositiveButton("Fermer", null).show()
     }
     companion object { private const val OPEN_VIDEO = 10; private const val OPEN_SUBTITLE = 11 }

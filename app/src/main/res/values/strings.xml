@@ -6,5 +6,5 @@
     <string name="audio_timing_caption">%1$s : %2$d ms</string>
     <string name="quick_mix_voice_help" formatted="false">Volume de la voix : 10 à 100 %, par pas de cinq points, 100 % par défaut. Le réglage est conservé et sera utilisé au prochain segment vocal. La phrase en cours n’est pas relancée. Le volume système reste distinct. Pour retrouver la valeur initiale, remonte à 100 %.</string>
     <string name="quick_mix_running_hint">Ces réglages ne mettent pas le film en pause.</string>
-    <string name="app_name">Sous-titres en voix — 0.3.2</string>
+    <string name="app_name">Sous-titres en voix — Traduction 0.4.0</string>
 </resources>

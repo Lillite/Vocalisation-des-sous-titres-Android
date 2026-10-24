@@ -2,13 +2,22 @@
 
 [Index de la documentation](README.md) · [Compilation et validation](../TESTING.md)
 
-Cette vue décrit les comportements de l’édition **0.3.2** et les six premières étapes
-préparatoires sur cette branche. Le projet sépare la logique de
+Cette vue décrit les comportements de l’édition **Traduction 0.4.0**, qui rassemble les six premières étapes
+et le nouveau module de traduction. Le projet sépare la logique de
 narration indépendante d’Android, les adaptateurs du lecteur et l’interface. Les
 invariants ci-dessous sont des exigences à préserver lors des modifications ; les
 résultats de vérification restent attachés au commit réellement testé.
 
 ## Composition des composants
+
+La traduction avant lecture ajoute un port `TranslationEngine` et une préparation
+indépendante de la synthèse. `SubtitleTranslationSession` possède les tâches,
+générations, confirmations et traductions activées ; `TranslationPlan` et
+`TranslatedTrack` conservent les identités/minutages. `TranslationRunner` valide
+les lots et le cache atomique. Les adaptateurs HTTP n’accèdent ni à la vidéo,
+ni au lecteur, ni au moteur de voix. La session fournit seulement le texte
+traduit validé au contrôleur existant, avec les identités originales.
+Voir [Traduction — étape 7](TRADUCTION_ETAPE_7.md) pour le contrat complet.
 
 `PlaybackSession` reçoit un `PlaybackComponents`. Les factories par défaut créent
 des instances propres à cette session :

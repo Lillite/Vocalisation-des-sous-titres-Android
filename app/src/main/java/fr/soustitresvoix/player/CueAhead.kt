@@ -211,13 +211,15 @@ class CueAheadIndex {
         frames.remove(key)?.forEach { unique.remove(it); characters -= it.raw.length; trackSnapshots.remove(it.track) }
     }
     @Synchronized fun selected(track: String?): List<Item> = frames.values.flatten().filter { it.track == track }
-    @Synchronized fun future(track: String?, positionMs: Long, filters: SpeechTools.Filters, count: Int, seconds: Int = 60): List<String> {
+    @Synchronized fun future(track: String?, positionMs: Long, filters: SpeechTools.Filters, count: Int, seconds: Int = 60,
+        textFor: (Item) -> String? = { it.raw }): List<String> {
         cursorUs = positionMs.coerceAtLeast(0) * 1000
         val futureEnd = cursorUs + seconds.coerceIn(5, 7200) * 1_000_000L
         if (futureEnd < cursorUs) return emptyList()
         return frames.subMap(cursorUs, true, futureEnd, false).values.asSequence().flatten()
             .filter { it.track == track }
-            .flatMap { SpeechTools.segments(SpeechTools.filter(it.raw, filters)).asSequence() }
+            .mapNotNull { textFor(it) }
+            .flatMap { SpeechTools.segments(SpeechTools.filter(it, filters)).asSequence() }
             .distinct().take(count.coerceIn(0, 100_000)).toList()
     }
     @Synchronized fun windowEnd(track: String?, text: String, positionMs: Long, filters: SpeechTools.Filters): Long? =

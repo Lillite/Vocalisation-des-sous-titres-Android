@@ -2,12 +2,15 @@
 
 [Accueil du projet et téléchargement de l’APK](../README.md)
 
-La documentation d’utilisation et de développement décrit l’édition **0.3.2**. Les notes de révision plus anciennes restent accessibles pour comprendre les changements et les vérifications effectuées à chaque étape.
+La documentation d’utilisation et de développement décrit les sources de l’édition **Traduction 0.4.0** ; la stable publiée précédemment reste la 0.3.2. Les notes de révision plus anciennes restent accessibles pour comprendre les changements et les vérifications effectuées à chaque étape.
 
 ## Utiliser et vérifier l’application
 
 | Besoin | Document |
 |---|---|
+| Choisir et configurer chaque traducteur, comprendre les quotas et les modèles Hugging Face | [Guide complet de traduction](GUIDE_MOTEURS_TRADUCTION.md) |
+| Comprendre la conservation des occurrences, le cache, les clés et les limites | [Traduction — étape 7](TRADUCTION_ETAPE_7.md) |
+| Étudier les moteurs locaux, licences, runtimes et téléchargements futurs | [Étude de traduction locale](ETUDE_TRADUCTION_LOCALE.md) |
 | Installer l’application, choisir une voix et comprendre les fonctions | [Présentation et démarrage rapide](../README.md) |
 | Vérifier la lecture, le cadrage, les voix et l’accessibilité sur son téléphone | [Parcours de tests sur téléphone](TESTS_TELEPHONE.md) |
 | Consulter les moteurs vocaux, modèles et sources documentaires | [Catalogue des voix et moteurs](VOIX_CATALOGUE_2026.md) |

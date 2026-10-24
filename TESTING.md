@@ -1,5 +1,53 @@
 # Vérifications de régression
 
+## Édition Traduction 0.4.0 — contrôles locaux du 24 octobre 2026
+
+Le développement part de l’étape 6 `1942ba48ae3f9324b3c7d5b03ab8c9bf11463e09`.
+La nouvelle application porte l’identité `fr.soustitresvoix.player.translation`,
+version 0.4.0, code 6, avec une signature durable propre à cette édition et
+sauvegardée hors du dépôt. Elle coexiste avec la stable 0.3.2.
+
+Les passages Gradle locaux ont réellement exécuté **87/87 tests du noyau et
+135/135 tests JVM de l’application**, en debug puis en release, sans échec,
+erreur, méthode ignorée, manquante, inattendue ou dupliquée. Les inventaires des
+sources ont été comparés aux XML JUnit. Les compilations des deux applications
+et de leurs APK de tests ont réussi. Les **82 méthodes instrumentées** sont
+compilées ; leur exécution Android doit être attestée séparément par la CI.
+
+Les lint debug/release ont réussi avec **zéro erreur**, respectivement **49 et
+50 avertissements** dans les rapports locaux. Les alertes comprennent les
+recommandations KTX, les chaînes non externalisées, les constructeurs de vues,
+les règles de sauvegarde et l’accessibilité d’un toucher, ainsi qu’une alerte de
+version de dépendance supplémentaire en release. Aucune alerte n’est masquée
+et aucune absence totale d’avertissement n’est revendiquée.
+
+Le manifeste compilé release, les permissions, le certificat et l’alignement
+ont été contrôlés. Certificat SHA-256 de l’édition Traduction :
+`304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d`.
+Ce certificat diffère volontairement de celui de la stable 0.3.2 ; les deux
+identités d’application sont distinctes. Les clés privées ne sont pas versionnées.
+
+La première tentative Gradle a révélé un Java 17 limité au JRE ; un véritable
+JDK 17 a été installé avant la compilation, avec JDK 21 pour Robolectric.
+Le premier passage complet des tests de traduction a ensuite trouvé une
+omission réelle : une réplique déjà visible n’était pas réémise par un déplacement
+à position identique. Le correctif réinjecte explicitement `player.currentCues`
+dans la file en pause. Le test reproduisant l’échec, les deux cas de lecture sans
+voix et de rescan divergent, puis le passage ciblé **12/12** et les suites
+complètes ont réussi après correction.
+
+Les revues ont aussi corrigé la séparation des clés LibreTranslate par serveur,
+la persistance des erreurs du formulaire, l’annulation des aperçus à la fermeture,
+la fermeture du transport en vol, la recherche temporelle bornée et le refus
+entier d’une préparation vocale dont l’index diverge. Les anciens tests restent
+présents. Les tests réseau n’utilisent aucun compte payant ni sous-titre personnel.
+
+Ces contrôles ne prouvent pas la qualité sémantique d’une traduction, les droits
+d’un compte API, la qualité acoustique d’une voix, les performances du OnePlus 15
+ou TalkBack sur appareil. Les essais manuels et les résultats d’API réelles doivent
+rester distingués des tests contrôlés. Les résultats CI et de publication seront
+rattachés à leurs commits et exécutions réels.
+
 ## Validation continue dans GitHub Actions
 
 Le workflow unique [Android — compilation et régressions](.github/workflows/android.yml)
@@ -11,10 +59,10 @@ Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcou
 | Étape | Contrôles exigés |
 | --- | --- |
 | Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 77 tests JVM du noyau, 92 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 77 tests du noyau et des 92 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Variante debug | 87 tests JVM du noyau, 135 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 87 tests du noyau et des 135 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
 | Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
-| Android 36 | Deux passages complets des 75 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
+| Android 36 | Deux passages complets des 82 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
 | Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
 
 Ces effectifs incluent les suites de la version 0.3.2 et les compléments de la
@@ -34,7 +82,7 @@ scénarios Android. Les totaux 40/41/69 de l’étape 2, 44/46/70 de l’étape 
 de l’étape 5 sont 50/64/73. La [sixième étape](docs/AUDIO_EXPERT_ETAPE_6.md)
 ajoute 27 méthodes noyau, 28 méthodes JVM de l’application et deux scénarios
 Android ; le scénario ASS de l’étape 5 est aussi étendu aux commandes DSP.
-Les effectifs exigés sur cette branche sont **77/92/75**.
+Les effectifs exigés sur cette branche sont **87/135/82**.
 Ces nombres sont des critères à contrôler,
 pas une preuve d’exécution :
 consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
@@ -66,6 +114,9 @@ clé stable et ne garantit pas une mise à jour par-dessus une installation
 existante. Les artefacts Actions sont conservés 14 jours ; les APK destinés à
 l'utilisation et leurs informations de version sont accessibles depuis le
 [README](README.md).
+
+
+L’étape traduction ajoute 10 méthodes du noyau, 43 méthodes JVM de l’application et 7 méthodes Android. Les contrôles du transport sont réalisés avec des réponses synthétiques sans compte fournisseur. Les trois scénarios Android de traduction utilisent une traduction contrôlée et le service TTS de fixture ; ils ne mesurent ni fidélité linguistique, ni disponibilité d’un compte API, ni rendu d’une voix commerciale.
 
 ## Validation locale
 
