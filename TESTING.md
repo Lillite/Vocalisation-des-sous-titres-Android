@@ -48,6 +48,21 @@ ou TalkBack sur appareil. Les essais manuels et les résultats d’API réelles 
 rester distingués des tests contrôlés. Les résultats CI et de publication seront
 rattachés à leurs commits et exécutions réels.
 
+Le contrôle ciblé suivant a également reproduit une perte de la réplique courante
+après la seule commande de piste audio. La réinjection est maintenant effectuée
+pour ce cas, sans réutiliser une ancienne réplique après changement de piste texte.
+Les callbacks du renderer pendant l’attente normale d’une traduction ne sont plus
+présentés comme une erreur de correspondance. Le compte de la suite JVM augmente
+de 135 à 137 ; le passage complet CI doit attester ce nouvel inventaire.
+
+Le mécanisme de publication a été soumis à 17 tests comportementaux hors réseau,
+conservés dans `tools/test-publish-verified-release.py` et exécutés en CI.
+Deux cas ont initialement échoué : changement concurrent de cible du brouillon et
+création d’un tag incorrect pendant les téléversements. Après déplacement des
+vérifications avant publication, les 17 cas passent. L’API GitHub ne fournit pas
+de transaction atomique contre toute modification concurrente entre la dernière
+vérification et la publication ; aucune garantie absolue n’est revendiquée.
+
 ## Validation continue dans GitHub Actions
 
 Le workflow unique [Android — compilation et régressions](.github/workflows/android.yml)
@@ -59,8 +74,8 @@ Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcou
 | Étape | Contrôles exigés |
 | --- | --- |
 | Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 87 tests JVM du noyau, 135 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 87 tests du noyau et des 135 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Variante debug | 87 tests JVM du noyau, 137 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 87 tests du noyau et des 137 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
 | Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
 | Android 36 | Deux passages complets des 82 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
 | Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
@@ -82,7 +97,7 @@ scénarios Android. Les totaux 40/41/69 de l’étape 2, 44/46/70 de l’étape 
 de l’étape 5 sont 50/64/73. La [sixième étape](docs/AUDIO_EXPERT_ETAPE_6.md)
 ajoute 27 méthodes noyau, 28 méthodes JVM de l’application et deux scénarios
 Android ; le scénario ASS de l’étape 5 est aussi étendu aux commandes DSP.
-Les effectifs exigés sur cette branche sont **87/135/82**.
+Les effectifs exigés sur cette branche sont **87/137/82**.
 Ces nombres sont des critères à contrôler,
 pas une preuve d’exécution :
 consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
@@ -116,7 +131,7 @@ l'utilisation et leurs informations de version sont accessibles depuis le
 [README](README.md).
 
 
-L’étape traduction ajoute 10 méthodes du noyau, 43 méthodes JVM de l’application et 7 méthodes Android. Les contrôles du transport sont réalisés avec des réponses synthétiques sans compte fournisseur. Les trois scénarios Android de traduction utilisent une traduction contrôlée et le service TTS de fixture ; ils ne mesurent ni fidélité linguistique, ni disponibilité d’un compte API, ni rendu d’une voix commerciale.
+L’étape traduction ajoute 10 méthodes du noyau, 45 méthodes JVM de l’application et 7 méthodes Android. Les contrôles du transport sont réalisés avec des réponses synthétiques sans compte fournisseur. Les trois scénarios Android de traduction utilisent une traduction contrôlée et le service TTS de fixture ; ils ne mesurent ni fidélité linguistique, ni disponibilité d’un compte API, ni rendu d’une voix commerciale.
 
 ## Validation locale
 

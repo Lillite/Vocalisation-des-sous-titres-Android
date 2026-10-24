@@ -147,6 +147,8 @@ class PlaybackSession(
     private var fade: Runnable? = null
     private var lastCue: CueGroup? = null
     private var trackReset = false
+    private var trackSelectionSequence = 0L
+    private var seekSequence = 0L
     private var hasAttachedSubtitle = false
     private var selectExternalWhenAvailable = false
     var media: SavedMedia? = null; private set
@@ -263,7 +265,8 @@ class PlaybackSession(
         finishPlaybackBenchmark("Changement de vidéo ou de fichier de sous-titres")
         translation.reset()
         savePosition(); cancelIndexing(); indexedSource = null; visual.reset()
-        val epoch = ++mediaEpoch; lastRawCaption = ""; ahead.clear(); speech.cancelPreparation()
+        val epoch = ++mediaEpoch; trackSelectionSequence++; trackReset = false
+        lastRawCaption = ""; ahead.clear(); speech.cancelPreparation()
         val diagnosticToken = diagnosticObserver.beginMedia()
         apply(machine.reset(false)); lastCue = null; onCaption("")
         media = saved
@@ -314,6 +317,7 @@ class PlaybackSession(
         savePosition()
     }
     fun seek(positionMs: Long) {
+        seekSequence++
         finishPlaybackBenchmark("Position de lecture modifiée : extrait non comparable")
         interruptPreparation("Préparation arrêtée : position de lecture modifiée. Le cache existant est conservé.")
         apply(machine.reset(keepPlaybackIntent = true)); lastCue = null; onCaption("")
@@ -444,7 +448,8 @@ class PlaybackSession(
     fun cancelIndexing() { indexer?.cancel(); indexer=null; manualPreparation=false }
     fun cancelPreparation() { cancelIndexing(); speech.cancelPreparation(); indexingStatus="Préparation annulée ; lecture et cache existant conservés" }
     private fun interruptPreparation(message: String) {
-        val wasPreparing = isPreparing
+        // Translation owns a separate worker and explicit cancellation control.
+        val wasPreparing = indexer != null || speech.bulkPreparation || manualPreparation
         cancelIndexing(); speech.cancelPreparation()
         if (wasPreparing) {
             indexingStatus = message
@@ -611,13 +616,20 @@ class PlaybackSession(
     private fun forwardCues(group: CueGroup) {
         val captions = group.cues.mapNotNull { it.text?.toString() }
         if (translation.required) {
+            // Renderer callbacks may still arrive after the pause used to prepare
+            // a translation. Waiting for completion is expected, not a mapping error.
+            if (!translation.ready) {
+                lastRawCaption = ""; onCaption("")
+                if (machine.snapshot().wantsPlayback || machine.snapshot().speakingId != null) pause()
+                return
+            }
             if (captions.isEmpty() && group.cues.none { it.bitmap != null }) {
                 lastRawCaption = ""; onCaption(""); apply(machine.cues(group.presentationTimeUs, emptyList())); return
             }
             val originals = captions.map { fr.soustitresvoix.core.SubtitleText.clean(it) }.filter { it.isNotBlank() }
             val occurrences = ahead.resolved(selectedTextId(), originals, group.presentationTimeUs, SpeechTools.Filters())
             val translated = occurrences?.map { translation.textFor(it) }
-            if (!translation.ready || occurrences == null || translated == null || translated.any { it == null } || group.cues.any { it.bitmap != null }) {
+            if (occurrences == null || translated == null || translated.any { it == null } || group.cues.any { it.bitmap != null }) {
                 translation.rejectUnmapped(); return
             }
             lastRawCaption = translated.filterNotNull().joinToString("\n"); onCaption(lastRawCaption)
@@ -639,13 +651,20 @@ class PlaybackSession(
     fun selectTrack(type: Int, group: Tracks.Group?, index: Int = 0, disabled: Boolean = false) {
         if (type == C.TRACK_TYPE_TEXT) { translation.trackChanged(); selectExternalWhenAvailable = false; cancelIndexing() }
         pause(); apply(machine.reset(false)); lastCue = null; onCaption(""); trackReset = true
+        val ticket = ++trackSelectionSequence
+        val epoch = mediaEpoch
+        val selectedSubtitle = selectedTextId()
+        val positionTicket = seekSequence
         val params = player.trackSelectionParameters.buildUpon().clearOverridesOfType(type).setTrackTypeDisabled(type, disabled)
         if (group != null) params.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
         player.trackSelectionParameters = params.build()
         handler.post {
-            if (!closed) {
+            if (!closed && epoch == mediaEpoch && ticket == trackSelectionSequence) {
                 trackReset = false; player.seekTo(player.currentPosition)
-                apply(machine.setMediaReady(player.playbackState == Player.STATE_READY)); onChanged()
+                apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
+                if (type == C.TRACK_TYPE_AUDIO && selectedSubtitle == selectedTextId() && positionTicket == seekSequence)
+                    rearmCurrentSubtitles()
+                onChanged()
             }
         }
     }

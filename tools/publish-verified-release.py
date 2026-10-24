@@ -383,8 +383,9 @@ def no_existing_release_or_tag(github: GitHub) -> None:
     raise Refusal("Release listing pagination limit reached.")
 
 
-def verify_tag(github: GitHub, source_sha: str) -> None:
-    target = github.api(PREFIX + "/git/ref/tags/" + TAG).get("object", {})
+def verify_tag(github: GitHub, source_sha: str, reference: dict[str, Any] | None = None) -> None:
+    target = (reference if reference is not None else
+              github.api(PREFIX + "/git/ref/tags/" + TAG)).get("object", {})
     for _ in range(5):
         if target.get("type") == "commit":
             require(target.get("sha") == source_sha, "Published tag does not identify the validated source.")
@@ -401,9 +402,10 @@ def publish(root: Path, github: GitHub, value: dict[str, str], work: Path, ci_ru
     apk = root / APK_PATH
     sums = work / "SHA256SUMS"
     sums.write_text(f"{value['apk_sha256']}  {apk.name}\n", encoding="ascii")
+    notes = (root / NOTES_PATH).read_text(encoding="utf-8")
     release = github.api(PREFIX + "/releases", "POST", {
         "tag_name": TAG, "target_commitish": value["source_sha"], "name": TITLE,
-        "body": (root / NOTES_PATH).read_text(encoding="utf-8"), "draft": True, "prerelease": False,
+        "body": notes, "draft": True, "prerelease": False,
     }, expected=(201,))
     require(release.get("draft") is True and release.get("tag_name") == TAG and
             type(release.get("id")) is int, "Draft release creation was not confirmed.")
@@ -421,9 +423,32 @@ def publish(root: Path, github: GitHub, value: dict[str, str], work: Path, ci_ru
     require(latest["id"] == ci_run["id"] and latest.get("run_attempt", 1) == ci_run.get("run_attempt", 1),
             "Android validation changed during publication; draft retained for review.")
     visible = github.api(PREFIX + f"/releases/{release_id}")
-    require(visible.get("draft") is True and visible.get("tag_name") == TAG and
-            {item.get("id") for item in visible.get("assets", [])} == {item["id"] for item in assets},
+    require(visible.get("id") == release_id and visible.get("draft") is True and
+            visible.get("prerelease") is False and visible.get("tag_name") == TAG and
+            visible.get("target_commitish") == value["source_sha"] and
+            visible.get("name") == TITLE and visible.get("body") == notes,
             "Draft contents changed before publication.")
+    visible_assets = visible.get("assets")
+    require(isinstance(visible_assets, list) and len(visible_assets) == len(assets) and
+            all(isinstance(item, dict) and type(item.get("id")) is int for item in visible_assets) and
+            {item["id"] for item in visible_assets} == {item["id"] for item in assets},
+            "Draft contents changed before publication.")
+    by_id = {item["id"]: item for item in visible_assets}
+    for uploaded, original in zip(assets, (apk, sums)):
+        item = by_id[uploaded["id"]]
+        require(item.get("state") == "uploaded" and item.get("name") == original.name and
+                item.get("size") == original.stat().st_size and
+                item.get("digest") in (None, "sha256:" + sha256(original)),
+                "Draft asset identity, size or digest changed before publication.")
+    # A draft need not have created its tag yet. If another writer created one
+    # during uploads, verify its exact target before making anything public.
+    appeared_tag = github.api(PREFIX + "/git/ref/tags/" + TAG, absent=True)
+    if appeared_tag is not None:
+        verify_tag(github, value["source_sha"], appeared_tag)
+    assert_main(github, value["source_sha"])
+    # GitHub offers no atomic compare-and-publish transaction for these reads.
+    # Concurrent changes after the last checks remain possible; verify again
+    # after publication and never claim these checks eliminate that final race.
     published = github.api(PREFIX + f"/releases/{release_id}", "PATCH", {"draft": False, "make_latest": "true"})
     require(published.get("draft") is False and published.get("prerelease") is False and
             published.get("tag_name") == TAG, "Public release state was not confirmed.")

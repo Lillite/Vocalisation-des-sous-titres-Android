@@ -307,6 +307,84 @@ class TranslationSessionRobolectricTest {
         }
     }
 
+    @Test fun changingOnlyTheFilmAudioTrackRetainsTheCurrentlyDisplayedFrenchOccurrences() {
+        Fixture().use { fixture ->
+            fixture.session.seek(2500)
+            await("The source cue at the current paused position was not rendered") {
+                fixture.session.player.currentCues.cues.mapNotNull { it.text?.toString() }.contains("Hello.")
+            }
+            fixture.translate()
+            await("The current French occurrence was not initially queued") {
+                fixture.session.machine.pendingTexts().contains("Bonjour.")
+            }
+            val fingerprint = fixture.session.translation.fingerprint
+            fixture.session.selectTrack(C.TRACK_TYPE_AUDIO, null)
+            await("An audio-only track command lost the currently displayed French occurrence") {
+                fixture.session.player.playbackState == Player.STATE_READY && fixture.session.machine.pendingTexts().contains("Bonjour.")
+            }
+            assertTrue(fixture.session.translation.ready)
+            assertTrue(fixture.session.translation.required)
+            assertEquals(fingerprint, fixture.session.translation.fingerprint)
+            assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+            assertTrue(fixture.components.speech.requests.isEmpty())
+            fixture.session.play()
+            var guard = 0
+            while (fixture.session.machine.snapshot().speakingId != null) {
+                assertTrue(++guard < 20)
+                fixture.components.speech.complete(fixture.session.machine.snapshot().speakingId!!)
+            }
+            assertEquals(listOf("SORTIE", "Bonjour."), fixture.components.speech.requests.map { it.second })
+            assertTrue(fixture.components.speech.requests.none { it.second in french.keys })
+        }
+    }
+
+    @Test fun originalRendererCallbacksWhileWaitingForTranslationDoNotSpeakOrReportAFailedMapping() {
+        Fixture().use { fixture ->
+            fixture.session.seek(2500)
+            await("The source cue at the current paused position was not rendered") {
+                fixture.session.player.currentCues.cues.mapNotNull { it.text?.toString() }.contains("Hello.")
+            }
+            val current = fixture.session.player.currentCues
+            val preview = fixture.prepare("waiting")
+            fixture.messages.clear()
+            fixture.components.backend.deliver(current)
+            fixture.session.pause()
+            assertTrue(fixture.session.translation.required)
+            assertFalse(fixture.session.translation.ready)
+            assertTrue(fixture.session.machine.pendingTexts().isEmpty())
+            assertTrue(fixture.components.speech.requests.isEmpty())
+            assertEquals("", fixture.session.lastRawCaption)
+            assertFalse(fixture.messages.any { it.second || it.first.contains("Préparation arrêtée") })
+
+            // A manual pause also leaves an independent translation worker
+            // running; it must not announce that this preparation was stopped.
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            fixture.session.translation.start(preview) {
+                Engine(id = "waiting") { texts ->
+                    entered.countDown()
+                    assertTrue(release.await(10, TimeUnit.SECONDS))
+                    texts.map { french.getValue(it) }
+                }
+            }
+            try {
+                await("Controlled waiting translator was not entered") { entered.count == 0L }
+                fixture.messages.clear()
+                fixture.components.backend.deliver(current)
+                fixture.session.pause()
+                assertTrue(fixture.session.translation.busy)
+                assertTrue(fixture.session.translation.required)
+                assertFalse(fixture.session.translation.ready)
+                assertTrue(fixture.session.machine.pendingTexts().isEmpty())
+                assertTrue(fixture.components.speech.requests.isEmpty())
+                assertFalse(fixture.messages.any { it.second || it.first.contains("Préparation arrêtée") })
+            } finally { release.countDown() }
+            await("The paused independent translation worker did not complete") { fixture.session.translation.ready }
+            assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+            assertTrue(fixture.components.speech.requests.isEmpty())
+        }
+    }
+
     @Test fun translatedPlaybackWithoutNarrationDoesNotRequireAReadyFrenchVoice() {
         Fixture().use { fixture ->
             fixture.translate()

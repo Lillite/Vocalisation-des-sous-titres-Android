@@ -24,7 +24,7 @@ Chaque lot doit fournir exactement une réponse textuelle non vide par occurrenc
 
 Pendant la lecture, la session résout l’occurrence originale puis vérifie son identité **et son texte source** avant de fournir la traduction au contrôleur vocal existant. Une divergence provoque une pause perceptible. Le texte original n’est jamais utilisé comme remplacement automatique d’une traduction absente. Le mode reste en attente jusqu’à une nouvelle traduction ou la commande explicite **Revenir à la piste originale**.
 
-La réplique déjà affichée à l’activation ou au retour à l’original est réinjectée dans la file pendant la pause. Un simple déplacement à position identique ne suffisait pas : un test a reproduit cette omission et contrôle maintenant le correctif. Les temps et identités passés au moteur de narration restent ceux des occurrences originales.
+La réplique déjà affichée à l’activation, au retour à l’original ou après une commande de piste audio seule est réinjectée dans la file pendant la pause. Un simple déplacement à position identique ne suffisait pas : un test a reproduit cette omission et contrôle maintenant le correctif. Les temps et identités passés au moteur de narration restent ceux des occurrences originales.
 
 ## Annulation et changements
 
