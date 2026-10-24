@@ -21,37 +21,84 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.DecoderReuseEvaluation
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.Renderer
-import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.analytics.AnalyticsListener
-import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
-import androidx.media3.exoplayer.video.VideoRendererEventListener
+import fr.soustitresvoix.core.NarrationController
 import fr.soustitresvoix.core.NarrationMachine
 import fr.soustitresvoix.core.SpeechTools
 import fr.soustitresvoix.core.PlaybackBenchmark
+import fr.soustitresvoix.core.PlaybackDiagnosticSnapshot
+import fr.soustitresvoix.core.ImageCommandPort
+import fr.soustitresvoix.core.AudioCommandContext
+import fr.soustitresvoix.core.AudioCommandDecision
+import fr.soustitresvoix.core.AudioCommandPolicy
+import fr.soustitresvoix.core.AudioCommandPort
+import fr.soustitresvoix.core.AudioCommandRequest
+import fr.soustitresvoix.core.AudioCommandSnapshot
+import fr.soustitresvoix.core.CapabilityStatus
 import java.io.File
 
 @UnstableApi
 class PlaybackSession(
     private val context: Context, val prefs: PlayerPreferences,
     private val onChanged: () -> Unit, private val onMessage: (String, Boolean) -> Unit,
-    private val onCaption: (String) -> Unit
+    private val onCaption: (String) -> Unit,
+    components: PlaybackComponents = DefaultPlaybackComponents
 ) {
     private val handler = Handler(Looper.getMainLooper())
-    val machine = NarrationMachine()
+    val machine: NarrationController = components.createNarration()
     var ahead = CueAheadIndex(); private set
     val visual = VisualTools(this)
-    val bandProcessor = SpeechBandProcessor()
+    val imageCommands: ImageCommandPort get() = visual
+    val movieAudio: MovieAudio = components.createMovieAudio()
+    /** The player volume and the installed PCM processor share this session-owned boundary. */
+    val audioCommands: AudioCommandPort = object : AudioCommandPort {
+        override fun snapshot(): AudioCommandSnapshot {
+            val state = audioCommandContext()
+            // Never consult a released player or processor; preferences remain available.
+            return if (state.closed) AudioCommandSnapshot(state, null, null, null, null)
+            else AudioCommandSnapshot(state, player.volume, movieAudio.enabled,
+                movieAudio.speaking, movieAudio.processedSamples, movieAudio.dsp?.snapshot)
+        }
+
+        override fun submit(request: AudioCommandRequest): AudioCommandDecision {
+            val before = audioCommandContext()
+            val decision = AudioCommandPolicy.validate(request, before)
+            if (decision is AudioCommandDecision.Accepted && decision.changed) {
+                val settings = decision.requested
+                finishPlaybackBenchmark("Mélange sonore modifié : essai interrompu")
+                prefs.saveMovieAudioSettings(settings)
+                if (settings.spectralDucking != before.requested.spectralDucking)
+                    movieAudio.enabled = settings.spectralDucking
+                if (settings.dsp != before.requested.dsp)
+                    movieAudio.dsp?.submit(settings.dsp)
+                if (settings.movieVolume != before.requested.movieVolume || settings.duckVolume != before.requested.duckVolume)
+                    applyMixImmediately()
+                // Timing changes are consumed by the next existing setDucked call.
+                // No pause, speech method, narration command, focus change or sink recreation.
+                // Do not call onChanged: MainActivity's general refresh also prepares speech.
+                // Audio controls refresh their own values; the existing UI ticker remains.
+            }
+            return decision
+        }
+    }
+    private fun audioCommandContext(): AudioCommandContext {
+        check(Looper.myLooper() == handler.looper) { "Audio commands require the session thread." }
+        return AudioCommandContext(mediaEpoch, closed,
+            if (closed) CapabilityStatus.UNKNOWN else movieAudio.diagnosticCapability().status,
+            prefs.movieAudioSettings(),
+            if (closed) CapabilityStatus.UNKNOWN else movieAudio.dsp?.capability?.status ?: CapabilityStatus.UNKNOWN)
+    }
+    private val subtitleSource: SubtitleSource = components.createSubtitles(context)
+    val translation = SubtitleTranslationSession(this, context, subtitleSource, onChanged, onMessage)
     private val indexingWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
-    private var indexer: FullSubtitleIndexer? = null
-    var indexingStatus = "Indexation complète non demandée"; private set
+    private var indexer: SubtitleIndexer? = null
+    private var indexingStatusEpoch = 0L
+    var indexingStatus = "Indexation complète non demandée"
+        private set(value) { field = value; indexingStatusEpoch = mediaEpoch }
     private var manualPreparation = false
     private var thermalPreparationStopped = false
-    val isPreparing: Boolean get() = indexer != null || speech.bulkPreparation || manualPreparation
+    val isPreparing: Boolean get() = indexer != null || speech.bulkPreparation || manualPreparation || translation.busy
     private data class IndexSource(val uri: String, val subtitlePath: String?, val subtitleMime: String?)
     private var indexedSource: IndexSource? = null
     private var holdStarted = 0L
@@ -80,6 +127,7 @@ class PlaybackSession(
         }
     }
     private var mediaEpoch = 0L
+    internal val generation: Long get() = mediaEpoch
     var lastRawCaption = ""; private set
     var droppedFrames = 0; private set
     var videoDecoder = "Non initialisé"; private set
@@ -87,44 +135,25 @@ class PlaybackSession(
     private val startedCpu = android.os.Process.getElapsedCpuTime()
     private var lastPreparationTick = 0L
     private var appliedFilters = prefs.filters
-    val player: ExoPlayer = ExoPlayer.Builder(context,
-        object : DefaultRenderersFactory(context) {
-            override fun buildVideoRenderers(
-                context: Context, extensionRendererMode: Int,
-                mediaCodecSelector: MediaCodecSelector, enableDecoderFallback: Boolean,
-                eventHandler: Handler, eventListener: VideoRendererEventListener,
-                allowedVideoJoiningTimeMs: Long, out: ArrayList<Renderer>
-            ) {
-                // This factory uses the default extension mode (OFF). The builder's
-                // AV1 parsing and frame scheduling defaults match Media3 1.11.1's
-                // DefaultRenderersFactory; retain its configured codec components.
-                out.add(CinemaVideoRenderer(MediaCodecVideoRenderer.Builder(context)
-                    .setCodecAdapterFactory(getCodecAdapterFactory())
-                    .setMediaCodecSelector(mediaCodecSelector)
-                    .setEnableDecoderFallback(enableDecoderFallback)
-                    .setAllowedJoiningTimeMs(allowedVideoJoiningTimeMs)
-                    .setEventHandler(eventHandler)
-                    .setEventListener(eventListener)
-                    .setMaxDroppedFramesToNotify(DefaultRenderersFactory.MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY)))
-            }
-            override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioOutputPlaybackParams: Boolean): androidx.media3.exoplayer.audio.AudioSink =
-                androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(context)
-                    .setAudioProcessors(arrayOf(bandProcessor)).build()
-        }.setMediaCodecSelector { mime, secure, tunneling ->
-            val infos=androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT.getDecoderInfos(mime,secure,tunneling)
-            if(prefs.bool("preferSoftware")) infos.sortedByDescending { it.softwareOnly } else infos
-        }.setEnableDecoderFallback(true)).setUsePlatformDiagnostics(false).build()
+    internal val playback: PlaybackBackend = components.createPlayback(context, prefs,
+        movieAudio, components.createVideoRenderer())
+    private val diagnosticObserver = PlaybackDiagnosticsObserver(this)
+    // The same Player instance is shared by both views for this session's lifetime.
+    val player: Player get() = playback.player
+    val video: VideoOutput get() = playback.video
     private val audioManager = requireNotNull(context.getSystemService(AudioManager::class.java))
     private var closed = false
     private var ducked = false
     private var fade: Runnable? = null
     private var lastCue: CueGroup? = null
     private var trackReset = false
+    private var trackSelectionSequence = 0L
+    private var seekSequence = 0L
     private var hasAttachedSubtitle = false
     private var selectExternalWhenAvailable = false
     var media: SavedMedia? = null; private set
     private var focusHeld = false
-    val speech = AndroidSpeech(context, prefs,
+    val speech: SpeechService = components.createSpeech(context, prefs,
         onAvailability = { ready, msg ->
             if (!closed) {
                 if (!ready && prefs.narration) finishPlaybackBenchmark("Voix devenue indisponible : essai interrompu")
@@ -157,21 +186,23 @@ class PlaybackSession(
         }
     }
     init {
-        player.setVideoEffects(emptyList())
-        bandProcessor.enabled = prefs.bool("spectralDucking")
+        video.setEffects(emptyList())
+        movieAudio.enabled = prefs.bool("spectralDucking")
+        movieAudio.dsp?.submit(prefs.movieAudioSettings().dsp)
         speech.firstAudioLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.FIRST_AUDIO, it) }
         speech.synthesisLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.SYNTHESIS, it) }
         speech.cacheLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.CACHE, it) }
         holdLatency.setObserver { playbackBenchmark.record(PlaybackBenchmark.Metric.HOLD, it) }
-        player.setVideoChangeFrameRateStrategy(if (prefs.bool("matchFrameRate", true)) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF)
+        video.frameRateStrategy = if (prefs.bool("matchFrameRate", true)) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
         handler.post(playbackTick)
-        player.addAnalyticsListener(object : AnalyticsListener {
+        playback.addAnalyticsListener(object : AnalyticsListener {
             override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, dropped: Int, elapsedMs: Long) { droppedFrames += dropped }
             override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, name: String, timestampMs: Long, durationMs: Long) { videoDecoder = name }
             override fun onVideoInputFormatChanged(eventTime: AnalyticsListener.EventTime, format: Format, decoderReuseEvaluation: DecoderReuseEvaluation?) {
-                if (!closed) visual.onInputFormatChanged(format)
+                if (!closed && diagnosticObserver.isCurrentMediaEvent(eventTime)) visual.onInputFormatChanged(format)
             }
         })
+        playback.addAnalyticsListener(diagnosticObserver)
         player.setAudioAttributes(androidx.media3.common.AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), false)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
@@ -209,6 +240,7 @@ class PlaybackSession(
                         if (!selectExternalWhenAvailable) break
                     }
                 }
+                translation.observeTrack()
                 onChanged()
             }
             override fun onPlayerError(error: PlaybackException) {
@@ -231,11 +263,14 @@ class PlaybackSession(
     }
     fun open(saved: SavedMedia) {
         finishPlaybackBenchmark("Changement de vidéo ou de fichier de sous-titres")
+        translation.reset()
         savePosition(); cancelIndexing(); indexedSource = null; visual.reset()
-        val epoch = ++mediaEpoch; lastRawCaption = ""; ahead.clear(); speech.cancelPreparation()
+        val epoch = ++mediaEpoch; trackSelectionSequence++; trackReset = false
+        lastRawCaption = ""; ahead.clear(); speech.cancelPreparation()
+        val diagnosticToken = diagnosticObserver.beginMedia()
         apply(machine.reset(false)); lastCue = null; onCaption("")
         media = saved
-        val item = MediaItem.Builder().setUri(Uri.parse(saved.uri))
+        val item = MediaItem.Builder().setUri(Uri.parse(saved.uri)).setTag(diagnosticToken)
         val path = saved.subtitlePath
         hasAttachedSubtitle = path != null && saved.subtitleMime != null && File(path).isFile
         selectExternalWhenAvailable = hasAttachedSubtitle
@@ -250,17 +285,15 @@ class PlaybackSession(
             .clearOverridesOfType(C.TRACK_TYPE_TEXT).clearOverridesOfType(C.TRACK_TYPE_AUDIO)
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             .setPreferredTextLanguages("fr", "fra").setSelectUndeterminedTextLanguage(true).build()
-        val tap = CueAheadFactory { track, cues -> handler.post {
-            if (!closed && epoch == mediaEpoch) ahead.add(track, cues)
-        } }.setOccurrenceListener { track, cues, origins -> handler.post {
+        val source = subtitleSource.createMediaSource(item.build()) { track, cues, origins -> handler.post {
             if (!closed && epoch == mediaEpoch) ahead.add(track, cues, origins)
         } }
-        val factory = DefaultMediaSourceFactory(context, tap).setSubtitleParserFactory(tap.sidecarParsers())
-        player.setMediaSource(factory.createMediaSource(item.build()), saved.positionMs)
+        playback.setMediaSource(source, saved.positionMs)
         player.prepare(); prefs.save(saved); onChanged()
     }
     fun play() {
         if (media == null) { onMessage("Ouvre d’abord une vidéo, ou lance l’essai intégré.", false); return }
+        if (!translation.allowPlayback()) return
         interruptPreparation("Préparation arrêtée : reprise de la lecture. Le cache existant est conservé.")
         if (!requestFocus()) return
         if (player.playbackState == Player.STATE_ENDED) seek(0)
@@ -284,6 +317,7 @@ class PlaybackSession(
         savePosition()
     }
     fun seek(positionMs: Long) {
+        seekSequence++
         finishPlaybackBenchmark("Position de lecture modifiée : extrait non comparable")
         interruptPreparation("Préparation arrêtée : position de lecture modifiée. Le cache existant est conservé.")
         apply(machine.reset(keepPlaybackIntent = true)); lastCue = null; onCaption("")
@@ -292,6 +326,7 @@ class PlaybackSession(
         player.seekTo(position); apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
     }
     fun resumeVoice() {
+        if (!translation.allowPlayback()) return
         if (media != null && requestFocus()) {
             interruptPreparation("Préparation arrêtée : reprise de la voix. Le cache existant est conservé.")
             apply(machine.resumeVoice())
@@ -324,7 +359,9 @@ class PlaybackSession(
         if (manualPreparation) { if (indexer == null && !speech.bulkPreparation) manualPreparation=false; return }
         if (!prefs.narration) { cancelIndexing(); speech.cancelPreparation(); return }
         if (!machine.snapshot().wantsPlayback) return
-        val texts = machine.pendingTexts() + ahead.future(selectedTextId(), player.currentPosition, prefs.filters, prefs.lookAheadCount, 600)
+        if (translation.required && !translation.ready) return
+        val future = ahead.future(selectedTextId(), player.currentPosition, prefs.filters, prefs.lookAheadCount, 600) { translation.textFor(it) }
+        val texts = machine.pendingTexts() + future
         speech.prepareAhead(texts)
     }
     private fun stopPreparationForHeat(): Boolean {
@@ -350,12 +387,15 @@ class PlaybackSession(
     }
     fun prepareRange(seconds: Int?) {
         val saved = media ?: return
+        if (translation.required && !translation.allowPlayback()) return
         if (stopPreparationForHeat()) return
         if (player.currentTracks.groups.none { group -> group.type == C.TRACK_TYPE_TEXT &&
                 (0 until group.length).any { group.isTrackSelected(it) } }) {
             onMessage("Attends le chargement puis choisis une piste de sous-titres textuelle avant la préparation.", true); return
         }
-        refreshSettings(); manualPreparation = true
+        refreshSettings()
+        if (translation.required && !translation.allowPlayback()) return
+        manualPreparation = true
         val start = if (seconds == null) 0L else player.currentPosition
         val selected = selectedTextId()
         // An attached sidecar does not replace the container when an embedded
@@ -365,9 +405,13 @@ class PlaybackSession(
         val epoch = mediaEpoch
         fun prepare(index: CueAheadIndex) {
             if (stopPreparationForHeat()) return
-            val text = index.selected(selected).asSequence()
+            val items = index.selected(selected).asSequence()
                 .filter { it.endUs / 1000 > start && (seconds == null || it.startUs / 1000 < start + seconds * 1000L) }
-                .flatMap { SpeechTools.segments(SpeechTools.filter(it.raw, prefs.filters)).asSequence() }
+                .toList()
+            val translated = items.map { translation.textFor(it) }
+            if (translated.any { it == null }) { manualPreparation = false; translation.rejectUnmapped(); return }
+            val text = translated.filterNotNull().asSequence()
+                .flatMap { SpeechTools.segments(SpeechTools.filter(it, prefs.filters)).asSequence() }
                 .distinct().take(100_001).toList()
             if (text.size > 100_000) {
                 manualPreparation = false
@@ -380,7 +424,7 @@ class PlaybackSession(
         }
         if (indexedSource == origin) { prepare(ahead); return }
         indexer?.cancel()
-        val task = FullSubtitleIndexer(context); indexer = task
+        val task = subtitleSource.createIndexer(); indexer = task
         indexingStatus="Indexation complète en cours ; aucun décodage vidéo pour cet index"
         indexingWorker.execute {
             try {
@@ -395,7 +439,7 @@ class PlaybackSession(
                 }
             } catch (e: Exception) { handler.post {
                 if (!closed && epoch == mediaEpoch && indexer === task) {
-                    indexer=null; manualPreparation=false; indexingStatus=FullSubtitleIndexer.safeFailureMessage(e)
+                    indexer=null; manualPreparation=false; indexingStatus=subtitleSource.safeFailureMessage(e)
                     onMessage(indexingStatus, true)
                 }
             } }
@@ -404,7 +448,8 @@ class PlaybackSession(
     fun cancelIndexing() { indexer?.cancel(); indexer=null; manualPreparation=false }
     fun cancelPreparation() { cancelIndexing(); speech.cancelPreparation(); indexingStatus="Préparation annulée ; lecture et cache existant conservés" }
     private fun interruptPreparation(message: String) {
-        val wasPreparing = isPreparing
+        // Translation owns a separate worker and explicit cancellation control.
+        val wasPreparing = indexer != null || speech.bulkPreparation || manualPreparation
         cancelIndexing(); speech.cancelPreparation()
         if (wasPreparing) {
             indexingStatus = message
@@ -417,7 +462,7 @@ class PlaybackSession(
         interruptPreparation("Préparation arrêtée : réglages modifiés. Applique les réglages puis relance la préparation ; le cache existant est conservé.")
     }
     private fun benchmarkCounters(): PlaybackBenchmark.Counters {
-        val videoCounters = player.videoDecoderCounters
+        val videoCounters = playback.videoDecoderCounters
         videoCounters?.ensureUpdated()
         return PlaybackBenchmark.Counters(
             SystemClock.elapsedRealtime(), android.os.Process.getElapsedCpuTime(), player.currentPosition.coerceAtLeast(0),
@@ -439,6 +484,8 @@ class PlaybackSession(
             prefs.movieVolume.toString(), prefs.duckVolume.toString(), prefs.voiceVolume.toString(),
             prefs.int("duckAttack",160,0,2000).toString(), prefs.int("duckRelease",500,0,2000).toString(),
             prefs.int("duckHold",350,0,2000).toString(), prefs.bool("spectralDucking").toString(),
+            "expertAudio.v1=${prefs.movieAudioSettings().dsp}",
+            "translation.v1=${translation.fingerprint}",
             prefs.bool("matchFrameRate",true).toString(), prefs.bool("preferSoftware").toString(),
             prefs.int("imageMode",0,0,2).toString(), visual.margins.toString(), visual.contrast.toString(),
             visual.brightness.toString(), visual.bypass.toString(), visual.detailedScaling.toString(),
@@ -446,10 +493,12 @@ class PlaybackSession(
             prefs.showSubtitles.toString(), prefs.subtitleSp.toString()) + tracks + renderConfiguration())
     }
     fun startPlaybackBenchmark(seconds: Int) {
+        if (!translation.allowPlayback()) return
         if (media == null || player.playbackState != Player.STATE_READY) {
             onMessage("Ouvre une vidéo et attends qu’elle soit prête avant l’essai de lecture.", true); return
         }
         refreshSettings()
+        if (!translation.allowPlayback()) return
         if (prefs.narration && !speech.isReady) {
             onMessage("Choisis d’abord une voix prête, ou désactive la vocalisation pour mesurer seulement la vidéo.", true); return
         }
@@ -505,15 +554,21 @@ class PlaybackSession(
             "Cette dernière phrase permet de vérifier la fin de la préparation."))
         onMessage("Banc d’essai de six extraits lancé. Consulte Mesures. Une seconde exécution teste le cache chaud ; vider le cache fournit une comparaison à froid.", false)
     }
+    fun diagnosticSnapshot(): PlaybackDiagnosticSnapshot = diagnosticObserver.snapshot()
+    internal fun diagnosticIndexingStatus(): String = if (indexingStatusEpoch == mediaEpoch)
+        indexingStatus else "Indexation complète non demandée pour ce média"
     fun diagnostics(): String {
+        val snapshot = diagnosticSnapshot()
+        val capabilities = PlaybackDiagnosticText.render(snapshot)
+        if (snapshot.closed) return capabilities
         val elapsed = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(1)
         val cpu = (android.os.Process.getElapsedCpuTime() - startedCpu) * 100.0 / elapsed
         val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val temp = battery?.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
         val heat = if (Build.VERSION.SDK_INT >= 29) context.getSystemService(PowerManager::class.java).currentThermalStatus.toString() else "indisponible"
         val pss = context.getSystemService(android.app.ActivityManager::class.java).getProcessMemoryInfo(intArrayOf(android.os.Process.myPid())).firstOrNull()?.totalPss ?: 0
-        return "Appareil : ${Build.MANUFACTURER} ${Build.MODEL} ; Android ${Build.VERSION.RELEASE}\n" +
-            "Décodeur vidéo : $videoDecoder\nImages vidéo abandonnées : $droppedFrames\n" +
+        return "$capabilities\n\nAppareil : ${Build.MANUFACTURER} ${Build.MODEL} ; Android ${Build.VERSION.RELEASE}\n" +
+            "Images vidéo abandonnées (cumul de session) : $droppedFrames\n" +
             "CPU du lecteur (hors moteur vocal externe) : ${"%.1f".format(cpu)} % d’un cœur, moyenne de session\n" +
             "Mémoire PSS du lecteur : ${pss / 1024} Mio (moteur vocal externe non inclus)\n" +
             "Température BATTERIE : ${if (temp != null && temp != Int.MIN_VALUE) "${temp / 10f} °C" else "indisponible"} ; pas la température CPU/GPU\n" +
@@ -527,13 +582,11 @@ class PlaybackSession(
             "Délais synthèse en fichier : ${speech.synthesisLatency.summary()}\n" +
             "Délais lecture du cache : ${speech.cacheLatency.summary()}\n" +
             "Pauses de confort terminées : ${holdLatency.summary()}\n" +
-            "$indexingStatus\nPréparation : anticipation ${prefs.lookAheadSeconds} s estimées, ${prefs.lookAheadCount} segments max, cache ${prefs.cacheBytes / 1048576} Mio\n" +
-            "Audio expérimental : ${bandProcessor.enabled}; ${bandProcessor.processedSamples} échantillons PCM16 traités (pas de séparation des sources)\n" +
-            "Effets GPU : contraste ${visual.contrast}, luminosité ${visual.brightness}, marges validées ${visual.margins.nonzero()}, HDR ${visual.hdr}, comparaison original ${visual.bypass}\n" +
-            "Agrandissement détaillé : demandé ${visual.detailedScaling}, actif ${visual.detailedScalingActive}, cible ${visual.scalingTarget}\n" +
+            "Préparation : anticipation ${prefs.lookAheadSeconds} s estimées, ${prefs.lookAheadCount} segments max, cache ${prefs.cacheBytes / 1048576} Mio\n" +
             "GPU/NPU du moteur vocal : non exposés par l’API TTS Android. Aucun benchmark OnePlus n’est simulé.\n\n${playbackBenchmarkReport()}"
     }
     fun repeatLast() {
+        if (!translation.allowPlayback()) return
         finishPlaybackBenchmark("Répétition d’une réplique : essai interrompu")
         if (requestFocus()) {
             interruptPreparation("Préparation arrêtée : répétition de la réplique. Le cache existant est conservé.")
@@ -556,12 +609,37 @@ class PlaybackSession(
         }
         apply(machine.setMode(prefs.mode)); apply(machine.setEnabled(prefs.narration))
         apply(machine.setResumePolicy(prefs.resumePolicy))
-        bandProcessor.enabled = prefs.bool("spectralDucking")
-        player.setVideoChangeFrameRateStrategy(if (prefs.bool("matchFrameRate", true)) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF)
+        movieAudio.enabled = prefs.bool("spectralDucking")
+        video.frameRateStrategy = if (prefs.bool("matchFrameRate", true)) C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS else C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
         setDucked(ducked); onChanged()
     }
     private fun forwardCues(group: CueGroup) {
         val captions = group.cues.mapNotNull { it.text?.toString() }
+        if (translation.required) {
+            // Renderer callbacks may still arrive after the pause used to prepare
+            // a translation. Waiting for completion is expected, not a mapping error.
+            if (!translation.ready) {
+                lastRawCaption = ""; onCaption("")
+                if (machine.snapshot().wantsPlayback || machine.snapshot().speakingId != null) pause()
+                return
+            }
+            if (captions.isEmpty() && group.cues.none { it.bitmap != null }) {
+                lastRawCaption = ""; onCaption(""); apply(machine.cues(group.presentationTimeUs, emptyList())); return
+            }
+            val originals = captions.map { fr.soustitresvoix.core.SubtitleText.clean(it) }.filter { it.isNotBlank() }
+            val occurrences = ahead.resolved(selectedTextId(), originals, group.presentationTimeUs, SpeechTools.Filters())
+            val translated = occurrences?.map { translation.textFor(it) }
+            if (occurrences == null || translated == null || translated.any { it == null } || group.cues.any { it.bitmap != null }) {
+                translation.rejectUnmapped(); return
+            }
+            lastRawCaption = translated.filterNotNull().joinToString("\n"); onCaption(lastRawCaption)
+            // Filtering the translated text never changes the correspondence with its source identity.
+            val pairs = occurrences.zip(translated.filterNotNull()).map { (item, text) -> item to SpeechTools.filter(text, prefs.filters) }
+                .filter { it.second.isNotBlank() }
+            apply(machine.cues(group.presentationTimeUs, pairs.map { it.second }, false,
+                pairs.map { it.first.identity }, pairs.map { it.first.endUs / 1000 + prefs.allowedLagMs }))
+            return
+        }
         lastRawCaption = captions.joinToString("\n"); onCaption(lastRawCaption)
         val clean = captions.map { SpeechTools.filter(it, prefs.filters) }.filter { it.isNotBlank() }
         val occurrences = ahead.resolved(selectedTextId(), clean, group.presentationTimeUs, prefs.filters)
@@ -571,15 +649,22 @@ class PlaybackSession(
                 clean.map { text -> ahead.windowEnd(selectedTextId(), text, player.currentPosition, prefs.filters)?.plus(prefs.allowedLagMs) }))
     }
     fun selectTrack(type: Int, group: Tracks.Group?, index: Int = 0, disabled: Boolean = false) {
-        if (type == C.TRACK_TYPE_TEXT) { selectExternalWhenAvailable = false; cancelIndexing() }
+        if (type == C.TRACK_TYPE_TEXT) { translation.trackChanged(); selectExternalWhenAvailable = false; cancelIndexing() }
         pause(); apply(machine.reset(false)); lastCue = null; onCaption(""); trackReset = true
+        val ticket = ++trackSelectionSequence
+        val epoch = mediaEpoch
+        val selectedSubtitle = selectedTextId()
+        val positionTicket = seekSequence
         val params = player.trackSelectionParameters.buildUpon().clearOverridesOfType(type).setTrackTypeDisabled(type, disabled)
         if (group != null) params.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
         player.trackSelectionParameters = params.build()
         handler.post {
-            if (!closed) {
+            if (!closed && epoch == mediaEpoch && ticket == trackSelectionSequence) {
                 trackReset = false; player.seekTo(player.currentPosition)
-                apply(machine.setMediaReady(player.playbackState == Player.STATE_READY)); onChanged()
+                apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
+                if (type == C.TRACK_TYPE_AUDIO && selectedSubtitle == selectedTextId() && positionTicket == seekSequence)
+                    rearmCurrentSubtitles()
+                onChanged()
             }
         }
     }
@@ -618,7 +703,7 @@ class PlaybackSession(
                             deadlineMs = pending.deadlineMs?.let(::relative))
                     }
                     ahead.planningItems(selectedTextId(), now).forEach { cue ->
-                        val text = SpeechTools.filter(cue.raw, prefs.filters)
+                        val text = SpeechTools.filter(translation.textFor(cue) ?: "", prefs.filters)
                         if (text.isNotBlank()) jobs += fr.soustitresvoix.core.AdaptiveTiming.Window(
                             speech.durations.estimate(text, prefs.speechRate),
                             relative(cue.startUs / 1000), relative(cue.endUs / 1000 + prefs.allowedLagMs))
@@ -636,13 +721,18 @@ class PlaybackSession(
         }
         onChanged()
     }
-    fun updateMix() {
+    internal fun updateMix() {
+        if (closed) return
         finishPlaybackBenchmark("Mélange sonore modifié : essai interrompu")
+        applyMixImmediately()
+    }
+    private fun applyMixImmediately() {
         fade?.let { handler.removeCallbacks(it) }
+        fade = null
         player.volume = (prefs.movieVolume * if (ducked) prefs.duckVolume else 1f).coerceIn(0f, 1f)
     }
     private fun setDucked(value: Boolean) {
-        ducked = value; bandProcessor.speaking = value
+        ducked = value; movieAudio.speaking = value
         fade?.let { handler.removeCallbacks(it) }
         val from = player.volume
         val target = prefs.movieVolume * if (value) prefs.duckVolume else 1f
@@ -664,8 +754,23 @@ class PlaybackSession(
     }
     fun close() {
         if (closed) return
+        translation.close()
         pause(); cancelIndexing(); indexingWorker.shutdownNow(); closed = true; mediaEpoch++; handler.removeCallbacksAndMessages(null)
+        diagnosticObserver.close()
         try { context.unregisterReceiver(noisy) } catch (_: IllegalArgumentException) { }
-        visual.close(); speech.close(); player.release()
+        visual.close(); speech.close(); playback.close()
+    }
+    internal fun resetNarrationForTranslation() {
+        finishPlaybackBenchmark("Source de vocalisation modifiée")
+        speech.cancelPreparation(); apply(machine.reset(false)); lastCue = null; lastRawCaption = ""; onCaption("")
+        apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
+    }
+    internal fun installTranslationIndex(index: CueAheadIndex) { ahead = index; rearmCurrentSubtitles() }
+    internal fun rearmCurrentSubtitles() {
+        // A seek to the same position does not reliably re-emit an already visible
+        // cue. Queue its current occurrences while still paused; this emits no speech.
+        val current = player.currentCues
+        lastCue = current
+        if (!trackReset) forwardCues(current)
     }
 }

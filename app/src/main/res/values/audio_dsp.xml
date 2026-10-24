@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="audio_dsp_open">Traitements audio avancés du film</string>
+    <string name="audio_dsp_global_toggle">Activer les traitements audio avancés du film</string>
+    <string name="audio_dsp_mono_toggle">Mélanger la stéréo en mono</string>
+    <string name="audio_dsp_limiter_toggle">Activer le limiteur de crêtes numériques</string>
+    <string name="audio_dsp_band_toggle">Activer cette bande de l’égaliseur</string>
+    <string name="audio_dsp_band_title">Bande %1$d de l’égaliseur</string>
+    <string name="audio_dsp_band_button">Bande %1$d : %2$s Hz, %3$s dB, Q %4$s — %5$s</string>
+    <string name="audio_dsp_caption">%1$s demandé : %2$s %3$s</string>
+    <string name="audio_dsp_reset_number">Rétablir %1$s : %2$s %3$s</string>
+    <string name="audio_dsp_band_reset">Rétablir seulement cette bande</string>
+    <string name="audio_dsp_reset">Rétablir tous les traitements avancés par défaut</string>
+    <string name="audio_dsp_refresh">Actualiser les observations du traitement avancé</string>
+    <string name="audio_dsp_close">Fermer</string>
+</resources>

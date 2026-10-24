@@ -108,8 +108,8 @@ fi
 
 # Start each full pass with a new application/fixture process. This touches
 # only the disposable emulator; no failure dialogs are dismissed or retried.
-adb -s "$device" shell am force-stop fr.soustitresvoix.player.stable || exit 2
-adb -s "$device" shell am force-stop fr.soustitresvoix.player.stable.test || exit 2
+adb -s "$device" shell am force-stop fr.soustitresvoix.player.translation || exit 2
+adb -s "$device" shell am force-stop fr.soustitresvoix.player.translation.test || exit 2
 adb -s "$device" shell rm -rf /sdcard/Download/cinema03-tests || exit 2
 rm -rf "$reports" "$additional" || exit 2
 if [[ -n "$reference" ]]; then
@@ -128,7 +128,7 @@ tail -n 180 "$evidence/device-console.txt"
 # Check all method identities, so missing, duplicated or skipped tests cannot
 # satisfy the release gate. These are actual device XML results, not inventory.
 python3 tools/verify-test-results.py \
-  --reports "$reports" --expected-count 67 --sources app/src/androidTest/java \
+  --reports "$reports" --expected-count 82 --sources app/src/androidTest/java \
   --not-before-ns "$started_ns" --output "$evidence/android-test-summary.json"
 report_status=$?
 if [[ "$status" == 0 && "$report_status" != 0 ]]; then status=$report_status; fi

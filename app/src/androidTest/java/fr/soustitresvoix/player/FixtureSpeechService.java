@@ -19,10 +19,26 @@ import java.util.Locale;
  */
 public final class FixtureSpeechService extends TextToSpeechService {
     public static final String OBSERVATION_ACTION = "fr.soustitresvoix.fixture.SYNTHESIS_OBSERVED";
+    public static final String ALL_REQUESTS_ACTION = "fr.soustitresvoix.fixture.ALL_SYNTHESIS_REQUESTS";
     public static final String NONLOSS_PREFIX = "Non-perte — ";
     public static final String ASYNC_ERROR_PREFIX = "Non-perte — erreur asynchrone : ";
     private final Set<String> failedOnce = new HashSet<>();
     private volatile boolean cancelled;
+
+    // Independent observation for read-only diagnostic tests: a request for any
+    // text must be visible, including an accidental preview or benchmark. Keep
+    // the existing prefix-filtered events and synthesis behaviour unchanged.
+    private void reportAnyRequest(SynthesisRequest request) {
+        String[] packages = getPackageManager().getPackagesForUid(request.getCallerUid());
+        if (packages == null) return;
+        for (String target : packages) {
+            if ("fr.soustitresvoix.player.cinema3".equals(target)
+                    || "fr.soustitresvoix.player.translation".equals(target)) {
+                sendBroadcast(new Intent(ALL_REQUESTS_ACTION).setPackage(target)
+                    .putExtra("text", request.getCharSequenceText().toString()));
+            }
+        }
+    }
 
     // The engine is a separate test-APK process. Observe actual SynthesisRequest
     // text through explicit IPC, not through a static field in the test process.
@@ -35,7 +51,7 @@ public final class FixtureSpeechService extends TextToSpeechService {
         if (packages == null) return;
         for (String target : packages) {
             if ("fr.soustitresvoix.player.cinema3".equals(target)
-                    || "fr.soustitresvoix.player.stable".equals(target)) {
+                    || "fr.soustitresvoix.player.translation".equals(target)) {
                 sendBroadcast(new Intent(OBSERVATION_ACTION).setPackage(target)
                     .putExtra("text", text).putExtra("event", event));
             }
@@ -61,6 +77,7 @@ public final class FixtureSpeechService extends TextToSpeechService {
     @Override public int onLoadVoice(String name) { return onIsValidVoiceName(name); }
     @Override protected void onSynthesizeText(SynthesisRequest request, SynthesisCallback callback) {
         cancelled = false;
+        reportAnyRequest(request);
         report(request, "received");
         String requestedText = request.getCharSequenceText().toString();
         if (requestedText.startsWith(ASYNC_ERROR_PREFIX) && failedOnce.add(requestedText)) {

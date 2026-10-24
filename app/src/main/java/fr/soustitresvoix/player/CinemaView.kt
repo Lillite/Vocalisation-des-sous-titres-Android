@@ -3,6 +3,7 @@ package fr.soustitresvoix.player
 import android.app.Activity
 import android.app.AlertDialog
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -13,6 +14,9 @@ import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import fr.soustitresvoix.core.AudioCommand
+import fr.soustitresvoix.core.AudioCommandDecision
+import fr.soustitresvoix.core.AudioCommandRequest
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -41,6 +45,7 @@ class CinemaView(
     private var scrubbing = false
     private var disposed = false
     private val dialogs = mutableSetOf<AlertDialog>()
+    private val imageRefreshers = mutableSetOf<() -> Unit>()
     private var zoom = 1f
     private var framingMediaUri: String? = null
     private var framingRestored = false
@@ -48,6 +53,7 @@ class CinemaView(
     private var dx = 0f; private var dy = 0f
     private var startX = 0f; private var startY = 0f
     private var startVolume = 1f; private var startBrightness = 0.5f
+    private var audioGestureGeneration = 0L
     private var startPosition = 0L
     private var dragSeek: Long? = null
     private var scaling = false
@@ -66,12 +72,13 @@ class CinemaView(
         setTextColor(Color.WHITE); backgroundTintList = android.content.res.ColorStateList.valueOf(Color.rgb(45, 45, 45))
         setOnClickListener { if (!disposed) { action(); scheduleHide() } }
     }
-    private fun showDialog(builder: AlertDialog.Builder) {
-        if (disposed || activity.isFinishing || activity.isDestroyed) return
+    private fun showDialog(builder: AlertDialog.Builder, dismissed: () -> Unit = {}): AlertDialog? {
+        if (disposed || activity.isFinishing || activity.isDestroyed) return null
         val dialog = builder.create()
         dialogs += dialog
-        dialog.setOnDismissListener { dialogs -= dialog }
+        dialog.setOnDismissListener { dialogs -= dialog; dismissed() }
         dialog.show()
+        return dialog
     }
     init {
         id = R.id.cinema_root; setBackgroundColor(Color.BLACK); clipChildren = true
@@ -151,6 +158,7 @@ class CinemaView(
         })
         val gesture = GestureDetector(activity, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(event: MotionEvent): Boolean {
+                audioGestureGeneration = session.audioCommands.snapshot().context.generation
                 startX = event.x; startY = event.y; startVolume = prefs.movieVolume
                 startBrightness = activity.window.attributes.screenBrightness.takeIf { it >= 0 } ?: 0.5f
                 startPosition = session.player.currentPosition; moved = false; dragSeek = null; return true
@@ -175,8 +183,11 @@ class CinemaView(
                 } else if (!horizontal && prefs.bool("gestureLevels", true)) {
                     val change = (startY - event.y) / height.coerceAtLeast(1)
                     if (startX > width / 2) {
-                        prefs.movieVolume = (startVolume + change).coerceIn(0f, 1f); session.updateMix()
-                        tell("Volume film ${(prefs.movieVolume * 100).roundToInt()} %")
+                        val current = session.audioCommands.snapshot().context.requested
+                        val result = session.audioCommands.submit(AudioCommandRequest(audioGestureGeneration,
+                            AudioCommand.SetLevels((startVolume + change).coerceIn(0f, 1f), current.duckVolume)))
+                        if (result is AudioCommandDecision.Rejected) tell(AudioCommandText.rejection(result.reason))
+                        else tell("Volume film ${(prefs.movieVolume * 100).roundToInt()} %")
                     } else {
                         activity.window.attributes = activity.window.attributes.apply { screenBrightness = (startBrightness + change).coerceIn(0.01f, 1f) }
                         tell("Luminosité ${(activity.window.attributes.screenBrightness * 100).roundToInt()} %")
@@ -233,6 +244,7 @@ class CinemaView(
         if (title.text.toString() != titleLabel) title.text = titleLabel
         if (previousPlaybackIntent && !state.wantsPlayback && state.speakingId == null && !locked && !visibleControls) showControls(true)
         previousPlaybackIntent = state.wantsPlayback
+        imageRefreshers.toList().forEach { it() }
     }
     private fun hasAccessibleFocus(view: View): Boolean = view.isAccessibilityFocused || (view.isFocused && !view.isInTouchMode) ||
         (view is ViewGroup && (0 until view.childCount).any { hasAccessibleFocus(view.getChildAt(it)) })
@@ -332,25 +344,61 @@ class CinemaView(
     }
     fun imageDialog() {
         if (disposed) return
+        val generation = session.imageCommands.snapshot().context.generation
+        var refreshImageUi: () -> Unit = {}
+        var restoring = false
+        fun current(): Boolean {
+            if (disposed) return false
+            val context = session.imageCommands.snapshot().context
+            val reason = when {
+                context.closed -> "Lecture fermée : réglage indisponible"
+                context.generation != generation -> "La vidéo a changé : rouvre les réglages d’image"
+                else -> return true
+            }
+            showDialog(AlertDialog.Builder(activity).setTitle("Réglage d’image refusé")
+                .setMessage(reason).setPositiveButton("Fermer", null))
+            refreshImageUi()
+            return false
+        }
+        fun imageButton(value: String, action: () -> Unit) = button(value) {
+            if (current()) { action(); refreshImageUi() }
+        }.apply { setSingleLine(false); maxLines = Int.MAX_VALUE; ellipsize = null }
+        fun heading(value: String) = label(value).apply {
+            textSize = 20f; setTypeface(typeface, Typeface.BOLD)
+            if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
+        }
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val expert = ExpertImageControls(activity, session.imageCommands,
+            showDialog = { showDialog(it) }, alive = { !disposed && !activity.isFinishing && !activity.isDestroyed })
+        column.addView(expert.view)
+        column.addView(heading("Cadrage et protection"))
+        val framingState = label("").apply { id = R.id.image_framing_state }
+        column.addView(framingState)
         val protection = CheckBox(activity).apply {
             text="Protéger le cadre : bloquer zoom et déplacements accidentels"; textSize=17f; minHeight=dp(56); isChecked=prefs.protectFrame
-            setOnCheckedChangeListener { _, checked -> setFrameProtection(checked) }
+            setOnCheckedChangeListener { _, checked ->
+                if (!restoring && current()) { setFrameProtection(checked); refreshImageUi() }
+            }
         }
-        fun mode(label: String, value: Int) { column.addView(button(label) {
-            if (!setFramingMode(value)) showDialog(AlertDialog.Builder(activity).setTitle("Autoriser la perte d’une partie du cadre ?")
-                .setMessage("Le mode recadré remplit l’écran en coupant une partie de l’image. Cela désactive la protection contre le recadrage accidentel.")
-                .setPositiveButton("Autoriser le recadrage") { _, _ -> setFramingMode(value, true); protection.isChecked=prefs.protectFrame }
-                .setNegativeButton("Garder l’image entière",null))
-            else protection.isChecked=prefs.protectFrame
-        }) }
-        mode("Image entière, proportions originales", 0)
-        mode("Tout l’écran — image entière étirée", 2)
-        mode("Tout l’écran, image recadrée", 1)
+        fun mode(title: String, value: Int, description: String) {
+            column.addView(label(description))
+            column.addView(imageButton(title) {
+                if (!setFramingMode(value)) showDialog(AlertDialog.Builder(activity).setTitle("Autoriser la perte d’une partie du cadre ?")
+                    .setMessage("Le mode recadré remplit l’écran en coupant une partie de l’image. Cela désactive la protection contre le recadrage accidentel.")
+                    .setPositiveButton("Autoriser le recadrage") { _, _ ->
+                        if (current()) { setFramingMode(value, true); refreshImageUi() }
+                    }
+                    .setNegativeButton("Garder l’image entière",null))
+            })
+        }
+        mode("Image entière, proportions originales", 0, ImageSettingsDescriptions.FRAMING_FIT)
+        mode("Tout l’écran — image entière étirée", 2, ImageSettingsDescriptions.FRAMING_STRETCH)
+        mode("Tout l’écran, image recadrée", 1, ImageSettingsDescriptions.FRAMING_CROP)
+        column.addView(label(ImageSettingsDescriptions.FRAME_PROTECTION))
         column.addView(protection)
-        column.addView(label("Les deux modes « image entière » annulent aussi les marges précédemment retirées. Une nouvelle analyse peut ensuite proposer des marges à valider."))
-        column.addView(button("Diagnostic du cadrage et des bandes noires") {
-            val format=session.player.videoFormat; val size=session.player.videoSize
+        column.addView(label(ImageSettingsDescriptions.FRAME_DIAGNOSTIC))
+        column.addView(imageButton("Diagnostic du cadrage et des bandes noires") {
+            val format=session.video.format; val size=session.player.videoSize
             // videoSize describes the processed output when effects are active.
             // Keep source metadata separate so stretching cannot disguise its ratio.
             val sourceWidth = format?.width ?: 0
@@ -371,50 +419,88 @@ class CinemaView(
                 "Les bandes encodées font partie des images. Le poinçon et les coins physiques peuvent masquer de petites zones. Analyse facultative séparée, jamais automatique."
             showDialog(AlertDialog.Builder(activity).setTitle("Diagnostic de l’image").setMessage(message).setPositiveButton("Fermer",null))
         })
-        column.addView(button("Analyser les marges encodées — aperçu obligatoire") { session.visual.showAnalysis(activity) { applyImage() } })
-        column.addView(button("Annuler toute suppression de marges") { session.visual.crop(fr.soustitresvoix.core.BlackBars.Margins()); applyImage() })
-        column.addView(button("Contraste léger + / original (SDR seulement)") {
-            if (session.visual.hdr) tell("HDR : traitement désactivé")
-            else session.visual.adjust(if (session.visual.contrast==0f) .12f else 0f,session.visual.brightness)
+        column.addView(heading("Marges et redimensionnement"))
+        column.addView(label(ImageSettingsDescriptions.MARGIN_ANALYSIS))
+        column.addView(imageButton("Analyser les marges encodées — aperçu obligatoire") {
+            session.visual.showAnalysis(activity) { applyImage(); refreshImageUi() }
         })
-        column.addView(button("Éclaircir légèrement / original (SDR seulement)") {
-            if (session.visual.hdr) tell("HDR : traitement désactivé")
-            else session.visual.adjust(session.visual.contrast,if (session.visual.brightness==0f) .06f else 0f)
+        column.addView(label(ImageSettingsDescriptions.MARGIN_RESET))
+        column.addView(imageButton("Annuler toute suppression de marges") {
+            session.visual.crop(fr.soustitresvoix.core.BlackBars.Margins()); applyImage()
         })
-        column.addView(CheckBox(activity).apply {
+        column.addView(label(ImageSettingsDescriptions.DETAILED_SCALING))
+        val scaling = CheckBox(activity).apply {
             text = "Mise à l’échelle détaillée Lanczos — SDR seulement"
             textSize = 17f; minHeight = dp(56); isChecked = session.visual.detailedScaling
-            isEnabled = !session.visual.hdr
-            setOnCheckedChangeListener { _, checked -> if (!disposed) session.visual.setDetailedScaling(checked) }
-        })
-        column.addView(label("Cette option utilise un filtre graphique pour le redimensionnement, sans inventer de détails. Elle peut augmenter la charge GPU : compare la netteté et la fluidité avec l’original."))
-        column.addView(CheckBox(activity).apply {
-            text = "Comparer à l’original : désactiver les traitements"
-            textSize = 17f; minHeight = dp(56); isChecked = session.visual.bypass
             setOnCheckedChangeListener { _, checked ->
-                if (!disposed && checked != session.visual.bypass) session.visual.toggleComparison()
+                if (!restoring && current()) {
+                    session.visual.setDetailedScaling(checked); refreshImageUi()
+                }
             }
-        })
-        column.addView(button("Zoom +") { setImageZoom(zoom + .25f) })
-        column.addView(button("Zoom −") { setImageZoom(zoom - .25f) })
-        column.addView(button("Recentrer / réinitialiser") { zoom = 1f; dx = 0f; dy = 0f; applyImage() })
-        column.addView(button("Déplacer l’image à gauche") { dx -= dp(40); applyImage() })
-        column.addView(button("Déplacer l’image à droite") { dx += dp(40); applyImage() })
-        column.addView(button("Déplacer l’image vers le haut") { dy -= dp(40); applyImage() })
-        column.addView(button("Déplacer l’image vers le bas") { dy += dp(40); applyImage() })
-        column.addView(button("Luminosité +10 %") {
+        }
+        column.addView(scaling)
+        val scalingState = label("")
+        column.addView(scalingState)
+        column.addView(heading("Zoom et déplacements"))
+        column.addView(label(ImageSettingsDescriptions.ZOOM))
+        column.addView(imageButton("Zoom +") { setImageZoom(zoom + .25f) })
+        column.addView(imageButton("Zoom −") { setImageZoom(zoom - .25f) })
+        column.addView(imageButton("Recentrer / réinitialiser") { zoom = 1f; dx = 0f; dy = 0f; applyImage() })
+        column.addView(label(ImageSettingsDescriptions.PAN))
+        column.addView(imageButton("Déplacer l’image à gauche") { dx -= dp(40); applyImage() })
+        column.addView(imageButton("Déplacer l’image à droite") { dx += dp(40); applyImage() })
+        column.addView(imageButton("Déplacer l’image vers le haut") { dy -= dp(40); applyImage() })
+        column.addView(imageButton("Déplacer l’image vers le bas") { dy += dp(40); applyImage() })
+        column.addView(heading("Luminosité de l’écran"))
+        val screenState = label("").apply { id = R.id.image_screen_state }
+        column.addView(screenState)
+        column.addView(label(ImageSettingsDescriptions.SCREEN_BRIGHTNESS))
+        column.addView(imageButton("Écran : luminosité +10 points") {
             activity.window.attributes = activity.window.attributes.apply { screenBrightness = ((screenBrightness.takeIf { it >= 0 } ?: 0.5f) + 0.1f).coerceIn(0.01f, 1f) }
         })
-        column.addView(button("Luminosité −10 %") {
+        column.addView(imageButton("Écran : luminosité −10 points") {
             activity.window.attributes = activity.window.attributes.apply { screenBrightness = ((screenBrightness.takeIf { it >= 0 } ?: 0.5f) - 0.1f).coerceIn(0.01f, 1f) }
         })
-        column.addView(button("Luminosité automatique du système") { activity.window.attributes = activity.window.attributes.apply { screenBrightness = -1f } })
+        column.addView(label(ImageSettingsDescriptions.SCREEN_SYSTEM))
+        column.addView(imageButton("Écran : reprendre le réglage système") {
+            activity.window.attributes = activity.window.attributes.apply { screenBrightness = -1f }
+        })
+        fun update(view: TextView, value: String) { if (view.text.toString() != value) view.text = value }
+        refreshImageUi = {
+            if (!disposed) {
+                expert.refresh()
+                val context = session.imageCommands.snapshot().context
+                val framing = arrayOf("image entière, proportions originales", "image recadrée", "image entière étirée")[prefs.int("imageMode", 0, 0, 2)]
+                update(framingState, "Cadrage demandé : $framing. Protection ${if (prefs.protectFrame) "activée" else "désactivée"}. " +
+                    String.format(Locale.FRANCE, "Zoom : %.2f×. Déplacement horizontal : %.0f dp ; vertical : %.0f dp.",
+                        zoom, dx / resources.displayMetrics.density, dy / resources.displayMetrics.density))
+                update(scalingState, "Lanczos ${if (session.visual.detailedScaling) "demandé" else "désactivé"}. " + when {
+                    context.closed -> "Lecture fermée."
+                    context.generation != generation -> "La vidéo a changé : rouvre les réglages d’image."
+                    context.hdrProtected -> "Traitement neutralisé par la protection HDR."
+                    context.requested.originalComparison -> "Traitement masqué par la comparaison."
+                    else -> "Cible : ${session.visual.scalingTarget}. La demande ne mesure pas le rendu affiché."
+                })
+                val screen = activity.window.attributes.screenBrightness
+                update(screenState, if (screen < 0f) "Consigne de l’écran : réglage système, manuel ou adaptatif selon Android."
+                    else "Consigne de l’écran : ${(screen * 100).roundToInt()} %. La lumière réellement émise n’est pas mesurée.")
+                restoring = true
+                try {
+                    protection.isChecked = prefs.protectFrame
+                    scaling.isChecked = session.visual.detailedScaling
+                    scaling.isEnabled = !context.closed && context.generation == generation && !context.hdrProtected
+                } finally { restoring = false }
+            }
+        }
+        refreshImageUi()
         showDialog(AlertDialog.Builder(activity).setTitle("Image et cadrage").setView(ScrollView(activity).apply { addView(column) })
-            .setPositiveButton("Fermer", null))
+            .setPositiveButton("Fermer", null), dismissed = { imageRefreshers -= refreshImageUi })
+            ?.let { imageRefreshers += refreshImageUi }
     }
     fun close() {
         prefs.putInt("zoomPercent", (zoom * 100).toInt())
         disposed = true; main.removeCallbacksAndMessages(null)
+        imageRefreshers.clear()
         dialogs.toList().forEach { it.dismiss() }; dialogs.clear()
         video.videoSurfaceView?.apply { scaleX = 1f; scaleY = 1f; translationX = 0f; translationY = 0f }
         video.subtitleView?.setBottomPaddingFraction(0.08f)

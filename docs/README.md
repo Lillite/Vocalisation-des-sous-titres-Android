@@ -2,12 +2,15 @@
 
 [Accueil du projet et téléchargement de l’APK](../README.md)
 
-La documentation d’utilisation et de développement décrit l’édition **0.3.2**. Les notes de révision plus anciennes restent accessibles pour comprendre les changements et les vérifications effectuées à chaque étape.
+La documentation d’utilisation et de développement décrit les sources de l’édition **Traduction 0.4.0** ; la stable publiée précédemment reste la 0.3.2. Les notes de révision plus anciennes restent accessibles pour comprendre les changements et les vérifications effectuées à chaque étape.
 
 ## Utiliser et vérifier l’application
 
 | Besoin | Document |
 |---|---|
+| Choisir et configurer chaque traducteur, comprendre les quotas et les modèles Hugging Face | [Guide complet de traduction](GUIDE_MOTEURS_TRADUCTION.md) |
+| Comprendre la conservation des occurrences, le cache, les clés et les limites | [Traduction — étape 7](TRADUCTION_ETAPE_7.md) |
+| Étudier les moteurs locaux, licences, runtimes et téléchargements futurs | [Étude de traduction locale](ETUDE_TRADUCTION_LOCALE.md) |
 | Installer l’application, choisir une voix et comprendre les fonctions | [Présentation et démarrage rapide](../README.md) |
 | Vérifier la lecture, le cadrage, les voix et l’accessibilité sur son téléphone | [Parcours de tests sur téléphone](TESTS_TELEPHONE.md) |
 | Consulter les moteurs vocaux, modèles et sources documentaires | [Catalogue des voix et moteurs](VOIX_CATALOGUE_2026.md) |
@@ -21,6 +24,12 @@ Le catalogue présente des informations datées et distingue moteurs Android, mo
 | Besoin | Document |
 |---|---|
 | Comprendre les composants et les invariants de lecture | [Architecture](ARCHITECTURE.md) |
+| Suivre la première étape de modularisation préparatoire | [Modularisation — étape 1](MODULARISATION_ETAPE_1.md) |
+| Comprendre les capacités déclarées et les observations du lecteur | [Capacités et observations — étape 2](CAPACITES_ETAPE_2.md) |
+| Comprendre les commandes d’image validées, leurs refus et leurs limites | [Commandes d’image — étape 3](COMMANDES_IMAGE_ETAPE_3.md) |
+| Utiliser et vérifier les réglages fins et les descriptions de l’image | [Interface d’image — étape 4](INTERFACE_IMAGE_ETAPE_4.md) |
+| Comprendre les six commandes du son du film, les fondus et leurs limites | [Commandes audio — étape 5](COMMANDES_AUDIO_ETAPE_5.md) |
+| Saisir les valeurs audio et régler égaliseur paramétrique, préampli, balance, mono et limiteur | [Audio avancé — étape 6](AUDIO_EXPERT_ETAPE_6.md) |
 | Compiler, exécuter les tests et vérifier l’APK signé | [Procédure de validation](../TESTING.md) |
 | Organiser une modification et son intégration dans `main` | [Contribution](../CONTRIBUTING.md) |
 | Lire les consignes applicables aux agents de développement | [Consignes de développement](../AGENTS.md) |

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item type="id" name="audio_numeric_input" />
+    <item type="id" name="audio_numeric_error" />
+    <item type="id" name="audio_numeric_label" />
+    <item type="id" name="audio_movie_edit" />
+    <item type="id" name="audio_movie_value" />
+    <item type="id" name="audio_duck_edit" />
+    <item type="id" name="audio_duck_value" />
+    <item type="id" name="audio_attack_edit" />
+    <item type="id" name="audio_release_edit" />
+    <item type="id" name="audio_hold_edit" />
+</resources>
