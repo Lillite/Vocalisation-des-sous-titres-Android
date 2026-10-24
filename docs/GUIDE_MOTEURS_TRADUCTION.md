@@ -56,9 +56,10 @@ local le moteur qui l'a produite. Le cache n'est pas un export SRT durable.
    garantie : les règles de comptage du fournisseur restent applicables.
 6. Attends la fin de la traduction. Une réponse incomplète ou une erreur ne doit
    pas activer une piste partielle. Il n'y a pas de relance réseau automatique.
-7. Dans **« Voix et confort »**, sélectionne une voix française prête, puis appuie
-   sur **« Lire »** quand la piste française est annoncée prête. L'application
-   vérifie la langue française du moteur vocal avant cette lecture.
+7. Si la vocalisation est activée, sélectionne une voix française prête dans
+   **« Voix et confort »**. Appuie ensuite sur **« Lire »** quand la piste
+   française est annoncée prête. L'application vérifie la voix française avant
+   cette lecture uniquement lorsque la vocalisation est activée.
 
 L'annulation ne restitue pas les caractères déjà consommés chez le fournisseur.
 Une nouvelle demande après un échec peut donc consommer de nouveau des

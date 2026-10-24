@@ -1,5 +1,7 @@
 # Interface d’image — étape 4
 
+> **État publié au 24 octobre 2026 : cette étape est intégrée à `main` et à la [version 0.4.0 — édition Traduction](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0).** Les mentions ci-dessous de travail séparé, de livraison future, d’ancienne version ou d’effectifs intermédiaires décrivent le développement de cette étape. La branche de travail est conservée par son [tag d’archive](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/archive/20261024/work/etape-4-interface-image-20261023). Pour installer et vérifier la version actuelle : [accueil](../README.md) et [TESTING.md](../TESTING.md).
+
 [Index](README.md) · [Architecture](ARCHITECTURE.md) · [Validation](../TESTING.md)
 
 ## Objectif et état de départ

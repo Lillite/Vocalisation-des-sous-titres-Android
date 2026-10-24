@@ -39,7 +39,7 @@ ce même thread et filtrés par l’epoch du média ; les retours d’indexation
 pause/reprise restent dans la session.
 
 La façade `Player` utilisée par les vues et certains types de source, pistes,
-effets et analytics sont encore ceux de Media3. Cette première étape isole les
+effets et analytics sont encore ceux de Media3. La modularisation isole les
 implémentations ; elle ne fournit pas déjà un moteur alternatif ni un protocole
 entièrement indépendant de Media3. Les limites et les obligations d’un remplacement
 figurent dans [Modularisation — étape 1](MODULARISATION_ETAPE_1.md).
@@ -69,9 +69,11 @@ session. Ces données ne prouvent ni les pixels affichés, ni la fréquence rée
 de l’écran, ni une atténuation sonore instantanée.
 
 `PlaybackDiagnosticText` formate un seul instantané. Le diagnostic et le panneau
-des codecs l’utilisent sans envoyer de commande de lecture ou de voix. Les
-algorithmes de narration, d’anticipation, de synthèse et d’extraction restent ceux
-de l’étape 1. Les détails et scénarios de vérification figurent dans
+des codecs l’utilisent sans envoyer de commande de lecture ou de voix.
+Le diagnostic n’ajoute pas de commande de narration, d’anticipation, de synthèse
+ou d’extraction. La traduction de l’étape 7 conserve les contrôles de génération
+et fournit ses textes validés au parcours vocal existant. Les détails et scénarios
+de vérification du diagnostic figurent dans
 [Capacités et observations — étape 2](CAPACITES_ETAPE_2.md).
 
 ## Commandes d’image validées
@@ -265,7 +267,7 @@ dans [Saisie et audio avancé — étape 6](AUDIO_EXPERT_ETAPE_6.md).
 
 ## Noyau indépendant d’Android
 
-Le module [`core`](../core/src/main/kotlin/fr/soustitresvoix/core/) contient la logique de narration, le traitement du texte, la planification adaptative, la validation des fichiers WAV, le cache, les mesures, les contrats de commande et le traitement audio avancé indépendant d’Android.
+Le module [`core`](../core/src/main/kotlin/fr/soustitresvoix/core/) contient la logique de narration, le traitement du texte, la planification adaptative, la validation des fichiers WAV, le cache, les mesures, les contrats de commande et le traitement audio avancé indépendant d’Android. Il définit également le port de traduction, le plan immuable des occurrences et la validation des pistes traduites ; les clients HTTPS et le stockage Android restent dans `app`.
 
 `NarrationMachine` est une machine à états déterministe. Les événements de lecture, pause, déplacement, nouveau sous-titre, disponibilité de la voix et fin ou échec d’une phrase produisent une liste ordonnée d’effets. Chaque énoncé dispose d’un identifiant : un callback ancien ne doit pas terminer une nouvelle phrase ou provoquer une reprise indue.
 
@@ -307,7 +309,15 @@ La baisse de volume agit sur le mix du film. Le traitement expérimental de band
 
 ## Fichiers et confidentialité
 
-Le sélecteur Android accorde un accès ciblé aux documents choisis. Les sous-titres externes sont copiés dans le répertoire privé de l’application ; les fichiers originaux ne sont pas modifiés. Le lecteur ne demande pas d’autorisation Internet, de microphone, de caméra ou d’accès général au stockage. Les liens du catalogue s’ouvrent dans le navigateur sur demande ; le moteur vocal externe possède ses propres permissions.
+Le sélecteur Android accorde un accès ciblé aux documents choisis. Les sous-titres externes sont copiés dans le répertoire privé de l’application ; les fichiers originaux ne sont pas modifiés. Le manifeste de la 0.4.0 déclare **`android.permission.INTERNET` pour la traduction explicitement demandée**. Il ne demande pas d’autorisation de microphone, de caméra ou d’accès général au stockage. La déclaration Internet n’est pas une demande de permission à l’exécution ; la confirmation du lecteur reste le contrôle précédant l’envoi de la piste.
+
+L’indexation et l’estimation initiales restent locales. Après confirmation, si aucun cache complet correspondant n’est disponible, le fournisseur de traduction reçoit le texte des sous-titres, les langues et les paramètres nécessaires ; cette opération n’envoie ni vidéo ni audio. Le transport impose HTTPS, vérifie les certificats système, borne les délais et les réponses, refuse les redirections et ne relance pas automatiquement une requête potentiellement facturée. Les messages d’erreur ne recopient ni clé ni corps de réponse contenant du texte privé. Le traitement ultérieur des données dépend du fournisseur choisi.
+
+`TranslationRunner` conserve seulement les traductions complètes dans un **cache privé de 32 Mio**, distinct du cache WAV. L’écriture utilise `AtomicFile` ; l’empreinte lie les occurrences et leurs minutages, le contenu, les langues et le fournisseur, ainsi que l’adresse canonique du serveur LibreTranslate. Une piste complète retrouvée peut être réutilisée sans réseau ni clé ; une entrée absente ou invalide ne fournit pas de traduction locale et nécessite une nouvelle demande confirmée. Aucune progression partielle ni export de traduction n’est annoncé.
+
+La mémorisation d’une clé API est facultative. `TranslationCredentials` chiffre les clés avec **AES-GCM et Android Keystore**, sans repli en clair. Les clés LibreTranslate sont isolées par serveur ; changer son adresse vide le champ avant le chargement de sa propre clé. Les sauvegardes Android de l’application sont désactivées. Ce stockage ne remplace ni la maîtrise des quotas du compte ni la protection de l’appareil. La clé privée de signature de l’APK reste séparée des clés API et hors du dépôt et des releases.
+
+Les liens documentaires s’ouvrent dans le navigateur sur demande ; le moteur vocal externe possède ses propres permissions. Aucun OCR, import de modèle Hugging Face ou runtime local de traduction CPU/GPU/NPU n’est intégré. Voir le [contrat de traduction](TRADUCTION_ETAPE_7.md) et le [guide des moteurs](GUIDE_MOTEURS_TRADUCTION.md) pour les parcours réellement disponibles.
 
 La synthèse des sous-titres reste distincte des annonces de l’interface. Le passage de l’activité en arrière-plan arrête la lecture. Les règles d’accessibilité et l’absence de reprise inattendue doivent aussi être vérifiées sur téléphone.
 
@@ -317,4 +327,6 @@ La [procédure de validation](../TESTING.md) distingue tests JVM, Lint, compilat
 
 La démonstration principale est générée par Gradle à partir du SRT versionné. Des petites fixtures ASS/MKV sont aussi conservées dans les ressources de test. FFmpeg sert à la génération de la démonstration dans l’environnement de compilation ; il n’est pas intégré au lecteur Android.
 
-Pour l’APK 0.3.2, le commit source de référence est `311d99052d287bb2227e85255740de201234e770` et la [validation de livraison correspondante](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/39532451903) est identifiable séparément des futures validations de `main`. Les [essais sur téléphone](TESTS_TELEPHONE.md) complètent ces preuves pour les voix, TalkBack, les codecs, le rendu et les séances prolongées.
+L’APK **0.4.0** correspond au commit [`32864ba732d834e71d87b887ae63f0d7bc09eb8c`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/32864ba732d834e71d87b887ae63f0d7bc09eb8c), validé par le [run Android 40053284969](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40053284969). Il compte **612 exécutions réussies** : 87 tests noyau et 137 tests JVM de l’application dans chacune des variantes debug/release, puis deux passages des 82 tests instrumentés Android. Les outils ont passé **39 tests Python** : 19 de publication et, dans le [workflow de métadonnées](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40053284958), 13 de synchronisation et 7 de rangement documentaire. Lint relève zéro erreur et 51 avertissements dans chaque variante. Ces résultats ne remplacent pas une validation après modification.
+
+Pour l’ancienne 0.3.2, le commit `311d99052d287bb2227e85255740de201234e770` et son [run de livraison](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/39532451903) restent des preuves historiques distinctes. Les [essais sur téléphone](TESTS_TELEPHONE.md) restent à effectuer pour les voix réelles, TalkBack, les codecs, le rendu et les séances prolongées. Les réponses API contrôlées des tests ne prouvent ni la qualité linguistique d’un fournisseur réel ni les droits ou quotas d’un compte personnel.

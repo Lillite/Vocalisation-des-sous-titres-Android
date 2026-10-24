@@ -4,6 +4,8 @@ Ce journal présente les étapes principales vérifiables dans l’historique du
 
 ## 0.4.0 — Traduction avant lecture et consolidation des étapes 1 à 6
 
+**Publiée le 24 octobre 2026.** [Télécharger la version](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0) · [Sources exactes `32864ba`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/32864ba732d834e71d87b887ae63f0d7bc09eb8c) · [Notes de version](docs/releases/0.4.0.md).
+
 - Nouvelle édition `fr.soustitresvoix.player.translation`, installable à côté de la stable 0.3.2. La clé de signature de cette dernière n’étant plus accessible, la 0.4.0 utilise une signature distincte sauvegardée hors du dépôt. Les réglages et fichiers importés privés sont propres à chaque édition ; aucune désinstallation de la 0.3.2 n’est nécessaire.
 - Traduction complète de la piste textuelle choisie vers le français avant lecture : Azure Translator, DeepL avec choix explicite du point d’accès, et serveur LibreTranslate HTTPS. La narration reçoit uniquement la traduction validée ; l’affichage vidéo conserve la piste originale.
 - Indexation sans réseau, langue source explicite, descriptions et liens propres à chaque moteur, estimation du volume puis confirmation avant tout envoi. Aucun compte ou abonnement créé automatiquement.
@@ -11,12 +13,33 @@ Ce journal présente les étapes principales vérifiables dans l’historique du
 - Cache privé atomique de 32 Mio, lié au contenu, aux langues et au moteur/serveur. Réutilisation sans API, sans clé et hors ligne lorsqu’une piste complète correspondant aux paramètres est encore disponible.
 - Mémorisation facultative des clés par Android Keystore/AES-GCM ; séparation des clés et caches LibreTranslate selon le serveur, absence de relance automatique, HTTPS sans redirection et erreurs expurgées.
 - Annulations et changements de vidéo/piste protégés par génération et tâche. Correction de la réplique déjà visible lors de l’activation : remise en file explicite pendant la pause, sans reprise automatique.
+- Correction de la perte de la réplique courante après le seul changement de piste audio ; une ancienne réplique n’est pas réutilisée après un changement de piste textuelle. Les callbacks normaux pendant l’attente d’une traduction ne produisent plus une fausse erreur de correspondance.
 - Guide détaillé des comptes, moteurs et candidats locaux, installation et limites depuis Android. Aucun runtime de traduction local ni OCR intégré dans cette version.
 - Consolidation de la modularisation, des diagnostics, des commandes et interfaces image/audio des étapes 1 à 6 ; le DSP du film conserve son activation facultative et ses limites PCM16 mono/stéréo.
+- Correction du mécanisme de publication GitHub : négociation JSON pour le téléchargement d’un artefact Actions, téléchargement binaire pour les assets et CDN, et jeton limité à l’API GitHub. Vérification du commit source, de la paire d’APK testée, du contenu hors signatures, de l’identité, du certificat et des fichiers téléchargés avant publication.
+- Fusion des travaux précédents en conservant leur historique, archivage par tags des 14 branches de travail intégrées puis retrait de ces branches. Les six branches de sauvegarde restent disponibles ; les repères figurent dans l’[historique des branches](docs/HISTORIQUE_BRANCHES.md).
 
-Les résultats réellement exécutés et leurs limites figurent dans [TESTING.md](TESTING.md). [Guide de traduction](docs/GUIDE_MOTEURS_TRADUCTION.md) et [contrat d’intégration](docs/TRADUCTION_ETAPE_7.md).
+Les sept étapes sont comprises dans le même APK :
 
-## En préparation — Saisie et traitements audio avancés, étape 6
+| Étape | Fonction consolidée |
+| --- | --- |
+| 1 — Modularisation | Composition et adaptateurs explicites pour lecture, narration, image, audio et indexation ; maintien des règles de pause, reprise et conservation des occurrences. |
+| 2 — Capacités et observations | Diagnostic distinguant demandes, configuration et observations attribuables ; invalidation des faits après changement de média. |
+| 3 — Commandes d’image | Validation atomique, protections HDR, tickets de génération, comparaison et soumissions d’effets distinctes des mesures de pixels. |
+| 4 — Interface d’image | Pas fins et saisie précise, explications des réglages, cadrage protégé, marges, zoom et luminosité de l’écran. |
+| 5 — Son du film | Volumes, fondus, atténuation spectrale facultative et commandes qui conservent le transport et la narration. |
+| 6 — Audio expert | Préampli, cinq bandes d’égaliseur fréquence/gain/Q, balance, mono et limiteur de crêtes lié ; traitement désactivé par défaut et limité au PCM16 mono/stéréo reçu. |
+| 7 — Traduction | Préparation complète vers le français avant vocalisation, trois fournisseurs et quatre choix de point d’accès, cache privé et clés facultativement chiffrées. |
+
+La validation de `main` a réussi dans le [run 40053284969](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40053284969) : **612 exécutions JVM/Android de 306 méthodes distinctes**, sans échec, erreur ni méthode ignorée. Les outils totalisent **39 tests Python** réussis ; lint signale **zéro erreur et 51 avertissements dans chaque variante**. Le [run 40054994161](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40054994161) atteste la publication réussie. L’APK mesure 5 066 480 octets ; son SHA-256 est `30d1126392a9fd995867f599b12436b1e2d9e8e1d41bc60d20dca76c9b88f298`.
+
+Les résultats, les erreurs intermédiaires et leurs corrections figurent dans [TESTING.md](TESTING.md). Les API personnelles ou payantes, les voix commerciales, la fidélité linguistique, TalkBack et les performances sur téléphone restent à essayer séparément. Aucun essai contrôlé n’établit une absence absolue de défauts. [Guide de traduction](docs/GUIDE_MOTEURS_TRADUCTION.md) · [Contrat d’intégration](docs/TRADUCTION_ETAPE_7.md).
+
+## Historique des étapes 1 à 6 — incluses dans la 0.4.0
+
+Les sections suivantes détaillent leur développement antérieur à la publication. Les noms `work/…` sont des noms historiques de branches désormais archivées ; les sauvegardes `backup/…` restent des points de retour. Les étapes ne nécessitent pas l’installation d’APK séparés.
+
+### Étape 6 — Saisie et traitements audio avancés
 
 - Point de retour de l’étape 5 conservé au commit `647de93e99ef778cfa3199f3c225e1fc0b759baf`, sur `backup/etape-5-validee-20261023-647de93` ; travail séparé sur `work/etape-6-audio-expert-20261023`.
 - Saisie des pourcentages décimaux et des millisecondes entières : point ou virgule, validation décimale avant conversion, bornes explicites, annulation sans mutation et conservation du texte refusé. Maintien des pas et des retours aux défauts historiques.
@@ -31,11 +54,11 @@ Les résultats réellement exécutés et leurs limites figurent dans [TESTING.md
 
 Le guide [Saisie et traitements audio avancés — étape 6](docs/AUDIO_EXPERT_ETAPE_6.md)
 décrit tous les paramètres, les règles d’application et les limites. Aucun
-algorithme de vocalisation n’est remplacé. Cette étape ne change pas la version
-publiée et ne livre pas d’APK. La suite proposée concerne la dynamique contrôlée,
-puis les profils/comparaisons et les formats multicanaux après validation.
+algorithme de vocalisation n’est remplacé. Cette étape n’avait pas de publication
+APK séparée ; elle est maintenant intégrée à la 0.4.0. La dynamique contrôlée,
+les profils/comparaisons et les formats multicanaux restent des propositions à décider et à valider séparément.
 
-## En préparation — Commandes du son du film, étape 5
+### Étape 5 — Commandes du son du film
 
 - Point de retour de l’étape 4 conservé au commit `8feafda50a272cbca9972cf1c948dce5afd269e7`, sur `backup/etape-4-validee-20261023-8feafda` ; travail séparé sur `work/etape-5-commandes-audio-20261023`.
 - Contrat audio indépendant d’Android pour les deux niveaux, les trois durées et l’activation du filtre spectral existant ; validation de la durée de vie, des valeurs finies et bornées et de la capacité spectrale.
@@ -47,11 +70,11 @@ puis les profils/comparaisons et les formats multicanaux après validation.
 - La revue a retiré le nouveau rafraîchissement général du chemin des commandes audio : dans l’activité, il pouvait aussi déclencher une préparation vocale. Les contrôles audio actualisent leur propre présentation. Un refus des curseurs généraux est affiché dans leur dialogue, sans passer par le message global qui pouvait quitter le plein écran.
 
 Le guide [Commandes du son du film — étape 5](docs/COMMANDES_AUDIO_ETAPE_5.md)
-décrit chaque paramètre et ses limites. L’étape reste séparée de `main`, sans
-livraison d’APK. La suite proposée est une saisie audio précise au-dessus du même
-contrat, avec validation des pourcentages et des millisecondes.
+décrit chaque paramètre et ses limites. Cette étape est maintenant intégrée à
+`main` et à la 0.4.0 ; la saisie audio précise proposée ensuite est apportée par
+l’étape 6, avec validation des pourcentages et des millisecondes.
 
-## En préparation — Interface d’image, étape 4
+### Étape 4 — Interface d’image
 
 - Point de retour de l’étape 3 conservé au commit `c96b687f91b2c9f7fadfc44383c8d346047cd30e`, sur `backup/etape-3-validee-20261023-c96b687` ; travail séparé sur `work/etape-4-interface-image-20261023`.
 - Réglages fins du contraste et de la luminosité de l’image par pas de 0,01, saisie décimale avec point ou virgule, remise à zéro individuelle ou conjointe ; maintien des raccourcis existants.
@@ -64,12 +87,11 @@ contrat, avec validation des pourcentages et des millisecondes.
 
 Le périmètre, les explications et les contrôles figurent dans
 [Interface d’image — étape 4](docs/INTERFACE_IMAGE_ETAPE_4.md). Les résultats
-doivent être rattachés au commit et à l’exécution réellement testés. Cette étape
-ne livre pas d’APK et reste séparée de `main` jusqu’à une instruction ultérieure.
-La suite proposée concerne les commandes expertes de l’audio du film, puis
-l’évaluation séparée d’autres moteurs de lecture.
+restent rattachés au commit et à l’exécution réellement testés. Cette étape est
+maintenant intégrée à `main` et à la 0.4.0. Les commandes audio ont ensuite été
+réalisées aux étapes 5 et 6 ; l’évaluation d’autres moteurs de lecture reste distincte.
 
-## En préparation — Commandes d’image, étape 3
+### Étape 3 — Commandes d’image
 
 - Point de retour de l’étape 2 conservé au commit `0319dcb9b0cfd71be4231849306f0b248e1dbe02`, sur `backup/etape-2-validee-20261022-0319dcb` ; travail sur `work/etape-3-commandes-image-20261023`.
 - Contrat indépendant d’Android pour régler atomiquement contraste et luminosité de l’image, puis activer ou désactiver explicitement la comparaison avec l’original.
@@ -80,12 +102,11 @@ l’évaluation séparée d’autres moteurs de lecture.
 - Quatre nouveaux tests du noyau, cinq tests JVM de l’application et un scénario Android à exécuter avec toutes les régressions précédentes : effectifs exigés 44, 46 et 70.
 
 Les critères et limites figurent dans [Commandes d’image — étape 3](docs/COMMANDES_IMAGE_ETAPE_3.md).
-Les résultats doivent être rattachés au commit testé et à sa demande de fusion.
-Cette étape conserve le numéro de version et ne publie pas d’APK ni ne fusionne
-le travail dans `main`. Après validation, la suite proposée est un écran expert
-d’image sur ce contrat ; l’audio et les moteurs alternatifs sont des chantiers distincts.
+Les résultats restent rattachés au commit testé et à sa demande de fusion.
+Cette étape n’avait pas de publication APK séparée ; elle est maintenant intégrée
+à `main` et à la 0.4.0. L’interface d’image a ensuite été réalisée à l’étape 4.
 
-## En préparation — Capacités et observations, étape 2
+### Étape 2 — Capacités et observations
 
 - Point de retour de l’étape 1 conservé au commit `a093e791b1413aefef6add027225b88c20657c6c` ; nouvelle branche de travail séparée.
 - Modèle de diagnostic sans dépendance Android ou Media3, avec disponibilité, provenance et faits demandés/configurés/observés distincts.
@@ -94,10 +115,10 @@ d’image sur ce contrat ; l’audio et les moteurs alternatifs sont des chantie
 - Déclarations du matériel, métadonnées du média, configuration graphique et compteurs audio explicitement limités à ce qu’ils établissent.
 - Quatre nouveaux tests du noyau, trois tests JVM de l’application et un scénario Android de consultation/copie ; maintien des tests antérieurs et des algorithmes de vocalisation.
 
-Cette étape ne crée pas de version ni de publication APK. Les contrôles exigés et
-les limites sont décrits dans [Capacités et observations — étape 2](docs/CAPACITES_ETAPE_2.md).
+Cette étape est maintenant intégrée à `main` et à la 0.4.0, sans APK séparé.
+Les contrôles et les limites sont décrits dans [Capacités et observations — étape 2](docs/CAPACITES_ETAPE_2.md).
 
-## En préparation — Modularisation, étape 1
+### Étape 1 — Modularisation
 
 - Point de retour conservé au commit `32e988654fc44faa80e1fb69c98cf9ca29e9f5b0`, sur une branche de sauvegarde ; travail séparé avant la livraison demandée ultérieurement.
 - Composition explicite des composants de lecture, audio du film, rendu vidéo, extraction/indexation et sortie vocale.
@@ -106,8 +127,8 @@ les limites sont décrits dans [Capacités et observations — étape 2](docs/CA
 - Chemins d’extraction en lecture et d’indexation complète reliés au même contrat, en conservant les identités et horaires des occurrences.
 - Contrôles de composition et de conservation des transitions, avec maintien des régressions SSA et des tests Android existants.
 
-Cette étape ne crée pas de version ni de publication APK. Voir le
-[périmètre et les preuves à vérifier](docs/MODULARISATION_ETAPE_1.md).
+Cette étape est maintenant intégrée à `main` et à la 0.4.0, sans APK séparé.
+Voir le [périmètre et les critères de contrôle](docs/MODULARISATION_ETAPE_1.md).
 
 ## Organisation du dépôt — 22 octobre 2026
 
