@@ -100,12 +100,15 @@ def load_manifest(path):
         require(isinstance(entry, dict), "Invalid release entry.")
         for key in ("id",):
             require(type(entry.get(key)) is int and entry[key] > 0, f"Invalid {key}.")
-        for key in ("source_commit", "old_tag_sha"):
+        migration = "old_tag" in entry or "old_tag_sha" in entry
+        require(not migration or ("old_tag" in entry and "old_tag_sha" in entry),
+                "Old tag and old tag SHA must be supplied together.")
+        for key in (("source_commit", "old_tag_sha") if migration else ("source_commit",)):
             require(SHA.fullmatch(entry.get(key, "")), f"Invalid {key} for release {entry['id']}.")
-        for key in ("tag", "old_tag"):
+        for key in (("tag", "old_tag") if migration else ("tag",)):
             require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", entry.get(key, "")), f"Invalid {key}.")
         require(re.fullmatch(r"v\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?", entry["tag"]), "Canonical tags must use a version prefixed with v.")
-        require(entry["tag"] != entry["old_tag"], "Old and canonical tags must differ.")
+        require(not migration or entry["tag"] != entry["old_tag"], "Old and canonical tags must differ.")
         require(isinstance(entry.get("title"), str) and entry["title"].strip(), "Missing release title.")
         require(type(entry.get("prerelease")) is bool and type(entry.get("latest")) is bool, "Release flags must be booleans.")
         require(not (entry["prerelease"] and entry["latest"]), "A prerelease cannot be latest.")
@@ -122,10 +125,12 @@ def load_manifest(path):
         require(SHA256.fullmatch(asset.get("sha256", "")), "Invalid asset SHA-256.")
         for key in ("version_name", "application_id"):
             require(isinstance(asset.get(key), str) and asset[key], f"Missing asset {key}.")
-    for key in ("id", "tag", "old_tag"):
+    for key in ("id", "tag"):
         require(len({entry[key] for entry in entries}) == len(entries), f"Duplicate release {key}.")
+    old_tags = [entry["old_tag"] for entry in entries if "old_tag" in entry]
+    require(len(set(old_tags)) == len(old_tags), "Duplicate release old_tag.")
     require(len({entry["asset"]["id"] for entry in entries}) == len(entries), "Duplicate asset id.")
-    require(not ({entry["tag"] for entry in entries} & {entry["old_tag"] for entry in entries}), "Canonical and old tag sets overlap.")
+    require(not ({entry["tag"] for entry in entries} & set(old_tags)), "Canonical and old tag sets overlap.")
     require(sum(entry["latest"] for entry in entries) == 1, "Exactly one release must be latest.")
     return sorted(entries, key=lambda entry: entry["latest"])
 
@@ -176,7 +181,9 @@ def verify_release(client, entry, canonical=False, original_assets=None):
     release = client.request("GET", f"/releases/{entry['id']}")
     require(release.get("id") == entry["id"] and release.get("draft") is False, f"Release {entry['id']} is missing or unexpectedly a draft.")
     require(not release.get("immutable", False), f"Release {entry['id']} is immutable.")
-    tags = {entry["tag"]} if canonical else {entry["old_tag"], entry["tag"]}
+    tags = {entry["tag"]}
+    if not canonical and "old_tag" in entry:
+        tags.add(entry["old_tag"])
     require(release.get("tag_name") in tags, f"Unexpected current tag for release {entry['id']}.")
     matches = [asset for asset in release["assets"] if asset.get("id") == entry["asset"]["id"]]
     require(len(matches) == 1, f"Expected APK asset is missing from release {entry['id']}.")
@@ -209,9 +216,10 @@ def verify_source(client, entry):
 
 def verify_refs(client, entry):
     canonical = client.ref(entry["tag"])
-    old = client.ref(entry["old_tag"])
+    old = client.ref(entry["old_tag"]) if "old_tag" in entry else None
     require(canonical is None or canonical["commit"] == entry["source_commit"], f"Canonical tag {entry['tag']} already targets another commit.")
-    require(old is None or old["sha"] == entry["old_tag_sha"], f"Old tag {entry['old_tag']} changed; refusing to delete it.")
+    if old is not None:
+        require(old["sha"] == entry["old_tag_sha"], f"Old tag {entry['old_tag']} changed; refusing to delete it.")
     return canonical, old
 
 
@@ -285,7 +293,8 @@ def synchronize(client, entries, apply, report):
             report["actions"].append({"action": "delete_old_tag", "tag": entry["old_tag"], "sha": entry["old_tag_sha"]})
     verify_all()
     for entry in entries:
-        require(client.ref(entry["old_tag"]) is None, f"Old tag {entry['old_tag']} is still present.")
+        if "old_tag" in entry:
+            require(client.ref(entry["old_tag"]) is None, f"Old tag {entry['old_tag']} is still present.")
     report["status"] = "applied"
 
 

@@ -24,6 +24,58 @@ NEW_HEAD = 'c' * 40
 PUBLIC_URL = f'https://github.com/{publisher.REPOSITORY}/releases/tag/{publisher.TAG}'
 
 
+class DownloadTransportTests(unittest.TestCase):
+    def assert_download_transport(self, path, api_accept, cdn):
+        """Exercise real request/header construction without opening a socket."""
+        api_url = 'https://api.github.com' + path
+        payload = b'\x00synthetic binary download\xff'
+        requests = []
+        test = self
+
+        class Response(io.BytesIO):
+            status = 200
+            headers = {'Content-Length': str(len(payload))}
+
+        class Opener:
+            def open(self, request, timeout):
+                requests.append(request)
+                test.assertEqual(90, timeout)
+                test.assertEqual('GET', request.get_method())
+                test.assertIsNone(request.data)
+                if len(requests) == 1:
+                    test.assertEqual(api_url, request.full_url)
+                    test.assertEqual('Bearer synthetic-workflow-token', request.get_header('Authorization'))
+                    test.assertEqual(publisher.API_VERSION, request.get_header('X-github-api-version'))
+                    # The actual Actions endpoint refused the former octet-stream
+                    # header with HTTP 415 before returning its signed redirect.
+                    if request.get_header('Accept') != api_accept:
+                        raise publisher.urllib.error.HTTPError(api_url, 415, 'Synthetic unsupported media type', {}, None)
+                    raise publisher.urllib.error.HTTPError(api_url, 302, 'Synthetic redirect', {'Location': cdn}, None)
+                test.assertEqual(2, len(requests), 'No extra network or retry request is allowed')
+                test.assertEqual(cdn, request.full_url)
+                test.assertEqual('application/octet-stream', request.get_header('Accept'))
+                test.assertFalse(request.has_header('Authorization'), 'The workflow token must never reach the CDN')
+                return Response(payload)
+
+        github = publisher.GitHub('synthetic-workflow-token')
+        github._opener = Opener()
+        with tempfile.TemporaryDirectory(prefix='release-download-test-') as directory:
+            destination = Path(directory) / 'binary'
+            github.download(path, destination)
+            self.assertEqual(payload, destination.read_bytes())
+        self.assertEqual([api_url, cdn], [request.full_url for request in requests])
+
+    def test_actions_artifact_uses_json_api_accept_then_unauthenticated_binary_cdn(self):
+        self.assert_download_transport(
+            publisher.PREFIX + '/actions/artifacts/123/zip', 'application/vnd.github+json',
+            'https://fixture.blob.core.windows.net/artifacts/synthetic.zip?fixture=only')
+
+    def test_release_asset_keeps_binary_api_accept_then_unauthenticated_binary_cdn(self):
+        self.assert_download_transport(
+            publisher.PREFIX + '/releases/assets/456', 'application/octet-stream',
+            'https://release-assets.githubusercontent.com/synthetic-fixture.apk?fixture=only')
+
+
 class PublicationGitHub:
     """In-memory GitHub protocol. Every unexpected request fails the test."""
     def __init__(self):
