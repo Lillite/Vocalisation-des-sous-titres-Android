@@ -29,6 +29,8 @@ BRANCH = 'work/documentation-0.4.0-20261024'
 SOURCE = 'a' * 40
 HEAD = 'b' * 40
 ADVANCED_HEAD = 'c' * 40
+FIRST_PARENT = 'd' * 40
+PULL_NUMBER = 12
 
 
 def workflow_code():
@@ -54,11 +56,16 @@ class GitHubFixture:
         self.advance = False
         self.branch_reads = 0
         self.draft = False
+        self.head_sha = HEAD
         self.pulls = [{
-            'merged_at': '2026-10-24T01:00:00Z', 'merge_commit_sha': SOURCE,
-            'base': {'ref': 'main'},
+            'number': PULL_NUMBER, 'state': 'closed', 'merged_at': '2026-10-24T01:00:00Z',
+            'base': {'ref': 'main', 'repo': {'full_name': publisher.REPOSITORY}},
             'head': {'ref': BRANCH, 'sha': HEAD, 'repo': {'full_name': publisher.REPOSITORY}},
         }]
+        # The actual 2026-03-10 response has no PR merge-commit field.
+        # Keep list/details independent so a stale or divergent response fails.
+        self.pull_details = dict(deepcopy(self.pulls[0]), merged=True)
+        self.merge_commit = {'sha': SOURCE, 'parents': [{'sha': FIRST_PARENT}, {'sha': HEAD}]}
 
     def api(self, path, method='GET', data=None, expected=(200,), absent=False):
         self.calls.append((method, path))
@@ -71,13 +78,17 @@ class GitHubFixture:
                 if not absent:
                     raise AssertionError('Missing branch queried without absent=True')
                 return None
-            sha = ADVANCED_HEAD if self.advance and self.branch_reads > 1 else HEAD
+            sha = ADVANCED_HEAD if self.advance and self.branch_reads > 1 else self.head_sha
             return {'ref': 'refs/heads/' + BRANCH, 'object': {'type': 'commit', 'sha': sha}}
         if suffix.startswith('/pulls?'):
             query = parse_qs(suffix.partition('?')[2])
             if query != {'state': ['closed'], 'base': ['main'], 'head': ['Lillite:' + BRANCH], 'per_page': ['100']}:
                 raise AssertionError('Pull requests must be restricted to the exact repository branch and base')
             return deepcopy(self.pulls)
+        if suffix == '/pulls/' + str(PULL_NUMBER):
+            return deepcopy(self.pull_details)
+        if suffix == '/git/commits/' + SOURCE:
+            return deepcopy(self.merge_commit)
         if suffix == '/releases/tags/v0.4.0':
             return {'tag_name': 'v0.4.0', 'draft': self.draft}
         raise AssertionError('Unexpected mocked endpoint: ' + suffix)
@@ -143,20 +154,95 @@ class DocumentationCleanupTests(unittest.TestCase):
 
     def test_only_one_exact_merged_pull_request_is_accepted(self):
         original = deepcopy(self.client.pulls)
-        for corruption in ('unmerged', 'merge-source', 'head-sha', 'head-repository', 'duplicate', 'incomplete-page'):
+        for corruption in ('unmerged', 'state', 'base-ref', 'base-repository', 'head-ref', 'head-sha',
+                           'head-repository', 'number-missing', 'number-bool', 'number-zero', 'number-text',
+                           'duplicate', 'incomplete-page', 'not-a-list'):
             with self.subTest(corruption=corruption):
                 self.client.pulls = deepcopy(original)
                 pull = self.client.pulls[0]
                 if corruption == 'unmerged': pull['merged_at'] = None
-                elif corruption == 'merge-source': pull['merge_commit_sha'] = ADVANCED_HEAD
+                elif corruption == 'state': pull['state'] = 'open'
+                elif corruption == 'base-ref': pull['base']['ref'] = 'synthetic-other'
+                elif corruption == 'base-repository': pull['base']['repo']['full_name'] = 'synthetic/other'
+                elif corruption == 'head-ref': pull['head']['ref'] = 'work/synthetic-other'
                 elif corruption == 'head-sha': pull['head']['sha'] = ADVANCED_HEAD
                 elif corruption == 'head-repository': pull['head']['repo']['full_name'] = 'synthetic/other'
+                elif corruption == 'number-missing': del pull['number']
+                elif corruption == 'number-bool': pull['number'] = True
+                elif corruption == 'number-zero': pull['number'] = 0
+                elif corruption == 'number-text': pull['number'] = str(PULL_NUMBER)
                 elif corruption == 'duplicate': self.client.pulls *= 2
-                else: self.client.pulls *= 100
+                elif corruption == 'incomplete-page': self.client.pulls *= 100
+                else: self.client.pulls = {'unexpected': 'object'}
                 with self.assertRaises(publisher.Refusal):
                     self.run_workflow()
                 self.assertEqual([], self.ci_calls)
                 self.assert_not_archived()
+
+    def test_pull_details_independently_confirm_exact_closed_merge(self):
+        original = deepcopy(self.client.pull_details)
+        for corruption in ('unmerged', 'merged-missing', 'merged-text', 'closed-without-merged-at',
+                           'state', 'number', 'number-bool', 'base-ref', 'base-repository',
+                           'head-ref', 'head-sha', 'head-repository', 'head-missing', 'not-an-object'):
+            with self.subTest(corruption=corruption):
+                self.client.pull_details = deepcopy(original)
+                pull = self.client.pull_details
+                if corruption == 'unmerged': pull['merged'] = False
+                elif corruption == 'merged-missing': del pull['merged']
+                elif corruption == 'merged-text': pull['merged'] = 'true'
+                elif corruption == 'closed-without-merged-at': pull['merged_at'] = None
+                elif corruption == 'state': pull['state'] = 'open'
+                elif corruption == 'number': pull['number'] = PULL_NUMBER + 1
+                elif corruption == 'number-bool': pull['number'] = True
+                elif corruption == 'base-ref': pull['base']['ref'] = 'synthetic-other'
+                elif corruption == 'base-repository': pull['base']['repo']['full_name'] = 'synthetic/other'
+                elif corruption == 'head-ref': pull['head']['ref'] = 'work/synthetic-other'
+                elif corruption == 'head-sha': pull['head']['sha'] = ADVANCED_HEAD
+                elif corruption == 'head-repository': pull['head']['repo']['full_name'] = 'synthetic/other'
+                elif corruption == 'head-missing': pull['head'] = None
+                else: self.client.pull_details = []
+                with self.assertRaises(publisher.Refusal):
+                    self.run_workflow()
+                self.assertEqual([], self.ci_calls)
+                self.assert_not_archived()
+
+    def test_only_exact_two_parent_git_merge_proves_main_integration(self):
+        original = deepcopy(self.client.merge_commit)
+        for corruption in ('source', 'source-missing', 'one-parent', 'three-parents', 'parent-order',
+                           'second-parent', 'same-parents', 'invalid-first-parent', 'missing-first-sha',
+                           'non-string-first-sha', 'parents-object', 'parent-not-object', 'not-an-object'):
+            with self.subTest(corruption=corruption):
+                self.client.merge_commit = deepcopy(original)
+                commit = self.client.merge_commit
+                if corruption == 'source': commit['sha'] = ADVANCED_HEAD
+                elif corruption == 'source-missing': del commit['sha']
+                elif corruption == 'one-parent': commit['parents'] = [{'sha': HEAD}]
+                elif corruption == 'three-parents': commit['parents'].append({'sha': ADVANCED_HEAD})
+                elif corruption == 'parent-order': commit['parents'].reverse()
+                elif corruption == 'second-parent': commit['parents'][1]['sha'] = ADVANCED_HEAD
+                elif corruption == 'same-parents': commit['parents'][0]['sha'] = HEAD
+                elif corruption == 'invalid-first-parent': commit['parents'][0]['sha'] = 'invalid'
+                elif corruption == 'missing-first-sha': del commit['parents'][0]['sha']
+                elif corruption == 'non-string-first-sha': commit['parents'][0]['sha'] = 123
+                elif corruption == 'parents-object': commit['parents'] = {'sha': HEAD}
+                elif corruption == 'parent-not-object': commit['parents'][1] = HEAD
+                else: self.client.merge_commit = []
+                with self.assertRaises(publisher.Refusal):
+                    self.run_workflow()
+                self.assertEqual([], self.ci_calls)
+                self.assert_not_archived()
+
+    def test_2026_api_without_merge_commit_field_uses_details_and_git_before_ci(self):
+        self.assertNotIn('merge_commit_sha', self.client.pulls[0])
+        self.assertNotIn('merge_commit_sha', self.client.pull_details)
+        self.run_workflow()
+        paths = [path.removeprefix(publisher.PREFIX) for method, path in self.client.calls]
+        self.assertEqual('/git/ref/heads/' + BRANCH, paths[0])
+        self.assertTrue(paths[1].startswith('/pulls?'))
+        self.assertEqual(['/pulls/' + str(PULL_NUMBER), '/git/commits/' + SOURCE,
+                          '/releases/tags/v0.4.0', '/git/ref/heads/' + BRANCH], paths[2:])
+        self.assertEqual([SOURCE], self.ci_calls)
+        self.assertEqual([(SOURCE, (BRANCH,))], self.archive_calls)
 
     def test_draft_release_blocks_ci_wait_and_cleanup(self):
         self.client.draft = True
@@ -200,6 +286,11 @@ class DocumentationCleanupTests(unittest.TestCase):
                     self.run_workflow(**changes)
                 self.assertEqual([], self.ci_calls)
                 self.assert_not_archived()
+        self.client.head_sha = 'invalid-head'
+        with self.assertRaises(publisher.Refusal):
+            self.run_workflow()
+        self.assertEqual([], self.ci_calls)
+        self.assert_not_archived()
 
 
 if __name__ == '__main__':

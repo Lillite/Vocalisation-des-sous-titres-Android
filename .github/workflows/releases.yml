@@ -113,12 +113,44 @@ jobs:
           pulls = github.api(publisher.PREFIX + "/pulls?" + query)
           publisher.require(isinstance(pulls, list) and len(pulls) < 100,
                             "Documentation pull-request lookup is incomplete.")
-          merged = [pull for pull in pulls if pull.get("merged_at") and
-                    pull.get("merge_commit_sha") == source_sha and pull.get("base", {}).get("ref") == "main" and
-                    pull.get("head", {}).get("ref") == branch and pull.get("head", {}).get("sha") == head_sha and
-                    pull.get("head", {}).get("repo", {}).get("full_name") == publisher.REPOSITORY]
+
+          def matches_documentation_branch(pull):
+              if not isinstance(pull, dict):
+                  return False
+              base, head = pull.get("base"), pull.get("head")
+              if not isinstance(base, dict) or not isinstance(head, dict):
+                  return False
+              base_repo, head_repo = base.get("repo"), head.get("repo")
+              return (pull.get("state") == "closed" and bool(pull.get("merged_at")) and
+                      base.get("ref") == "main" and isinstance(base_repo, dict) and
+                      base_repo.get("full_name") == publisher.REPOSITORY and
+                      head.get("ref") == branch and head.get("sha") == head_sha and
+                      isinstance(head_repo, dict) and head_repo.get("full_name") == publisher.REPOSITORY)
+
+          merged = [pull for pull in pulls if matches_documentation_branch(pull)]
           publisher.require(len(merged) == 1,
-                            "This exact documentation branch head was not uniquely merged into this main commit.")
+                            "This exact documentation branch head has no unique closed merged pull request.")
+          number = merged[0].get("number")
+          publisher.require(type(number) is int and number > 0,
+                            "Documentation pull-request number is invalid.")
+          details = github.api(publisher.PREFIX + f"/pulls/{number}")
+          publisher.require(matches_documentation_branch(details) and details.get("number") == number and
+                            type(details.get("number")) is int and details.get("merged") is True,
+                            "Documentation pull-request details do not confirm this exact closed merge.")
+          # API 2026-03-10 removes the former PR merge-commit field. Prove
+          # the direct merge from Git instead: this exact main commit must
+          # have precisely two parents, with this branch head second.
+          commit = github.api(publisher.PREFIX + "/git/commits/" + source_sha)
+          publisher.require(isinstance(commit, dict) and commit.get("sha") == source_sha,
+                            "Documentation main commit identity is invalid.")
+          parents = commit.get("parents")
+          publisher.require(isinstance(parents, list) and len(parents) == 2 and
+                            all(isinstance(parent, dict) for parent in parents),
+                            "Documentation main commit is not a direct two-parent merge.")
+          first_parent, second_parent = (parent.get("sha") for parent in parents)
+          publisher.require(isinstance(first_parent, str) and publisher.HEX40.fullmatch(first_parent) and
+                            first_parent != head_sha and second_parent == head_sha,
+                            "Documentation branch is not the exact second parent of this main merge.")
           published = github.api(publisher.PREFIX + "/releases/tags/v0.4.0")
           publisher.require(published.get("tag_name") == "v0.4.0" and published.get("draft") is False,
                             "The published 0.4.0 release must exist before documentation cleanup.")

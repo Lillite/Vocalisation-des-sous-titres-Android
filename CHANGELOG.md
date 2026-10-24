@@ -35,6 +35,14 @@ La validation de `main` a réussi dans le [run 40053284969](https://github.com/L
 
 Les résultats, les erreurs intermédiaires et leurs corrections figurent dans [TESTING.md](TESTING.md). Les API personnelles ou payantes, les voix commerciales, la fidélité linguistique, TalkBack et les performances sur téléphone restent à essayer séparément. Aucun essai contrôlé n’établit une absence absolue de défauts. [Guide de traduction](docs/GUIDE_MOTEURS_TRADUCTION.md) · [Contrat d’intégration](docs/TRADUCTION_ETAPE_7.md).
 
+### Maintenance du dépôt après publication
+
+- Page d’accueil et index documentaire actualisés pour la 0.4.0 ; instructions sur téléphone, exemple SRT anglais, historique des archives et repères des six étapes précédentes organisés après la publication.
+- Correction de la reconnaissance d’une fusion documentaire avec l’API GitHub 2026 : vérification indépendante de la PR fermée et du commit Git à deux parents, en conservant les contrôles de tête, de validation Android et d’archive. Le champ `merge_commit_sha`, retiré par GitHub, n’est plus utilisé par ce rangement.
+- Trois régressions ajoutées aux sept tests de rangement existants ; l’outillage courant totalise 42 tests Python. Les résultats de la référence APK restent ceux de ses sources publiées (39 tests d’outils), avec leurs preuves dans [TESTING.md](TESTING.md).
+
+Ces changements de documentation et d’outillage ne remplacent pas l’APK publié et ne déplacent pas son tag. Les contrôles CI de chaque changement restent attachés à son propre commit.
+
 ## Historique des étapes 1 à 6 — incluses dans la 0.4.0
 
 Les sections suivantes détaillent leur développement antérieur à la publication. Les noms `work/…` sont des noms historiques de branches désormais archivées ; les sauvegardes `backup/…` restent des points de retour. Les étapes ne nécessitent pas l’installation d’APK séparés.

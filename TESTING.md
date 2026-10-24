@@ -41,6 +41,18 @@ Ces résultats attestent les sources, l’environnement et les scénarios exécu
 
 Les résultats d’une ancienne étape ou les effectifs attendus d’un workflow ne remplacent jamais les rapports du commit effectivement distribué. Les éléments ci-dessous conservent les contrôles, les erreurs intermédiaires et leurs corrections.
 
+## Maintenance après publication — reconnaissance des fusions GitHub
+
+La réorganisation documentaire fusionnée au commit [`d1627bd`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/d1627bddc3698181604a58bbff4f4a87481bf26e) a passé à son tour le [run Android 40086156531](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40086156531) : les six suites, soit **612 exécutions réussies**, et les 19 tests de publication. Les sources applicatives, leurs tests, leurs dépendances et l’APK publié sont restés inchangés.
+
+Les tentatives 1 et 2 du [rangement documentaire 40086156589](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40086156589) ont réussi la synchronisation des cinq releases et les tests de l’époque, puis refusé la suppression de la dernière branche. Le contrôle demandait un champ de PR absent de la réponse API. Les premières lectures renvoyaient un ancien format ; une nouvelle requête et les en-têtes de réponse ont permis d’identifier la différence. GitHub documente le [retrait de `merge_commit_sha` dans l’API 2026-03-10](https://docs.github.com/en/rest/about-the-rest-api/breaking-changes?apiVersion=2026-03-10). La première hypothèse de simple délai de propagation n’expliquait donc pas le refus persistant.
+
+Le correctif conserve la recherche bornée et l’unicité de la PR fermée, puis vérifie ses détails (`merged` vrai, numéro, références, dépôts et tête exacte). Il exige ensuite que le commit de `main` possède exactement deux parents Git, dont le second est la tête documentaire à archiver. La validation Android de ce même commit, la relecture de la tête après attente et les contrôles d’archive et de concurrence restent obligatoires. Aucun champ retiré ni abaissement de version d’API ne sert de remplacement.
+
+Les fixtures reproduisent le format 2026 sans le champ supprimé. Deux cas positifs ont reproduit le refus avec l’ancien workflow. Les sept méthodes de test antérieures sont conservées et trois régressions sont ajoutées : confirmation indépendante des détails, refus des graphes incorrects et parcours API sans l’ancien champ. Les contrôles locaux du correctif ont passé **42 tests Python : 19 de publication, 13 de synchronisation et 10 de rangement**. Les réponses contradictoires, numéros invalides, mauvais dépôts, parents absents ou inversés, doublons et changements de tête restent des refus sans archivage.
+
+Les **39 tests Python de la référence APK 0.4.0** en tête de ce document restent les effectifs réellement exécutés sur ses sources `32864ba`. Les 42 tests concernent l’outillage maintenu ensuite. La validation CI du correctif doit être lue sur sa demande de fusion et le commit correspondant de `main` ; les résultats d’un autre commit ne la remplacent pas. Cette maintenance ne change ni la version Android, ni le tag `v0.4.0`, ni le fichier APK et son empreinte.
+
 ## Historique local de la traduction — 24 octobre 2026
 
 Le développement part de l’étape 6 `1942ba48ae3f9324b3c7d5b03ab8c9bf11463e09`.
