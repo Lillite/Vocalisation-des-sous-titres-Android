@@ -8,6 +8,8 @@ on:
       - '.github/release-history.json'
       - '.github/workflows/releases.yml'
       - 'tools/sync-releases.py'
+      - 'tools/test_sync_releases.py'
+      - 'tools/test-documentation-cleanup.py'
       - 'docs/releases/**'
   pull_request:
     branches: [main]
@@ -15,6 +17,8 @@ on:
       - '.github/release-history.json'
       - '.github/workflows/releases.yml'
       - 'tools/sync-releases.py'
+      - 'tools/test_sync_releases.py'
+      - 'tools/test-documentation-cleanup.py'
       - 'docs/releases/**'
 
 permissions:
@@ -33,6 +37,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Tester les migrations et les nouvelles versions canoniques
+        run: python3 -m unittest tools/test_sync_releases.py
+      - name: Tester les conditions du rangement documentaire
+        run: python3 tools/test-documentation-cleanup.py
       - name: Verifier toutes les releases sans les modifier
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -48,13 +56,19 @@ jobs:
   synchronize:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 60
     permissions:
       contents: write
+      actions: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Tester les migrations et les nouvelles versions canoniques
+        run: python3 -m unittest tools/test_sync_releases.py
+      - name: Tester les conditions du rangement documentaire
+        run: python3 tools/test-documentation-cleanup.py
       - name: Verifier puis harmoniser les releases existantes
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -67,3 +81,64 @@ jobs:
           path: build/verification/releases-report.json
           if-no-files-found: error
           retention-days: 30
+      - name: Archiver la seule branche documentaire apres fusion et validation Android
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          import os
+          from pathlib import Path
+          import urllib.parse
+
+          specification = importlib.util.spec_from_file_location("verified_release", "tools/publish-verified-release.py")
+          publisher = importlib.util.module_from_spec(specification)
+          specification.loader.exec_module(publisher)
+          publisher.require(os.environ.get("GITHUB_REPOSITORY") == publisher.REPOSITORY and
+                            os.environ.get("GITHUB_REF") == "refs/heads/main",
+                            "Documentation cleanup is restricted to this repository's main branch.")
+          branch = "work/documentation-0.4.0-20261024"
+          github = publisher.GitHub(os.environ.get("GITHUB_TOKEN", ""))
+          reference = github.api(publisher.PREFIX + "/git/ref/heads/" + branch, absent=True)
+          if reference is None:
+              print("Documentation branch absent; no cleanup and no CI wait needed.")
+              raise SystemExit(0)
+
+          source_sha = os.environ.get("GITHUB_SHA", "")
+          head_sha = reference.get("object", {}).get("sha", "")
+          publisher.require(publisher.HEX40.fullmatch(source_sha) and publisher.HEX40.fullmatch(head_sha),
+                            "Documentation source or branch identity is invalid.")
+          query = urllib.parse.urlencode({"state": "closed", "base": "main",
+                                         "head": "Lillite:" + branch, "per_page": 100})
+          pulls = github.api(publisher.PREFIX + "/pulls?" + query)
+          publisher.require(isinstance(pulls, list) and len(pulls) < 100,
+                            "Documentation pull-request lookup is incomplete.")
+          merged = [pull for pull in pulls if pull.get("merged_at") and
+                    pull.get("merge_commit_sha") == source_sha and pull.get("base", {}).get("ref") == "main" and
+                    pull.get("head", {}).get("ref") == branch and pull.get("head", {}).get("sha") == head_sha and
+                    pull.get("head", {}).get("repo", {}).get("full_name") == publisher.REPOSITORY]
+          publisher.require(len(merged) == 1,
+                            "This exact documentation branch head was not uniquely merged into this main commit.")
+          published = github.api(publisher.PREFIX + "/releases/tags/v0.4.0")
+          publisher.require(published.get("tag_name") == "v0.4.0" and published.get("draft") is False,
+                            "The published 0.4.0 release must exist before documentation cleanup.")
+          # A fresh runner may spend about twelve minutes installing FFmpeg
+          # before the Android checks. Keep the branch until that CI is done.
+          publisher.CI_WAIT_SECONDS = 45 * 60
+          publisher.successful_main_run(github, source_sha)
+          current = github.api(publisher.PREFIX + "/git/ref/heads/" + branch)
+          publisher.require(current.get("object", {}).get("sha") == head_sha,
+                            "Documentation branch advanced while waiting for Android validation; preserved.")
+          # Importing this module never calls its APK publication main(). Only
+          # its tested ancestry/archive checks are reused for one exact branch.
+          publisher.ARCHIVABLE_BRANCHES = (branch,)
+          results = publisher.archive_merged_branches(github, source_sha)
+          result = results[0]
+          if result["result"] != "archived-and-deleted":
+              print("::warning::Documentation cleanup remains incomplete; see its explicit result below.")
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with Path(summary).open("a", encoding="utf-8") as stream:
+                  stream.write("\nDocumentation branch cleanup after successful main Android validation:\n\n")
+                  stream.write(f"`{branch}`: **{result['result']}** — {result['reason']}\n")
+          PY

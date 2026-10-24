@@ -8,7 +8,7 @@ version 0.4.0, code 6, avec une signature durable propre à cette édition et
 sauvegardée hors du dépôt. Elle coexiste avec la stable 0.3.2.
 
 Les passages Gradle locaux ont réellement exécuté **87/87 tests du noyau et
-135/135 tests JVM de l’application**, en debug puis en release, sans échec,
+137/137 tests JVM de l’application**, en debug puis en release, sans échec,
 erreur, méthode ignorée, manquante, inattendue ou dupliquée. Les inventaires des
 sources ont été comparés aux XML JUnit. Les compilations des deux applications
 et de leurs APK de tests ont réussi. Les **82 méthodes instrumentées** sont
@@ -711,3 +711,12 @@ tests release, même si les sources sont identiques.
 Le [run 40044448351](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40044448351), sur la proposition `7907385bc7db418acaf38d5cce5e669858f3c61a`, a réellement exécuté 82 méthodes à chaque passage : **81 réussites et un échec**, deux fois, sans erreur, test ignoré, manquant ou dupliqué. Les suites JVM debug et release avaient chacune réussi 87 tests du noyau et 137 de l’application. Aucun APK de distribution n’a été produit par ce run en échec.
 
 L’échec unique est `actualTranslationPanelKeepsLabelsDescriptionsAndScrollableHelpAtDoubleFontScale`, à la recherche d’un unique `ScrollView` dans tout le dialogue. Android 36 ajoute un défilement interne au `AlertDialog` en plus de celui du formulaire : la sélection était ambiguë. Les contrôles précédents de taille de texte, d’explications fournisseurs, de labels et de clé masquée avaient passé. Le formulaire possède désormais un identifiant explicite ; le test cible ce formulaire, vérifie qu’il contient tous les champs et conserve ses assertions de dépassement et de défilement effectif. Le résultat d’un nouveau double passage reste nécessaire pour valider cette correction.
+
+
+### Correction du téléchargement GitHub avant publication — HTTP 415
+
+La validation du commit `2141c2024e7ba0fd2801a0dc0e2c86eebfbb29cf` a réussi dans le [run 40048404597, tentative 2](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40048404597) : **612 exécutions JVM/Android**, puis contrôle et signature durable de l’APK exact. Le [premier essai de publication 40051373135](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40051373135) s’est ensuite arrêté avec HTTP 415 au téléchargement de l’artefact Actions, **avant création d’un brouillon, d’une release ou du tag 0.4.0**. Les quatre versions historiques sont restées en place.
+
+Le transport utilisait `Accept: application/octet-stream` pour tous les téléchargements. L’[API officielle des artefacts Actions](https://docs.github.com/en/rest/actions/artifacts?apiVersion=2026-03-10#download-an-artifact) demande l’en-tête JSON GitHub pour négocier sa redirection ZIP. La correction distingue ce seul endpoint ; les assets de release et les requêtes CDN conservent le type binaire, et le jeton reste limité à l’API GitHub. Les limites, refus de redirections non autorisées, contrôle du commit exact et invariants des trois fichiers ne sont pas modifiés.
+
+Deux nouveaux tests exercent les véritables méthodes `download` et `_request` avec un opener strict en mémoire. Sur l’ancien code, le nouveau cas Actions reproduit HTTP 415 : **18 tests réussis, un échec**. Après correction : **19/19 tests de publication**, **13/13 tests de synchronisation** et **7/7 tests de rangement documentaire** réussis, soit **39 méthodes Python**, sans requête réseau. Une nouvelle validation de la proposition et du commit final de main reste nécessaire avant de republier l’APK avec les outils corrigés.

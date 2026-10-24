@@ -153,11 +153,17 @@ class GitHub:
 
     def download(self, path: str, destination: Path, maximum: int = MAX_BINARY_BYTES) -> None:
         require(path.startswith(PREFIX + "/"), "Binary download repository scope refused.")
+        # Actions negotiates its ZIP redirect as JSON; release assets negotiate
+        # binary content. The signed CDN request always remains unauthenticated.
+        api_accept = ("application/vnd.github+json"
+                      if re.fullmatch(re.escape(PREFIX) + r"/actions/artifacts/[0-9]+/zip", path)
+                      else "application/octet-stream")
         url = "https://api.github.com" + path
         authenticated = True
         for _ in range(5):
             try:
-                response = self._request(url, accept="application/octet-stream", authenticated=authenticated)
+                response = self._request(url, accept=api_accept if authenticated else "application/octet-stream",
+                                         authenticated=authenticated)
             except urllib.error.HTTPError as error:
                 if error.code not in (301, 302, 303, 307, 308):
                     raise Refusal(f"GitHub binary download failed with HTTP {error.code}.") from None
