@@ -93,7 +93,7 @@ printf 'no\n' | timeout -k 1s 120s "$avdmanager" create avd --name "$avd_name" -
   printf 'hw.cpu.ncore=4\nhw.ramSize=2048\ndisk.dataPartition.size=2048M\n'
 } >> "$avd_home/$avd_name.avd/config.ini"
 cp "$avd_home/$avd_name.avd/config.ini" "$evidence/avd-config.ini"
-command=("$emulator" -port "$port" -avd "$avd_name" -cores 4 -memory 2048 -partition-size 2048
+command=("$emulator" -port "$port" -avd "$avd_name" -cores 4 -memory 2048
   -accel on -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none)
 printf '%q ' "${command[@]}" > "$evidence/emulator-command.txt"
 printf '\n' >> "$evidence/emulator-command.txt"
