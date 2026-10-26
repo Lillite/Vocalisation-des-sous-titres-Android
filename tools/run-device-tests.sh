@@ -33,14 +33,69 @@ if [[ "$device" != emulator-* ]]; then
   exit 2
 fi
 
+metrics_monitor_pid=""
+start_metrics_monitor() {
+  # Isolate only the optional sampler, never Gradle or the adb server. Every
+  # command it launches stays in this group (timeout uses --foreground).
+  setsid bash tools/sample-device-metrics.sh "$device" "$evidence/live-metrics" > "$evidence/metrics-monitor-console.txt" 2>&1 &
+  metrics_monitor_pid=$!
+}
+stop_metrics_monitor() {
+  if [[ -z "$metrics_monitor_pid" ]]; then return 0; fi
+  if kill -0 "$metrics_monitor_pid" 2>/dev/null; then
+    kill -TERM -- "-$metrics_monitor_pid" 2>/dev/null || kill -TERM "$metrics_monitor_pid" 2>/dev/null || true
+    # Do not wait for the next thirty-second sample or a hung adb command.
+    for attempt in {1..20}; do
+      if ! kill -0 "$metrics_monitor_pid" 2>/dev/null; then break; fi
+      sleep 0.1
+    done
+    if kill -0 "$metrics_monitor_pid" 2>/dev/null; then
+      kill -KILL -- "-$metrics_monitor_pid" 2>/dev/null || true
+      kill -KILL "$metrics_monitor_pid" 2>/dev/null || true
+    fi
+  fi
+  wait "$metrics_monitor_pid" 2>/dev/null || true
+  metrics_monitor_pid=""
+  return 0
+}
+
 collect_diagnostics() {
-  original_status=$?
+  local original_status=$?
+  stop_metrics_monitor
   adb -s "$device" pull /sdcard/Download/cinema03-tests/ "$evidence/screenshots/" >/dev/null 2>&1 || true
   adb -s "$device" shell dumpsys window > "$evidence/windows-after-tests.txt" 2>&1 || true
   adb -s "$device" logcat -d -t 8000 > "$evidence/logcat-after-tests.txt" 2>&1 || true
+  # Optional snapshots of this disposable, synthetic-fixture emulator only.
+  # These are not playback benchmarks, acoustic measurements or pass criteria.
+  # A stopped process or unavailable dumpsys service remains recorded evidence;
+  # it must not replace the original test/setup failure or fail a passing suite.
+  {
+    printf 'capture_phase=script-exit\nscript_exit_status=%s\nvariant=%s\npass=%s\n' "$original_status" "$variant" "$pass"
+    printf 'application=fr.soustitresvoix.player.translation\n'
+    printf 'nature=optional emulator snapshots, not playback/audio performance guarantees\n'
+    printf 'instrumentation may not have started if emulator setup failed\n'
+  } > "$evidence/diagnostic-snapshots.txt" 2>&1 || true
+  printf 'file\tcaptured_utc\tcommand_exit_status\n' > "$evidence/diagnostic-snapshots.tsv" || true
+  optional_snapshot() {
+    local file="$1"
+    shift
+    local captured_utc
+    captured_utc=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    timeout 10s adb -s "$device" shell "$@" > "$evidence/$file" 2>&1
+    local capture_status=$?
+    printf '%s\t%s\t%s\n' "$file" "$captured_utc" "$capture_status" >> "$evidence/diagnostic-snapshots.tsv" || true
+    return 0
+  }
+  optional_snapshot app-memory-after-tests.txt dumpsys meminfo fr.soustitresvoix.player.translation
+  optional_snapshot app-frames-after-tests.txt dumpsys gfxinfo fr.soustitresvoix.player.translation framestats
+  optional_snapshot cpu-after-tests.txt dumpsys cpuinfo
+  optional_snapshot app-package-after-tests.txt dumpsys package fr.soustitresvoix.player.translation
+  optional_snapshot thermal-after-tests.txt dumpsys thermalservice
   return "$original_status"
 }
 trap collect_diagnostics EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # With -no-boot-anim, an AOSP image may never publish init.svc.bootanim.
 # Require completed boot and a responsive package service, and reject an
@@ -121,14 +176,16 @@ printf '%s\n' "$started_ns" > "$evidence/started-ns.txt"
 
 # Do not use --rerun-tasks here: it can regenerate the demo and rebuild the
 # APK. Removing only the old results ensures fresh instrumentation output.
+start_metrics_monitor
 gradle --no-daemon --stacktrace --no-build-cache "${task[@]}" > "$evidence/device-console.txt" 2>&1
 status=$?
+stop_metrics_monitor
 tail -n 180 "$evidence/device-console.txt"
 
 # Check all method identities, so missing, duplicated or skipped tests cannot
 # satisfy the release gate. These are actual device XML results, not inventory.
 python3 tools/verify-test-results.py \
-  --reports "$reports" --expected-count 82 --sources app/src/androidTest/java \
+  --reports "$reports" --expected-count 87 --sources app/src/androidTest/java \
   --not-before-ns "$started_ns" --output "$evidence/android-test-summary.json"
 report_status=$?
 if [[ "$status" == 0 && "$report_status" != 0 ]]; then status=$report_status; fi

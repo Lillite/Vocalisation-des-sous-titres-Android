@@ -17,6 +17,10 @@ import fr.soustitresvoix.core.SpeechDiskCache
 import fr.soustitresvoix.core.AdaptiveTiming
 import fr.soustitresvoix.core.SpeechDurationModel
 import fr.soustitresvoix.core.LatencyWindow
+import fr.soustitresvoix.core.OfflineSpeechCue
+import fr.soustitresvoix.core.OfflineSpeechLibrary
+import fr.soustitresvoix.core.OfflineSpeechStatus
+import fr.soustitresvoix.core.OfflineSpeechWork
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -32,6 +36,128 @@ class AndroidSpeech(
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private val cache = SpeechDiskCache(File(context.cacheDir, "speech-v3")) { preferences.cacheBytes }
+    private val offline = OfflineSpeechLibrary(File(context.filesDir, "offline-works-v1"))
+    private data class OfflineRequest(val mediaKey: String, val title: String, val cues: List<OfflineSpeechCue>,
+        val durationMs: Long, val complete: Boolean, val configuration: String, val languageTag: String?)
+    private var offlineRequest: OfflineRequest? = null
+    private var offlineKey: String? = null
+    private var preparingOffline = false
+    private var offlineEstimating = false
+    val offlinePreparationActive: Boolean get() = preparingOffline || offlineEstimating
+    private var offlineUrgentTexts: Set<String> = emptySet()
+    private var offlineEpoch = 0L
+    @Volatile var offlineStatus = OfflineSpeechStatus(); private set
+    @Volatile private var savedWorks: List<OfflineSpeechWork> = emptyList()
+    fun offlineWorks(): List<OfflineSpeechWork> = savedWorks
+    fun measuredDurationMs(text: String): Long? = configuredSettings?.takeIf { it == voiceSettings() }?.let { durations.measured(text, it.rate) }
+    /** Called with the selected track's final narration text; sourceComplete=false never becomes ready. */
+    fun configureOfflineWork(mediaKey: String, cues: List<OfflineSpeechCue>, totalDurationMs: Long,
+        complete: Boolean = true, title: String = "") {
+        if (closed || !isReady || totalDurationMs <= 0) return
+        val request = OfflineRequest(mediaKey, title, cues.toList(), totalDurationMs, complete, configuration, language)
+        if (request == offlineRequest) return
+        if (preparingOffline) cancelPreparation()
+        offlineRequest = request; offlineKey = OfflineSpeechLibrary.workKey(mediaKey)
+        val epoch = ++offlineEpoch; val key = requireNotNull(offlineKey)
+        offlineStatus = OfflineSpeechStatus(mediaKey = key, title = title, totalDurationMs = totalDurationMs,
+            sourceComplete = complete, message = "Plan de conservation disponible ; vérifier ou conserver explicitement")
+        io.execute {
+            val plan = offline.plan(key)
+            val status = if (plan != null && plan.configuration == request.configuration && plan.cues == request.cues.sortedWith(
+                    compareBy<OfflineSpeechCue> { it.startMs }.thenBy { it.endMs }.thenBy { it.identity }) &&
+                    plan.sourceComplete == request.complete && plan.totalDurationMs == request.durationMs) offline.status(key) else null
+            val works = offline.list()
+            main.post { if (!closed && epoch == offlineEpoch) { savedWorks = works; if (status != null) offlineStatus = status } }
+        }
+    }
+    /** Preview storage and reusable WAVs without persisting text or beginning synthesis. */
+    fun estimateOffline() {
+        val request = offlineRequest ?: return
+        val epoch = offlineEpoch
+        io.execute {
+            val result = runCatching { offline.preview(request.mediaKey, request.title, request.cues, request.durationMs,
+                request.complete, request.configuration, request.languageTag) }
+            val works = offline.list()
+            main.post {
+                if (closed || epoch != offlineEpoch || request != offlineRequest) return@post
+                savedWorks = works
+                offlineStatus = result.getOrElse { offlineStatus.copy(ready = false,
+                    message = "Estimation indisponible : vérifie la piste, sa durée et l’espace libre") }
+            }
+        }
+    }
+    /** Durable per-segment checkpointing, resumable by invoking the same command after reopening. */
+    fun prepareOffline() {
+        val request = offlineRequest
+        if (closed || !isReady || request == null || request.configuration != configuration || !preferences.cacheEnabled) {
+            preparationStatus = "Choisis une piste et une voix prête, puis active le cache avant de conserver"; return
+        }
+        cancelPreparation()
+        val epoch = ++offlineEpoch
+        offlineEstimating = true; bulkPreparation = true
+        preparationStatus = "Estimation de l’espace et vérification des voix déjà conservées"
+        io.execute {
+            val result = runCatching {
+                val plan = offline.configure(request.mediaKey, request.title, request.cues, request.durationMs,
+                    request.complete, request.configuration, request.languageTag)
+                val status = offline.status(plan.mediaKey)
+                if (status.additionalBytes > status.availableBytes - (64L shl 20)) throw java.io.IOException("Espace insuffisant pour préparer cette œuvre")
+                plan to status
+            }
+            main.post {
+                if (closed || epoch != offlineEpoch || configuration != request.configuration) return@post
+                result.onSuccess { (plan, status) ->
+                    offlineEstimating = false
+                    offlineKey = plan.mediaKey; offlineStatus = status
+                    queueBatch(plan.segments.map { it.text }, pinning = true)
+                    if (!bulkPreparation) preparingOffline = false
+                }.onFailure {
+                    offlineEstimating = false; bulkPreparation = false; preparingOffline = false
+                    preparationStatus = "Conservation impossible : espace ou données indisponibles. Libère de la place puis réessaie."
+                    offlineStatus = offlineStatus.copy(ready = false, message = preparationStatus)
+                }
+            }
+        }
+    }
+    fun clearOfflineSelection() {
+        cancelPreparation(); offlineEpoch++; offlineRequest = null; offlineKey = null
+        offlineStatus = OfflineSpeechStatus()
+    }
+    private var lastOfflineProgressMs = 0L
+    private fun updateOfflineProgress() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastOfflineProgressMs < 500) return
+        lastOfflineProgressMs = now
+        val key = offlineKey ?: return
+        val epoch = offlineEpoch
+        io.execute {
+            val status = offline.status(key, deepValidation = false)
+            main.post { if (!closed && epoch == offlineEpoch) offlineStatus = status }
+        }
+    }
+    fun refreshOfflineStatus() {
+        val key = offlineKey ?: return
+        val epoch = offlineEpoch; val currentConfiguration = configuration
+        io.execute {
+            val plan = offline.plan(key)
+            val status = if (plan?.configuration == currentConfiguration) offline.status(key)
+                else offlineStatus.copy(ready = false, message = "Voix ou plan modifié : une nouvelle vérification est nécessaire")
+            val works = offline.list()
+            main.post { if (!closed && epoch == offlineEpoch) { offlineStatus = status; savedWorks = works } }
+        }
+    }
+    private fun removeOffline(mediaKey: String, kind: Int) {
+        val key = mediaKey.takeIf { it.matches(Regex("[a-f0-9]{64}")) } ?: OfflineSpeechLibrary.workKey(mediaKey)
+        if (key == offlineKey) { cancelPreparation(); offlineEpoch++; offlineStatus = offlineStatus.copy(ready = false, message = "Conservation retirée : nouvelle préparation nécessaire") }
+        io.execute {
+            when (kind) { 0 -> offline.removeVoices(key); 1 -> offline.removeTexts(key); else -> offline.removeIndex(key) }
+            val works = offline.list()
+            main.post { if (!closed) { savedWorks = works; refreshOfflineStatus() } }
+        }
+    }
+    fun removeOfflineVoices(mediaKey: String) = removeOffline(mediaKey, 0)
+    fun removeOfflineTexts(mediaKey: String) = removeOffline(mediaKey, 1)
+    fun removeOfflineIndex(mediaKey: String) = removeOffline(mediaKey, 2)
     private var engine: TextToSpeech? = null
     private var initialized = false
     private var closed = false
@@ -79,6 +205,7 @@ class AndroidSpeech(
     private var lookup = false
     private var lookupText: String? = null
     private var publishing = false
+    private var synthOfflineKey: String? = null
     private var preparationEpoch = 0L
     private var lastRequested: List<String> = emptyList()
     var choices: List<Choice> = emptyList(); private set
@@ -180,6 +307,8 @@ class AndroidSpeech(
             if (signature != configuration) {
                 stop(); configuration = signature; generation++; preparationDisabled = false
                 durations.clear()
+                preparingOffline = false; offlineEpoch++
+                offlineStatus = offlineStatus.copy(ready = false, message = "Configuration vocale modifiée : conserver/vérifier de nouveau")
                 // Namespaced keys preserve valid audio across launches. No unconditional purge.
                 io.execute { cache.initialize(); cacheSize = cache.size() }
             }
@@ -207,7 +336,7 @@ class AndroidSpeech(
         arm(id, 15_000)
         val lookupStarted = SystemClock.elapsedRealtime()
         io.execute {
-            val entry = runCatching { cache.get(key) }.getOrNull()
+            val entry = runCatching { offlineKey?.let { offline.get(it, key) } ?: cache.get(key) }.getOrNull()
             main.post {
                 if (closed || generation != ticket || activeId != id) return@post
                 if (configuredSettings != voiceSettings()) {
@@ -215,7 +344,10 @@ class AndroidSpeech(
                 }
                 cacheLatency.add(SystemClock.elapsedRealtime() - lookupStarted)
                 if (entry == null) { misses++; direct(id, text) }
-                else { hits++; playFile(id, text, entry, availableMs, adaptive) }
+                else {
+                    hits++; durations.rememberMeasured(text, entry.durationMs, activeBaseRate)
+                    playFile(id, text, entry, availableMs, adaptive)
+                }
             }
         }
     }
@@ -271,7 +403,7 @@ class AndroidSpeech(
     }
     private fun plannedFactor(audioMs: Long): Float {
         if (!activeAdaptive) return 1f
-        val remainingMs = if (remainingText.isBlank()) 0L else durations.estimate(remainingText, activeBaseRate)
+        val remainingMs = if (remainingText.isBlank()) 0L else SpeechTools.segments(remainingText, language).sumOf { durations.estimate(it, activeBaseRate) }
         val forecast = activePlanning?.invoke(audioMs) ?: planningFloor
         return maxOf(AdaptiveTiming.factor(audioMs, remainingMs, activeBudget?.invoke(), preferences.adaptiveMax), forecast)
             .coerceIn(1f, preferences.adaptiveMax)
@@ -293,8 +425,10 @@ class AndroidSpeech(
             }
         }
     }
-    fun prepareBatch(texts: List<String>) {
+    fun prepareBatch(texts: List<String>) = queueBatch(texts, pinning = false)
+    private fun queueBatch(texts: List<String>, pinning: Boolean) {
         cancelPreparation()
+        preparingOffline = pinning
         if (closed || !isReady || !preferences.cacheEnabled || preparationDisabled) { preparationStatus = "Choisis une voix et active le cache avant la préparation"; return }
         if (!preparationSettingsCurrent()) return
         if (texts.any { it.length > 1000 }) {
@@ -311,7 +445,24 @@ class AndroidSpeech(
     }
     fun prepareAhead(texts: List<String>) {
         if (!preparationSettingsCurrent()) return
-        if (bulkPreparation) return
+        if (bulkPreparation) {
+            // Pinning a whole work must not prepare its distant beginning while
+            // the viewer has sought ahead. Reorder the existing queue only;
+            // never cancel an in-flight synthesis or manufacture extra work.
+            if (preparingOffline && texts.isNotEmpty() && pending.isNotEmpty()) {
+                val wanted = texts.take(preferences.lookAheadCount).toSet()
+                if (wanted != offlineUrgentTexts) {
+                    offlineUrgentTexts = wanted
+                    val urgent = pending.filter { it in wanted }
+                    if (urgent.isNotEmpty()) {
+                        val later = pending.filter { it !in wanted }
+                        pending.clear(); pending.addAll(urgent); pending.addAll(later)
+                    }
+                }
+                pump()
+            }
+            return
+        }
         if (closed || !isReady || !preferences.cacheEnabled || preparationDisabled) return
         var total = 0L
         val requested = texts.asSequence().filter { it.isNotBlank() && it.length <= 1000 }.distinct()
@@ -337,16 +488,27 @@ class AndroidSpeech(
     private fun pump() {
         if (!preparationSettingsCurrent()) return
         if (bulkPreparation && pending.isEmpty() && synthId == null && !lookup && !publishing) {
-            bulkPreparation = false
-            preparationStatus = "Préparation parcourue ; ${preparedAudioMs / 1000} s nouvellement synthétisées. Cache borné : les plus anciennes peuvent être évincées."
+            val wasOffline = preparingOffline
+            bulkPreparation = false; preparingOffline = false
+            if (wasOffline) refreshOfflineStatus()
+            preparationStatus = if (wasOffline) "Préparation durable parcourue ; vérification finale de toutes les voix conservées"
+                else "Préparation parcourue ; ${preparedAudioMs / 1000} s nouvellement synthétisées. Cache borné : les plus anciennes peuvent être évincées."
         }
         if (closed || !isReady || live || (activeId != null && audio == null) || synthId != null || lookup || publishing ||
             preparationDisabled || !preferences.cacheEnabled || pending.isEmpty()) return
         val text = pending.removeFirst(); val ticket = generation; val epoch = preparationEpoch
         val key = SpeechTools.key(configuration, text); lookup = true; lookupText = text
+        val lookupWork = offlineKey
+        val pinnedKey = lookupWork.takeIf { preparingOffline }
+        val rate = requireNotNull(configuredSettings).rate
         val lookupStarted = SystemClock.elapsedRealtime()
         io.execute {
-            val exists = runCatching { cache.get(key) != null }.getOrDefault(false)
+            val existing = runCatching { lookupWork?.let { offline.get(it, key) } ?: cache.get(key) }.getOrNull()
+            val durable = if (existing != null && pinnedKey != null) runCatching {
+                offline.get(pinnedKey, key) ?: offline.put(pinnedKey, key, existing.file)
+            }.getOrNull() else existing
+            val exists = durable != null
+            val measured = durable?.durationMs
             val file = if (exists) null else runCatching { cache.temporary() }.getOrNull()
             main.post {
                 lookup = false
@@ -365,13 +527,17 @@ class AndroidSpeech(
                     if (!closed) pump()
                     return@post
                 }
-                if (exists) { pump(); return@post }
+                if (exists) {
+                    if (measured != null) durations.rememberMeasured(text, measured, rate)
+                    if (pinnedKey != null) updateOfflineProgress()
+                    pump(); return@post
+                }
                 if (file == null) {
                     bulkPreparation = false; preparationDisabled = true; preparationStatus = "Cache indisponible ; lecture vocale directe conservée"
                     return@post
                 }
                 val id = "cache-${++synthSequence}"
-                synthId = id; synthFile = file; synthKey = key; synthText = text
+                synthId = id; synthFile = file; synthKey = key; synthText = text; synthOfflineKey = pinnedKey
                 synthBaseRate = requireNotNull(configuredSettings).rate; synthStarted = SystemClock.elapsedRealtime()
                 preparationStatus = "Préparation locale en cours"
                 try {
@@ -394,6 +560,7 @@ class AndroidSpeech(
             val file = synthFile ?: return@post
             val key = synthKey; val ticket = generation; val epoch = preparationEpoch
             val preparedText = synthText; val preparedRate = synthBaseRate
+            val pinnedKey = synthOfflineKey; synthOfflineKey = null
             synthId = null; synthFile = null
             lastSynthesisMs = SystemClock.elapsedRealtime() - synthStarted; lastAudioMs = 0; synthesisLatency.add(lastSynthesisMs)
             if (error != null) {
@@ -402,13 +569,20 @@ class AndroidSpeech(
             } else {
                 publishing = true
                 io.execute {
-                    val result = runCatching { cache.put(key, file) }.getOrNull(); cacheSize = cache.size()
+                    val result = runCatching {
+                        val pinned = pinnedKey?.let { offline.put(it, key, file) }
+                        val cached = cache.put(key, file)
+                        pinned ?: cached
+                    }.getOrNull()
+                    file.delete(); cacheSize = cache.size()
                     main.post {
                         publishing = false
                         if (!closed && ticket == generation && epoch == preparationEpoch) {
                             if (result != null) {
                                 preparedCount++; lastAudioMs = result.durationMs; preparedAudioMs += result.durationMs
                                 durations.observe(preparedText, result.durationMs, preparedRate)
+                                durations.rememberMeasured(preparedText, result.durationMs, preparedRate)
+                                if (pinnedKey != null) updateOfflineProgress()
                                 preparationStatus = "$preparedCount segments préparés localement"
                             } else {
                                 bulkPreparation = false; preparationDisabled = true
@@ -454,7 +628,12 @@ class AndroidSpeech(
     }
     fun cancelPreparation(keepPending: Boolean = false) {
         preparationEpoch++; lastRequested = emptyList()
-        if (!keepPending) { pending.clear(); bulkPreparation = false }
+        if (!keepPending) {
+            // Also invalidate an asynchronous offline estimate that has not yet
+            // started synthesis; cancelling must not let it restart later.
+            offlineEpoch++
+            pending.clear(); bulkPreparation = false; preparingOffline = false; offlineEstimating = false; offlineUrgentTexts = emptySet()
+        }
         else {
             if (synthId != null && synthText.isNotBlank()) pending.addFirst(synthText)
             lookupText?.let { pending.addFirst(it) }
@@ -462,7 +641,7 @@ class AndroidSpeech(
         // The in-flight callback still clears lookup, but cannot reinsert this item twice.
         lookupText = null
         if (synthId != null) {
-            synthId = null; runCatching { engine?.stop() }
+            synthId = null; synthOfflineKey = null; runCatching { engine?.stop() }
             synthFile?.let { f -> io.execute { f.delete() } }; synthFile = null
         }
     }
@@ -470,7 +649,7 @@ class AndroidSpeech(
     fun clearCache() { stop(); generation++; io.execute { cache.clear(); cacheSize = 0 }; preparationDisabled = false }
     fun close() {
         if (closed) return
-        stop(); closed = true; generation++; main.removeCallbacksAndMessages(null)
+        stop(); closed = true; generation++; offlineEpoch++; main.removeCallbacksAndMessages(null)
         runCatching { engine?.shutdown() }; engine = null; io.shutdown()
     }
 }

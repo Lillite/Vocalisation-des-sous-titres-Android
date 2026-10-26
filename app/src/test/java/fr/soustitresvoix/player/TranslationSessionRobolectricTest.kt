@@ -56,6 +56,9 @@ class TranslationSessionRobolectricTest {
             .putInt("duckAttack", 0).putInt("duckRelease", 0).putInt("duckHold", 0).commit()
         context.getSharedPreferences("playback-measurements", Context.MODE_PRIVATE).edit().clear().commit()
         File(context.cacheDir, "translated-subtitles-v1").deleteRecursively()
+        File(context.filesDir, "translation-progress-v1").deleteRecursively()
+        File(context.filesDir, "translations-retained-v1").deleteRecursively()
+        context.getSharedPreferences("translation-display-v1", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     private fun await(message: String, condition: () -> Boolean) {
@@ -68,14 +71,14 @@ class TranslationSessionRobolectricTest {
         fail(message)
     }
 
-    private inner class Fixture : AutoCloseable {
+    private inner class Fixture(private val subtitlesText: String = assText()) : AutoCloseable {
         val components = Components()
         val messages = mutableListOf<Pair<String, Boolean>>()
         val captions = mutableListOf<String>()
         val session = PlaybackSession(context, PlayerPreferences(context), {}, { text, error -> messages += text to error },
             { captions += it }, components)
         val file = File.createTempFile("translation-synthetic-", ".ass", context.cacheDir).apply {
-            writeText(assText())
+            writeText(subtitlesText)
         }
         val media = SavedMedia("android.resource://${context.packageName}/${R.raw.demonstration}",
             "Synthetic translation fixture", subtitlePath = file.path, subtitleMime = MimeTypes.TEXT_SSA)
@@ -157,6 +160,7 @@ class TranslationSessionRobolectricTest {
         Fixture().use { fixture ->
             fixture.translate()
             fixture.components.speech.voiceLanguage = "en"
+            assertFalse(fixture.session.translation.allowNarrationVoice())
             fixture.session.play()
             fixture.session.resumeVoice()
             fixture.session.repeatLast()
@@ -166,8 +170,10 @@ class TranslationSessionRobolectricTest {
             fixture.components.speech.voiceLanguage = "fr"
             fixture.components.speech.ready(false)
             assertFalse(fixture.session.translation.allowPlayback())
+            assertFalse(fixture.session.translation.allowNarrationVoice())
             fixture.components.speech.ready(true)
             assertTrue(fixture.session.translation.allowPlayback())
+            assertTrue(fixture.session.translation.allowNarrationVoice())
             fixture.session.translation.useOriginal()
             assertFalse(fixture.session.translation.required)
             assertFalse(fixture.session.machine.snapshot().wantsPlayback)
@@ -467,6 +473,245 @@ class TranslationSessionRobolectricTest {
             override fun removeListener(listener: Player.Listener) { listeners -= listener; super.removeListener(listener) }
         }
         fun deliver(group: CueGroup) { listeners.toList().forEach { it.onCues(group) } }
+    }
+
+    @Test fun editingOneOccurrenceChangesNarrationIdentityAndDurableSelectionRestoresWithoutNetwork() {
+        Fixture().use { fixture ->
+            fixture.translate()
+            val occurrence = fixture.session.translation.editableCues()[1]
+            val before = fixture.session.translation.fingerprint
+            assertTrue(fixture.session.translation.editCue(occurrence.id, "Bonjour corrigé."))
+            assertNotEquals(before, fixture.session.translation.fingerprint)
+            assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+            assertTrue(fixture.session.translation.saveCurrentTranslation())
+            val metadata = requireNotNull(fixture.session.translation.selectionMetadata())
+            assertFalse(metadata.contains("Bonjour"))
+            fixture.session.translation.useOriginal()
+            assertTrue(fixture.session.translation.restoreSelection(metadata))
+            await("Saved local translation not restored") { fixture.session.translation.complete && fixture.session.translation.ready }
+            assertEquals("Bonjour corrigé.", fixture.session.translation.editableCues()[1].text)
+            assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+            assertTrue(fixture.components.speech.requests.isEmpty())
+        }
+    }
+
+    @Test fun correctingOneCuePreparesOnlyItsExactVoiceSegmentsAndLeavesPlaybackPaused() {
+        Fixture().use { fixture ->
+            fixture.translate()
+            fixture.session.prefs.putBool("cache", true)
+            val before = fixture.session.translation.editableCues()
+            val cue = before[1]
+            val replacement = "M. Dupont arrive. Puis il repart !"
+            fixture.components.speech.batches.clear()
+            assertTrue(fixture.session.translation.editCueAndPrepareVoice(cue.id, replacement))
+            val segments = fr.soustitresvoix.core.SpeechTools.segments(replacement, "fr")
+            assertEquals(listOf(segments), fixture.components.speech.batches)
+            assertEquals(before.map { if (it.id == cue.id) replacement else it.text }, fixture.session.translation.editableCues().map { it.text })
+            assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+            assertFalse(fixture.session.player.playWhenReady)
+            assertTrue(fixture.components.speech.requests.isEmpty())
+            assertTrue(fixture.session.translation.status.contains("autres répliques ne sont pas régénérées"))
+        }
+    }
+
+    @Test fun isolatedCorrectionNeverPreparesWithMissingCacheVoiceOrInvalidText() {
+        for (unavailable in listOf("cache", "voice", "language", "invalid")) {
+            Fixture().use { fixture ->
+                fixture.translate()
+                val cue = fixture.session.translation.editableCues()[1]
+                val fingerprint = fixture.session.translation.fingerprint
+                fixture.session.prefs.putBool("cache", unavailable != "cache")
+                if (unavailable == "voice") fixture.components.speech.ready(false)
+                if (unavailable == "language") fixture.components.speech.voiceLanguage = "en"
+                fixture.components.speech.batches.clear()
+                assertEquals(unavailable != "invalid", fixture.session.translation.editCueAndPrepareVoice(cue.id,
+                    if (unavailable == "invalid") "   " else "Bonjour corrigé."))
+                assertTrue(fixture.components.speech.batches.isEmpty())
+                assertTrue(fixture.components.speech.requests.isEmpty())
+                assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+                assertFalse(fixture.session.player.playWhenReady)
+                if (unavailable == "invalid") assertEquals(fingerprint, fixture.session.translation.fingerprint)
+                else {
+                    assertEquals("Bonjour corrigé.", fixture.session.translation.editableCues()[1].text)
+                    assertTrue(fixture.messages.any { it.second && it.first.contains("pour préparer uniquement sa voix") })
+                }
+            }
+        }
+    }
+
+    @Test fun displayModeIsIndependentFromNarrationAndExportPreservesAllFiveOccurrences() {
+        Fixture().use { fixture ->
+            fixture.translate()
+            val item = fixture.session.ahead.selected("external-subtitle")[1]
+            fixture.session.translation.setDisplayMode(TranslationDisplayMode.ORIGINAL)
+            assertEquals("Hello.", fr.soustitresvoix.core.SubtitleText.clean(fixture.session.translation.displayTextFor(item).orEmpty()))
+            fixture.session.translation.setDisplayMode(TranslationDisplayMode.BILINGUAL)
+            assertTrue(fixture.session.translation.displayTextFor(item)!!.contains("Bonjour."))
+            fixture.session.translation.setDisplayMode(TranslationDisplayMode.HIDDEN)
+            assertNull(fixture.session.translation.displayTextFor(item))
+            assertEquals("Bonjour.", fixture.session.translation.textFor(item))
+            val output = requireNotNull(fixture.session.translation.exportCurrent(fr.soustitresvoix.core.SubtitleExportFormat.SRT))
+            assertEquals(5, Regex(" --> ").findAll(output).count())
+        }
+    }
+
+    @Test fun progressiveValidatedPrefixNeverResumesAndGateStopsBeforeMissingOccurrence() {
+        val header = assText().substringBefore("[Events]")
+        fun time(seconds: Int): String = "0:%02d:%02d.00".format(java.util.Locale.ROOT, seconds / 60, seconds % 60)
+        val lines = (0 until 43).joinToString("\n") { i -> "Dialogue: 1,${time(i*5+1)},${time(i*5+3)},Dialogue,ALICE,0,0,0,,Text $i" }
+        val subtitles = header + "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n" + lines + "\n"
+        Fixture(subtitles).use { fixture ->
+            val release = CountDownLatch(1); val enteredSecond = CountDownLatch(1)
+            var prepared: SubtitleTranslationSession.Preview? = null
+            fixture.session.translation.prepareWithOptions("en", "progressive", progressive = true) { prepared = it }
+            await("Progressive source not indexed") { prepared != null }
+            var calls = 0
+            var partialMetadata: String? = null
+            fixture.session.translation.start(prepared!!) {
+                Engine(id = "progressive") { texts ->
+                    calls++
+                    if (calls == 2) { enteredSecond.countDown(); assertTrue(release.await(10, TimeUnit.SECONDS)) }
+                    texts.map { "Traduit $it" }
+                }
+            }
+            try {
+                await("First prefix not activated") { enteredSecond.count == 0L && fixture.session.translation.ready }
+                assertFalse(fixture.session.translation.complete)
+                assertNull(fixture.session.translation.selectionMetadata())
+                val resumableSelection = requireNotNull(fixture.session.translation.checkpointSelectionMetadata())
+                partialMetadata = resumableSelection
+                val selectionJson = org.json.JSONObject(resumableSelection)
+                assertEquals("progressive", selectionJson.getString("provider"))
+                assertFalse(selectionJson.has("resultFingerprint"))
+                fixture.session.savePosition()
+                assertEquals(resumableSelection, fixture.session.savedSessionRecord()!!.translationIdentity)
+                assertTrue(fixture.session.translation.allowPlayback())
+                assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+                assertTrue(fixture.components.speech.requests.isEmpty())
+                var retained: Boolean? = null
+                fixture.session.translation.retainCurrentForOffline { retained = it }
+                assertEquals(false, retained)
+                assertFalse(fixture.session.translation.onPlaybackPosition(101_000_000))
+                assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+                assertFalse(fixture.session.translation.ready)
+                val known = fixture.session.ahead.selected("external-subtitle").first()
+                assertEquals("Traduit Text 0", fixture.session.translation.textFor(known))
+            } finally { release.countDown() }
+            await("Progressive translation not completed") { fixture.session.translation.complete }
+            assertEquals(43, fixture.session.translation.editableCues().size)
+            assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+            fixture.session.translation.useOriginal()
+            File(context.cacheDir, "translated-subtitles-v1").deleteRecursively()
+            File(context.filesDir, "translations-retained-v1").deleteRecursively()
+            val callbacks = mutableListOf<Boolean>()
+            assertTrue(fixture.session.translation.restoreSelection(requireNotNull(partialMetadata)) { callbacks += it })
+            await("Incomplete saved translation requirement was not restored") { callbacks.isNotEmpty() }
+            assertEquals(listOf(false), callbacks)
+            val stillRequiredMetadata = requireNotNull(fixture.session.translation.checkpointSelectionMetadata())
+            fixture.session.savePosition()
+            assertEquals(stillRequiredMetadata, fixture.session.savedSessionRecord()!!.translationIdentity)
+            fixture.session.translation.useOriginal()
+            val secondRestore = mutableListOf<Boolean>()
+            assertTrue(fixture.session.translation.restoreSelection(stillRequiredMetadata) { secondRestore += it })
+            await("A second reopen silently lost the incomplete translation requirement") { secondRestore.isNotEmpty() }
+            assertEquals(listOf(false), secondRestore)
+            assertNotNull(fixture.session.translation.checkpointSelectionMetadata())
+            assertTrue(fixture.session.translation.required)
+            assertFalse(fixture.session.translation.ready)
+            assertFalse(fixture.session.translation.allowPlayback())
+            assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+        }
+    }
+
+    @Test fun offlineRetentionCompletesOnMainThreadAndRestoresAfterTranslationCacheEviction() {
+        Fixture().use { fixture ->
+            fixture.translate()
+            val callbacks = mutableListOf<Boolean>()
+            fixture.session.translation.retainCurrentForOffline { saved ->
+                assertEquals(Looper.getMainLooper(), Looper.myLooper())
+                callbacks += saved
+            }
+            await("Complete translation not retained for offline") { callbacks.isNotEmpty() }
+            assertEquals(listOf(true), callbacks)
+            assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+            val metadata = requireNotNull(fixture.session.translation.selectionMetadata())
+            File(context.cacheDir, "translated-subtitles-v1").deleteRecursively()
+            fixture.session.translation.useOriginal()
+            assertTrue(fixture.session.translation.restoreSelection(metadata))
+            await("Retained offline translation not restored after cache eviction") { fixture.session.translation.ready && fixture.session.translation.complete }
+            assertEquals(listOf("SORTIE", "Bonjour.", "Oui.", "Oui.", "Bonjour."), fixture.session.translation.editableCues().map { it.text })
+            assertTrue(fixture.components.speech.requests.isEmpty())
+        }
+    }
+
+    @Test fun invalidatedOfflineRetentionReportsFalseExactlyOnceAndCannotTriggerPlayback() {
+        Fixture().use { fixture ->
+            fixture.translate()
+            val callbacks = mutableListOf<Boolean>()
+            fixture.session.translation.retainCurrentForOffline { callbacks += it }
+            fixture.session.translation.useOriginal()
+            assertEquals(listOf(false), callbacks)
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500))
+            assertEquals(listOf(false), callbacks)
+            assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+            assertTrue(fixture.components.speech.requests.isEmpty())
+        }
+    }
+
+    @Test fun invalidSavedTranslationNeverFallsBackToOriginalEvenAfterAnotherSaveAndRestore() {
+        for (metadata in listOf("not-json", "{\"version\":999}")) {
+            Fixture().use { fixture ->
+                var indexed = false
+                fixture.session.ensureCompleteIndex { indexed = true }
+                await("Synthetic source not indexed for invalid-selection regression") { indexed }
+                val source = fixture.session.ahead.selected("external-subtitle").first()
+                var calls = 0
+                assertFalse(fixture.session.translation.restoreSelection(metadata) { success -> assertFalse(success); calls++ })
+                assertEquals(1, calls)
+                assertTrue(fixture.session.translation.required)
+                assertNull(fixture.session.translation.textFor(source))
+                assertFalse(fixture.session.translation.allowPlayback())
+                assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+                fixture.session.savePosition()
+                val unavailable = requireNotNull(fixture.session.savedSessionRecord()!!.translationIdentity)
+                assertEquals(true, org.json.JSONObject(unavailable).getBoolean("unavailable"))
+                fixture.session.translation.useOriginal()
+                assertFalse(fixture.session.translation.required)
+                assertFalse(fixture.session.translation.restoreSelection(unavailable) { success -> assertFalse(success); calls++ })
+                assertEquals(2, calls)
+                assertTrue(fixture.session.translation.required)
+                assertNull(fixture.session.translation.textFor(source))
+                assertFalse(fixture.session.translation.allowPlayback())
+                fixture.session.savePosition()
+                assertEquals(unavailable, fixture.session.savedSessionRecord()!!.translationIdentity)
+                assertTrue(fixture.components.speech.requests.isEmpty())
+                fixture.session.translation.useOriginal()
+                assertEquals(source.raw, fixture.session.translation.textFor(source))
+            }
+        }
+    }
+
+    @Test fun restorationCompletionIsUniqueForSuccessCancellationIndexFailureAndMissingLocalResult() {
+        for (case in listOf("success", "cancel", "truncated", "missing")) {
+            Fixture().use { fixture ->
+                fixture.translate()
+                assertTrue(fixture.session.translation.saveCurrentTranslation())
+                val metadata = requireNotNull(fixture.session.translation.selectionMetadata())
+                fixture.session.translation.useOriginal()
+                if (case == "truncated") fixture.components.subtitles.truncateNextScan = true
+                if (case == "missing") {
+                    File(context.cacheDir, "translated-subtitles-v1").deleteRecursively()
+                    File(context.filesDir, "translations-retained-v1").deleteRecursively()
+                }
+                val callbacks = mutableListOf<Boolean>()
+                assertTrue(fixture.session.translation.restoreSelection(metadata) { callbacks += it })
+                if (case == "cancel") fixture.session.translation.useOriginal()
+                await("Restoration did not report completion for $case") { callbacks.isNotEmpty() }
+                shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(100))
+                assertEquals(case, listOf(case == "success"), callbacks)
+                assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+            }
+        }
     }
 
     private class Source(context: Context) : SubtitleSource {

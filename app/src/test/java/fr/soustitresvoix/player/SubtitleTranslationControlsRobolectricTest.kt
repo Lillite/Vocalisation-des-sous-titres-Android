@@ -95,7 +95,7 @@ class SubtitleTranslationControlsRobolectricTest {
         Fixture().use { fixture ->
             val panel = fixture.open()
             val fields = views(panel).filterIsInstance<EditText>()
-            assertEquals(4, fields.size)
+            assertEquals(10, fields.size)
             for (input in fields) {
                 val labels = views(panel).filterIsInstance<TextView>().filter { it.labelFor == input.id }
                 assertEquals("Each editor needs its own accessible label", 1, labels.size)
@@ -113,7 +113,7 @@ class SubtitleTranslationControlsRobolectricTest {
                 .any { it.text.toString().contains(synthetic) })
             val plainPreferences = fixture.activity.getSharedPreferences("translation-choices-v1", Context.MODE_PRIVATE).all
             assertFalse(plainPreferences.values.any { it.toString().contains(synthetic) })
-            assertFalse(views(panel).filterIsInstance<CheckBox>().single().isChecked)
+            assertFalse(views(panel).filterIsInstance<CheckBox>().single { it.text.toString().startsWith("Mémoriser cette clé") }.isChecked)
             assertFalse(fixture.session.translation.busy)
             assertFalse(fixture.session.translation.required)
             assertFalse(fixture.session.player.playWhenReady)
@@ -159,7 +159,7 @@ class SubtitleTranslationControlsRobolectricTest {
             val rendered = text(panel)
             assertTrue(rendered.contains("aucun envoi avant confirmation"))
             assertTrue(rendered.contains("cache fonctionne hors ligne ; ce n’est pas un moteur local"))
-            assertTrue(rendered.contains("L’affichage vidéo conserve la piste originale"))
+            assertTrue(rendered.contains("Le choix d’affichage est indépendant de la voix"))
             field(panel, "Clé API personnelle").setText("synthetic-unsaved-key")
             button(panel, "Indexer la piste et estimer la traduction").performClick()
             fixture.controls.refresh()
@@ -188,10 +188,10 @@ class SubtitleTranslationControlsRobolectricTest {
             endpoint.setText("https://one.example.test/prefix")
             assertEquals("", key.text.toString())
             key.setText("synthetic-server-one-key")
-            views(panel).filterIsInstance<CheckBox>().single().isChecked = true
+            views(panel).filterIsInstance<CheckBox>().single { it.text.toString().startsWith("Mémoriser cette clé") }.isChecked = true
             endpoint.setText("https://two.example.test/prefix")
             assertEquals("", key.text.toString())
-            assertFalse(views(panel).filterIsInstance<CheckBox>().single().isChecked)
+            assertFalse(views(panel).filterIsInstance<CheckBox>().single { it.text.toString().startsWith("Mémoriser cette clé") }.isChecked)
             key.setText("synthetic-server-two-key")
             endpoint.setText("http://invalid.example.test")
             assertEquals("", key.text.toString())

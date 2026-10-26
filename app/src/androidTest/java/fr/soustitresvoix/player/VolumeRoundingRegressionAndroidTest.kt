@@ -96,7 +96,7 @@ class VolumeRoundingRegressionAndroidTest {
                         assertEquals(percent - minimum, (view as SeekBar).progress)
                     }
                 }
-                onView(withText("Appliquer et fermer")).inRoot(isDialog()).perform(click())
+                onView(withText("Fermer")).inRoot(isDialog()).perform(click())
                 scenario.onActivity { activity ->
                     assertEquals(rate / 100f, activity.session.prefs.speechRate, 0f)
                     assertEquals(53 / 100f, activity.session.prefs.voiceVolume, 0f)

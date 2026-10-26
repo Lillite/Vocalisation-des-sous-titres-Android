@@ -2,6 +2,7 @@ package fr.soustitresvoix.player
 
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -27,6 +28,8 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.SubtitleView
+import androidx.media3.common.text.Cue
 import fr.soustitresvoix.core.SubtitleImport
 import fr.soustitresvoix.core.NarrationMachine
 import fr.soustitresvoix.core.AudioCommand
@@ -45,6 +48,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var prefs: PlayerPreferences
     internal lateinit var session: PlaybackSession; private set
     private lateinit var playerView: PlayerView
+    private lateinit var captionOverlay: SubtitleView
     private lateinit var playButton: Button
     private lateinit var statusView: TextView
     private lateinit var messageView: TextView
@@ -63,6 +67,30 @@ class MainActivity : ComponentActivity() {
     private var message = "Ouvre une vidéo ou lance l’essai intégré. La traduction en ligne envoie seulement le texte, après confirmation."
     private var messageIsError = false
     private var lastSaveMs = 0L
+    private var pendingRepairUri: String? = null
+    private var repairDialog: AlertDialog? = null
+    private var pendingResumeOffer = false
+    private var resumeOfferUri: String? = null
+    private var pendingSubtitleExport: String? = null
+    private val subtitleExportLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val content = pendingSubtitleExport
+        pendingSubtitleExport = null
+        val uri = result.data?.data
+        if (result.resultCode == RESULT_OK && uri != null && content == null && !closed) {
+            showMessage("L’export a été interrompu pendant le choix du fichier. Relance l’export depuis la traduction.", true)
+        }
+        if (result.resultCode == RESULT_OK && uri != null && content != null) {
+            io.execute {
+                val succeeded = runCatching {
+                    requireNotNull(contentResolver.openOutputStream(uri, "wt")) { "Sortie indisponible" }
+                        .bufferedWriter(Charsets.UTF_8).use { it.write(content) }
+                }.isSuccess
+                main.post {
+                    if (!closed) showMessage(if (succeeded) "Sous-titres exportés en UTF-8." else "Impossible d’écrire l’export dans le fichier choisi. Vérifie l’emplacement et réessaie.", !succeeded)
+                }
+            }
+        }
+    }
     private val ticker = object : Runnable {
         override fun run() {
             if (closed || stopped) return
@@ -85,11 +113,43 @@ class MainActivity : ComponentActivity() {
         })
         session = PlaybackSession(this, prefs, onChanged = { refreshUi() },
             onMessage = { text, error -> showMessage(text, error) }, onCaption = { })
-        translationControls = SubtitleTranslationControls(this, session)
+        session.onMediaAccessFailure = { saved ->
+            if (!closed && repairDialog?.isShowing != true) {
+                val record = session.savedSessionRecord() ?: MediaSessionSnapshot(saved.uri, saved.title,
+                    positionMs = saved.positionMs, subtitlePath = saved.subtitlePath, subtitleMime = saved.subtitleMime)
+                repairDialog = SessionRepairControls.show(this, record,
+                    onChooseReplacement = { pendingRepairUri = saved.uri; pickDocument(OPEN_VIDEO) },
+                    onRetry = { session.open(saved, restoreSession = true) },
+                    onForgetSession = { pendingRepairUri = null; session.forgetSession() },
+                    alive = { !closed && session.media?.uri == saved.uri })
+            }
+        }
+        session.onSessionRestored = {
+            if (resumeOfferUri != null && resumeOfferUri == session.media?.uri) {
+                resumeOfferUri = null; pendingResumeOffer = true
+                main.post { offerSessionResume() }
+            }
+        }
+        translationControls = SubtitleTranslationControls(this, session) { mime, name, content ->
+            if (pendingSubtitleExport != null) {
+                showMessage("Un export attend déjà le choix de son fichier.", true)
+            } else {
+                pendingSubtitleExport = content
+                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                    .setType(mime).putExtra(Intent.EXTRA_TITLE, name)
+                try { subtitleExportLauncher.launch(intent) }
+                catch (_: ActivityNotFoundException) {
+                    pendingSubtitleExport = null
+                    showMessage("Aucun sélecteur Android ne permet de créer le fichier d’export.", true)
+                }
+            }
+        }
         buildUi()
         if (!handleViewIntent(intent)) prefs.lastMedia()?.let { saved ->
             val scheme = Uri.parse(saved.uri).scheme
-            if (scheme == "content" || scheme == "android.resource") session.open(saved) else prefs.clearMedia()
+            if (scheme == "content" || scheme == "android.resource") {
+                resumeOfferUri = saved.uri; session.open(saved, restoreSession = true)
+            } else prefs.clearMedia()
         }
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); handleViewIntent(intent) }
@@ -104,6 +164,7 @@ class MainActivity : ComponentActivity() {
         // activity is paused. Revalidate before allowing the next playback.
         session.refreshSettings(); applyWindowMode()
         main.removeCallbacks(ticker); main.post(ticker)
+        offerSessionResume()
     }
     override fun onPause() {
         stopped = true; main.removeCallbacks(ticker)
@@ -111,10 +172,13 @@ class MainActivity : ComponentActivity() {
         super.onPause()
     }
     override fun onDestroy() {
-        closed = true; requestToken++; cinema?.close()
+        closed = true; requestToken++; cinema?.close(); repairDialog?.dismiss()
         if (::translationControls.isInitialized) translationControls.close()
         main.removeCallbacksAndMessages(null); io.shutdownNow()
         if (::playerView.isInitialized) playerView.player = null
+        if (::session.isInitialized) {
+            session.captionSink = null; session.onMediaAccessFailure = null; session.onSessionRestored = null
+        }
         if (::session.isInitialized) session.close()
         super.onDestroy()
     }
@@ -122,6 +186,11 @@ class MainActivity : ComponentActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("fullscreen", fullscreen); outState.putInt("savedOrientation", savedOrientation)
         super.onSaveInstanceState(outState)
+    }
+    private fun offerSessionResume() {
+        if (!pendingResumeOffer || closed || stopped || isFinishing || isDestroyed) return
+        pendingResumeOffer = false
+        session.showResumeSession(this)
     }
     private fun handleBack() {
         if (cinema?.back() == true) return
@@ -183,6 +252,15 @@ class MainActivity : ComponentActivity() {
                 if (!closed) session.visual.setRenderSize(right - left, bottom - top)
             }
         }
+        if (!::captionOverlay.isInitialized) {
+            captionOverlay = SubtitleView(this).apply {
+                tag = "narration-subtitle-overlay"
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                isFocusable = false; isClickable = false
+            }
+            playerView.addView(captionOverlay, FrameLayout.LayoutParams(-1, -1))
+        }
+        session.captionSink = { cues, useOverride -> updateCaptionOverride(cues, useOverride) }
         session.renderConfiguration = {
             val surface = playerView.videoSurfaceView
             listOf("plein écran=$fullscreen", "cadrage=${playerView.resizeMode}",
@@ -202,6 +280,7 @@ class MainActivity : ComponentActivity() {
         session.visual.setFramingMode(0)
         if (session.visual.margins.nonzero()) session.visual.crop(fr.soustitresvoix.core.BlackBars.Margins())
         playerView.subtitleView?.setPadding(0, 0, 0, 0)
+        captionOverlay.setPadding(0, 0, 0, 0)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(18, 18, 18)); setPadding(dp(8), dp(8), dp(8), dp(8))
         }
@@ -271,14 +350,20 @@ class MainActivity : ComponentActivity() {
     }
     private fun applyCaptionStyle() {
         if (!::playerView.isInitialized) return
-        playerView.subtitleView?.apply {
-            visibility = if (prefs.showSubtitles) View.VISIBLE else View.INVISIBLE
+        listOfNotNull(playerView.subtitleView, if (::captionOverlay.isInitialized) captionOverlay else null).forEach { view -> view.apply {
             setApplyEmbeddedStyles(false); setApplyEmbeddedFontSizes(false)
             setFixedTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, prefs.subtitleSp)
             setStyle(CaptionStyleCompat(Color.WHITE, Color.BLACK, Color.TRANSPARENT,
                 CaptionStyleCompat.EDGE_TYPE_OUTLINE, Color.BLACK, null))
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }
+        } }
+        updateCaptionOverride(session.displayedCues, session.usesCaptionOverride)
+    }
+    private fun updateCaptionOverride(cues: List<Cue>?, useOverride: Boolean) {
+        if (closed || !::captionOverlay.isInitialized || !::playerView.isInitialized) return
+        playerView.subtitleView?.visibility = if (prefs.showSubtitles && !useOverride) View.VISIBLE else View.INVISIBLE
+        captionOverlay.visibility = if (prefs.showSubtitles && useOverride) View.VISIBLE else View.GONE
+        captionOverlay.setCues(if (useOverride) cues.orEmpty() else emptyList())
     }
     private fun refreshUi() {
         if (closed || !::session.isInitialized) return
@@ -336,7 +421,7 @@ class MainActivity : ComponentActivity() {
     @Deprecated("Activity result bridge for the native Activity implementation")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (resultCode != RESULT_OK) return
+        if (resultCode != RESULT_OK) { if (requestCode == OPEN_VIDEO) pendingRepairUri = null; return }
         val uri = data?.data ?: return
         if (uri.scheme != "content") { showMessage("Choisis un fichier avec le sélecteur Android.", true); return }
         rememberPermission(uri, data.flags)
@@ -355,14 +440,21 @@ class MainActivity : ComponentActivity() {
     }
     private fun openVideo(uri: Uri) {
         session.pause(); val token = ++requestToken; showMessage("Ouverture du fichier…", false)
+        val repairUri = pendingRepairUri
+        pendingRepairUri = null
         io.execute {
             try {
                 val name = displayName(uri)
                 main.post {
                     if (closed || token != requestToken) return@post
-                    val previous = prefs.lastMedia()?.takeIf { it.uri == uri.toString() }
-                    session.open(previous?.copy(title = name) ?: SavedMedia(uri.toString(), name))
-                    showMessage("Vidéo ouverte. Choisis une piste de sous-titres, puis appuie sur Lire.", false)
+                    resumeOfferUri = uri.toString()
+                    if (repairUri != null && session.media?.uri == repairUri) {
+                        session.relocateSessionTo(uri.toString(), name)
+                    } else {
+                        val previous = prefs.lastMedia()?.takeIf { it.uri == uri.toString() }
+                        session.open(previous?.copy(title = name) ?: SavedMedia(uri.toString(), name), restoreSession = true)
+                        showMessage("Vidéo ouverte. Choisis une piste de sous-titres, puis appuie sur Lire.", false)
+                    }
                 }
             } catch (_: Exception) {
                 main.post { if (!closed && token == requestToken) showMessage("Impossible d’accéder à ce fichier. Sélectionne-le à nouveau ou copie-le dans le stockage du téléphone.", true) }
@@ -391,10 +483,9 @@ class MainActivity : ComponentActivity() {
                 main.post {
                     if (closed || token != requestToken) { file.delete(); return@post }
                     session.attachSubtitle(file.absolutePath, decoded.kind.mime)
-                    io.execute {
-                        directory.listFiles()?.filter { it != file }?.sortedByDescending { it.lastModified() }
-                            ?.drop(2)?.forEach { it.delete() }
-                    }
+                    // These private sidecars may be referenced by another saved
+                    // session. They are not an evictable cache; importing a new
+                    // file must never remove an older session's subtitle source.
                     showMessage("Sous-titres ajoutés (${decoded.kind.extension.uppercase()}, ${decoded.charset}). Appuie sur Lire. La langue de la voix se choisit dans les réglages.", false)
                 }
             } catch (_: SubtitleImport.EncodingRequired) {
@@ -432,7 +523,10 @@ class MainActivity : ComponentActivity() {
     }
     private fun settingsDialog() {
         session.pause()
+        val originalSettings = prefs.settingsSnapshot()
+        val originalDisplayMode = session.translation.displayMode
         val audioGeneration = session.audioCommands.snapshot().context.generation
+        val panel = SettingsPanel(this)
         val audioResult = text("Les deux volumes du film utilisent les réglages audio validés.", 16f).apply {
             id = R.id.audio_settings_general_result
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
@@ -445,88 +539,169 @@ class MainActivity : ComponentActivity() {
                 is AudioCommandDecision.Accepted -> if (result.changed) "Niveaux du film enregistrés ; cible appliquée au lecteur."
                     else "Valeur déjà demandée : aucun changement."
             }
-            if (result is AudioCommandDecision.Rejected) audioResult.post {
-                if (audioResult.isAttachedToWindow && !closed && !isFinishing && !isDestroyed)
-                    audioResult.requestRectangleOnScreen(android.graphics.Rect(0, 0, audioResult.width, audioResult.height), true)
+            if (result is AudioCommandDecision.Rejected) {
+                panel.select(SettingsSection.SOUND)
+                audioResult.post {
+                    if (audioResult.isAttachedToWindow && !closed && !isFinishing && !isDestroyed)
+                        audioResult.requestRectangleOnScreen(android.graphics.Rect(0, 0, audioResult.width, audioResult.height), true)
+                }
             }
         }
         var pendingBenchmarkSeconds: Int? = null
+        var pendingImageSettings = false
         lateinit var dialog: AlertDialog
-        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8)) }
-        fun check(label: String, value: Boolean, change: (Boolean) -> Unit) {
-            column.addView(CheckBox(this).apply {
-                text = label; textSize = 19f; minHeight = dp(56); isChecked = value
-                setOnCheckedChangeListener { _, checked -> change(checked) }
-            })
+        fun add(section: SettingsSection, label: String, aliases: String = "", view: View) = panel.add(section, label, view, aliases)
+        fun action(section: SettingsSection, label: String, aliases: String = "", change: () -> Unit) {
+            add(section, label, aliases, button(label, change))
         }
-        check("Vocaliser les sous-titres", prefs.narration) { session.beforeSettingsChange(); prefs.narration = it }
-        val modeButton = button("Mode vocal : ${prefs.mode}") { }
+        fun check(section: SettingsSection, label: String, value: Boolean, aliases: String = "", readCurrent: (() -> Boolean)? = null, enabled: () -> Boolean = { true }, change: (Boolean) -> Unit) {
+            val view = CheckBox(this).apply {
+                text = label; textSize = 19f; minHeight = dp(56); isChecked = value; isEnabled = enabled()
+                setOnCheckedChangeListener { _, checked -> change(checked); session.refreshSettings(); applyCaptionStyle(); panel.refresh() }
+            }
+            add(section, label, aliases, view)
+            panel.onRefresh {
+                view.isEnabled = enabled()
+                val desired = readCurrent?.invoke() ?: when (label) {
+                    "Vocaliser les sous-titres" -> prefs.narration
+                    "Afficher aussi les sous-titres à l’écran" -> prefs.showSubtitles
+                    else -> prefs.skipDescriptions
+                }
+                // No preference write or callback from a visual refresh.
+                if (view.isChecked != desired) {
+                    view.setOnCheckedChangeListener(null); view.isChecked = desired
+                    view.setOnCheckedChangeListener { _, checked -> change(checked); session.refreshSettings(); applyCaptionStyle(); panel.refresh() }
+                }
+            }
+        }
+        fun numeric(section: SettingsSection, label: String, from: Int, to: Int, unit: String,
+            read: () -> Int, presets: List<Int> = emptyList(), aliases: String = "", step: Int = 5, change: (Int) -> Unit) {
+            val control = SettingsNumberControl(this, label, from, to, step, unit, read, change, presets)
+            add(section, label, aliases, control); panel.onRefresh(control::refresh)
+        }
+        check(SettingsSection.VOICE, "Vocaliser les sous-titres", prefs.narration, "activer désactiver narration synthèse") {
+            session.beforeSettingsChange(); prefs.narration = it
+        }
+        fun modeLabel() = when (prefs.mode) {
+            NarrationMachine.Mode.COMFORT -> "Confort"
+            NarrationMachine.Mode.CONTINUOUS -> "Continu"
+            NarrationMachine.Mode.ADAPTIVE -> "Adaptatif"
+        }
+        val modeButton = button("Mode vocal : ${modeLabel()}") { }
         modeButton.setOnClickListener {
+            fun choose(mode: NarrationMachine.Mode, integral: Boolean) {
+                session.beforeSettingsChange(); prefs.putBool("integralReading", integral)
+                prefs.setMode(mode); session.refreshSettings(); panel.refresh()
+            }
             AlertDialog.Builder(this).setTitle("Synchronisation de la voix")
-                .setItems(arrayOf("Confort : phrases complètes", "Continu : peut couper les phrases", "Adaptatif : accélération plafonnée puis pause")) { _, index ->
-                    session.beforeSettingsChange(); prefs.setMode(NarrationMachine.Mode.values()[index]); session.refreshSettings(); modeButton.text = "Mode vocal : ${prefs.mode}"
-                }.show()
-        }
-        column.addView(modeButton)
-        column.addView(text("Confort et Adaptatif conservent les phrases complètes. Le mode Continu peut couper les phrases trop longues.", 16f))
-        check("Afficher aussi les sous-titres à l’écran", prefs.showSubtitles) { prefs.showSubtitles = it }
-        check("Ne pas lire les indications entre crochets, par exemple [musique]", prefs.skipDescriptions) { session.beforeSettingsChange(); prefs.skipDescriptions = it }
-        fun slider(label: String, from: Int, to: Int, value: Int, unit: String,
-            readCurrent: (() -> Int)? = null, change: (Int) -> Unit) {
-            val caption = text("$label : $value$unit", 18f); column.addView(caption)
-            column.addView(SeekBar(this).apply {
-                id = View.generateViewId(); caption.labelFor = id
-                contentDescription = label; max = to - from; progress = value - from; minimumHeight = dp(48)
-                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                    override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
-                    override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
-                    override fun onProgressChanged(seekBar: SeekBar, p: Int, fromUser: Boolean) {
-                        if (fromUser) change(p + from)
-                        val actual = readCurrent?.invoke() ?: (p + from)
-                        caption.text = "$label : $actual$unit"; seekBar.contentDescription = caption.text
-                        if (seekBar.progress != actual - from) seekBar.progress = actual - from
+                .setItems(arrayOf("Confort : phrases complètes", "Adaptatif : accélération plafonnée puis pause", "Continu : autoriser la coupure de phrases")) { _, index ->
+                    when (index) {
+                        0 -> choose(NarrationMachine.Mode.COMFORT, true)
+                        1 -> choose(NarrationMachine.Mode.ADAPTIVE, true)
+                        2 -> AlertDialog.Builder(this).setTitle("Autoriser les phrases coupées ?")
+                            .setMessage("Le mode Continu peut interrompre une phrase pour suivre la vidéo. Il désactive la garantie de lecture intégrale. Confort et Adaptatif conservent les sous-titres complets et peuvent mettre la vidéo en pause.")
+                            .setPositiveButton("Autoriser le mode Continu") { _, _ -> choose(NarrationMachine.Mode.CONTINUOUS, false) }
+                            .setNegativeButton("Conserver la lecture intégrale", null).show()
                     }
-                })
-            })
+                }.setNegativeButton("Annuler", null).show()
         }
-        slider("Vitesse de la voix", 60, 200, (prefs.speechRate * 100).roundToInt(), " %") { session.beforeSettingsChange(); prefs.speechRate = it / 100f }
-        slider("Volume de la voix", 10, 100, (prefs.voiceVolume * 100).roundToInt(), " %") { prefs.voiceVolume = it / 100f }
-        column.addView(text(AudioSettingsDescriptions.MOVIE_VOLUME, 16f))
-        slider("Volume habituel du film", 0, 100, (prefs.movieVolume * 100).roundToInt(), " %",
-            readCurrent = { (prefs.movieVolume * 100).roundToInt() }) {
-            changeFilmAudio(AudioCommand.SetLevels(it / 100f, session.audioCommands.snapshot().context.requested.duckVolume))
+        panel.onRefresh { modeButton.text = "Mode vocal : ${modeLabel()}" }
+        add(SettingsSection.SYNCHRONIZATION, "Mode vocal : Confort, Continu, Adaptatif", "synchronisation pause accélération", modeButton)
+        check(SettingsSection.SYNCHRONIZATION, "Lecture intégrale : conserver tous les sous-titres", prefs.bool("integralReading", true),
+            "panneaux dialogues répétitions aucune phrase perdue", readCurrent = { prefs.bool("integralReading", true) }) {
+            session.beforeSettingsChange(); prefs.putBool("integralReading", it)
+            if (it && prefs.mode == NarrationMachine.Mode.CONTINUOUS) prefs.setMode(NarrationMachine.Mode.COMFORT)
         }
-        column.addView(text(AudioSettingsDescriptions.DUCK_VOLUME, 16f))
-        slider("Son du film conservé pendant la voix", 0, 100, (prefs.duckVolume * 100).roundToInt(), " %",
-            readCurrent = { (prefs.duckVolume * 100).roundToInt() }) {
-            changeFilmAudio(AudioCommand.SetLevels(session.audioCommands.snapshot().context.requested.movieVolume, it / 100f))
+        add(SettingsSection.SYNCHRONIZATION, "Confort et Adaptatif : phrases complètes", view = text("Confort et Adaptatif conservent les phrases complètes. Le mode Continu peut couper les phrases trop longues.", 16f))
+        action(SettingsSection.SYNCHRONIZATION, "Préréglage : lecture intégrale", "ne rien perdre panneaux répétitions filtres désactivés") {
+            session.beforeSettingsChange(); prefs.narration = true; prefs.putBool("integralReading", true); prefs.setMode(NarrationMachine.Mode.COMFORT)
+            prefs.skipDescriptions = false
+            listOf("skipSpeakers", "skipSongs", "skipNotes").forEach { prefs.putBool(it, false) }
+            prefs.speechRate = 1f; session.refreshSettings(); panel.refresh()
         }
-        column.addView(audioResult)
-        slider("Taille des sous-titres", 22, 60, prefs.subtitleSp.toInt(), " sp") { prefs.subtitleSp = it.toFloat() }
-        column.addView(button("Traduire les sous-titres en français") { translationControls.show() })
-        column.addView(button("Choisir une voix hors ligne") { voiceDialog() })
-        column.addView(button("Écouter un essai de la voix") { session.refreshSettings(); session.previewVoice() })
-        column.addView(button("Ouvrir les réglages vocaux Android") {
+        fun comprehensionPreset(label: String, profile: Int, maximumPercent: Int, pauseMs: Int, aliases: String) {
+            action(SettingsSection.SYNCHRONIZATION, label, aliases) {
+                session.beforeSettingsChange(); prefs.narration = true; prefs.putBool("integralReading", true)
+                prefs.setMode(NarrationMachine.Mode.ADAPTIVE); prefs.speechRate = 1f
+                prefs.putInt("adaptiveMax", maximumPercent); prefs.putInt("comprehensionPauseMs", pauseMs)
+                prefs.putInt("comprehensionProfile", profile); prefs.putInt("allowedLagMs", 600)
+                prefs.skipDescriptions = false
+                listOf("skipSpeakers", "skipSongs", "skipNotes").forEach { prefs.putBool(it, false) }
+                session.refreshSettings(); panel.refresh()
+            }
+        }
+        comprehensionPreset("Préréglage : compréhension confortable", 0, 140, 350, "débit normal accélération modérée pause 350 ms phrases complètes")
+        comprehensionPreset("Préréglage : compréhension équilibrée", 1, 180, 0, "débit normal compromis accélération 180 pour cent phrases complètes")
+        comprehensionPreset("Préréglage : pauses rares", 2, 220, 0, "moins de pauses accélération 220 pour cent phrases complètes")
+        add(SettingsSection.SYNCHRONIZATION, "Comparaison des profils de compréhension", view = text("Les trois profils utilisent Adaptatif, 100 % de vitesse de base et la lecture intégrale : confortable plafonne à 140 % avec 350 ms de pause après une phrase ; équilibré plafonne à 180 % sans pause ajoutée ; pauses rares plafonne à 220 % sans pause ajoutée. Une pause de la vidéo reste nécessaire si une phrase ne tient pas. Aucun profil ne résume ni ne supprime les sous-titres.", 16f))
+        numeric(SettingsSection.SYNCHRONIZATION, "Pause de compréhension après une phrase", 0, 3000, "ms",
+            { prefs.int("comprehensionPauseMs", 0, 0, 3000) }, listOf(0, 350, 600),
+            "pause confort ponctuation délai fin de phrase", step = 50) {
+            session.beforeSettingsChange(); prefs.putInt("comprehensionPauseMs", it); session.refreshSettings()
+        }
+        numeric(SettingsSection.VOICE, "Vitesse de la voix", 60, 200, "%", { (prefs.speechRate * 100).roundToInt() },
+            listOf(80, 100, 125), "débit vitesse synthèse pourcentage") {
+            session.beforeSettingsChange(); prefs.speechRate = it / 100f; session.refreshSettings()
+        }
+        numeric(SettingsSection.VOICE, "Volume de la voix", 10, 100, "%", { (prefs.voiceVolume * 100).roundToInt() },
+            listOf(50, 75, 100), "gain narration synthèse") { prefs.voiceVolume = it / 100f; session.refreshSettings() }
+        action(SettingsSection.VOICE, "Choisir une voix hors ligne", "langue naturel moteur voix locale") { voiceDialog() }
+        action(SettingsSection.VOICE, "Écouter un essai de la voix", "tester écouter aperçu") { session.refreshSettings(); session.previewVoice() }
+        action(SettingsSection.VOICE, "Ouvrir les réglages vocaux Android", "système TTS") {
             try { startActivity(Intent("com.android.settings.TTS_SETTINGS")) }
             catch (_: ActivityNotFoundException) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
-        })
-        column.addView(button("Retirer le fichier de sous-titres ajouté") {
+        }
+        add(SettingsSection.SOUND, "Volume habituel du film : aide", view = text(AudioSettingsDescriptions.MOVIE_VOLUME, 16f))
+        numeric(SettingsSection.SOUND, "Volume habituel du film", 0, 100, "%", { (prefs.movieVolume * 100).roundToInt() },
+            listOf(25, 50, 100), "son film volume normal") {
+            changeFilmAudio(AudioCommand.SetLevels(it / 100f, session.audioCommands.snapshot().context.requested.duckVolume))
+        }
+        add(SettingsSection.SOUND, "Son du film conservé pendant la voix : aide", view = text(AudioSettingsDescriptions.DUCK_VOLUME, 16f))
+        numeric(SettingsSection.SOUND, "Son du film conservé pendant la voix", 0, 100, "%", { (prefs.duckVolume * 100).roundToInt() },
+            listOf(0, 25, 50), "atténuation ducking baisse mixage") {
+            changeFilmAudio(AudioCommand.SetLevels(session.audioCommands.snapshot().context.requested.movieVolume, it / 100f))
+        }
+        add(SettingsSection.SOUND, "Résultat des commandes audio", "erreur refus validation volume", audioResult)
+        check(SettingsSection.SUBTITLES, "Afficher aussi les sous-titres à l’écran", prefs.showSubtitles, "affichage texte visible") { prefs.showSubtitles = it }
+        add(SettingsSection.SUBTITLES, "Exclusions désactivées en Lecture intégrale", "filtres lecture intégrale indications", view = text("En Lecture intégrale, tous les textes sont conservés : les exclusions ci-dessous sont désactivées. Pour exclure volontairement certaines indications, décoche Lecture intégrale dans Synchronisation, puis choisis les exclusions souhaitées.", 16f))
+        check(SettingsSection.SUBTITLES, "Ne pas lire les indications entre crochets, par exemple [musique]", prefs.skipDescriptions,
+            "filtre descriptions crochets bruit musique", enabled = { !prefs.bool("integralReading", true) }) { session.beforeSettingsChange(); prefs.skipDescriptions = it }
+        numeric(SettingsSection.SUBTITLES, "Taille des sous-titres", 22, 60, "sp", { prefs.subtitleSp.roundToInt() },
+            listOf(24, 32, 48), "police texte grossissement") { prefs.subtitleSp = it.toFloat(); applyCaptionStyle() }
+        action(SettingsSection.SUBTITLES, "Choisir la piste de sous-titres", "langue intégré externe SRT ASS VTT") { chooseTrack(C.TRACK_TYPE_TEXT) }
+        action(SettingsSection.SUBTITLES, "Retirer le fichier de sous-titres ajouté", "externe supprimer détacher") {
             session.attachSubtitle(null, null); showMessage("Fichier ajouté retiré. Les pistes intégrées restent disponibles.", false)
-        })
+        }
+        action(SettingsSection.TRANSLATION, "Traduire les sous-titres en français", "traduction fournisseur export SRT VTT quota cache DeepL Azure LibreTranslate") { translationControls.show() }
+        action(SettingsSection.IMAGE, "Image, cadrage, zoom et corrections", "étirement bandes noires marges contraste luminosité Lanczos proportions") {
+            pendingImageSettings = true; dialog.dismiss()
+        }
         AdvancedSettings(this, session, prefs) { seconds ->
-            pendingBenchmarkSeconds = seconds
+            pendingBenchmarkSeconds = seconds; dialog.dismiss()
+        }.populate(panel)
+        dialog = object : AlertDialog(this) {
+            override fun getButton(whichButton: Int): Button? = panel.actionButton(whichButton) ?: super.getButton(whichButton)
+        }.apply { setTitle("Voix et confort"); setView(panel) }
+        panel.installActions(close = { dialog.dismiss() }, cancel = {
+            if (!closed) {
+                session.restoreSettings(originalSettings)
+                if (session.translation.displayMode != originalDisplayMode) session.translation.setDisplayMode(originalDisplayMode)
+            }
             dialog.dismiss()
-        }.populate(column)
-        dialog = AlertDialog.Builder(this).setTitle("Voix et confort")
-            .setView(ScrollView(this).apply { addView(column) }).setPositiveButton("Appliquer et fermer") { _, _ -> }.create()
+        })
         dialog.setOnDismissListener {
             if (!closed) {
                 if (!session.isPreparing) session.refreshSettings()
                 applyCaptionStyle(); applyWindowMode()
                 pendingBenchmarkSeconds?.let { session.startPlaybackBenchmark(it) }
+                if (pendingImageSettings) { setFullscreen(true); cinema?.showImageSettings() }
             }
         }
         dialog.show()
+        // Let the floating window honor its usable display frame and resize
+        // around the keyboard instead of imposing a height from full metrics.
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
     private fun voiceDialog() {
         session.speech.applyPreferences()
@@ -539,8 +714,8 @@ class MainActivity : ComponentActivity() {
     }
     private fun helpDialog() {
         session.pause()
-        AlertDialog.Builder(this).setTitle("Sous-titres en voix — Traduction 0.4.0 : mode d’emploi et limites")
-            .setMessage("Ouvre une vidéo, choisis une piste textuelle et une voix dans la même langue. Pour une piste étrangère, utilise Traduire les sous-titres en français, confirme le moteur et l’envoi, puis choisis une voix française. Seule une piste entièrement traduite peut être activée. La vidéo garde les sous-titres originaux à l’écran.\n\nÉtirement intégral : toute l’image est visible, avec proportions modifiées. La protection interdit le zoom et les déplacements accidentels. Un recadrage de marges exige une confirmation distincte et peut être annulé.\n\nAdaptatif : la vitesse est calculée à partir du WAV préparé ou d’une estimation calibrée en lecture directe. Le plafond est réglable de 100 à 250 % de la vitesse de base, 180 % au départ. L’algorithme réserve le temps des segments restants et respecte la tolérance de retard choisie. Une pause reste possible si la phrase ne tient pas au plafond choisi ; aucun dialogue n’est résumé.\n\nPréparation : indexer le texte, puis préparer cinq minutes ou toute la vidéo. Le film reste en pause et ne reprend que sur commande. Le cache persiste mais sa capacité est limitée ; préparer toute la vidéo ne garantit pas que tous les fichiers audio tiennent encore en cache. Reste dans l’application pendant la préparation.\n\nLes filtres restent facultatifs. La ponctuation et les silences naturels ne sont pas supprimés. Si un modèle est modifié à l’intérieur d’un moteur, utilise le bouton signalant sa mise à jour.\n\nPGS, VobSub et sous-titres incrustés ne sont pas vocalisés. Pas de DRM, d’OCR, d’audiodescription ni de lecture en arrière-plan. Les essais de décodeurs utilisent ceux déjà présents sur le téléphone. Les effets visuels sont réservés au SDR reconnu.\n\nLa permission Internet sert aux traductions explicitement demandées. Azure, DeepL ou le serveur LibreTranslate choisi reçoivent le texte, jamais la vidéo ou l’audio. Aucun moteur local de traduction n’est encore intégré. Les pistes traduites complètes en cache peuvent être réutilisées sans réseau. Les moteurs vocaux sont des applications externes. Aucun runtime neuronal vocal GPU/NPU n’est intégré. Les profils règlent l’anticipation et le cache, pas le matériel interne d’un moteur tiers.\n\nÉdition Traduction 0.4.0 installable à côté de la stable 0.3.2 et des anciennes éditions, avec réglages séparés. Aucun fichier original n’est modifié.")
+        AlertDialog.Builder(this).setTitle("Sous-titres en voix 0.5.0 : mode d’emploi et limites")
+            .setMessage("Ouvre une vidéo locale, choisis une piste textuelle et une voix installée dans la même langue. Les réglages sont répartis en huit rubriques : Voix, Synchronisation, Traduction, Sous-titres, Image, Son, Stockage et Diagnostic. La recherche ignore les accents et montre les commandes correspondantes. Les valeurs précises acceptent une saisie numérique bornée, des boutons et des préréglages. Les changements prennent effet immédiatement : Fermer les conserve ; Annuler modifications restaure les réglages présents à l’ouverture du panneau, sans annuler un envoi déjà confirmé ni rétablir des fichiers de préparation supprimés.\n\nLecture intégrale : dialogues, panneaux, chansons, indications et répétitions distinctes de la piste choisie restent éligibles à la vocalisation. Les répétitions artificielles d’une même occurrence ne doivent pas être relues. Confort attend la fin de la phrase ; Adaptatif accélère dans la limite réglée et met en pause si nécessaire. Le mode Continu reste un choix explicite pouvant couper les phrases et désactive la lecture intégrale. Aucun profil de compréhension ne choisit Continu : confortable utilise 100 % de base, un plafond de 140 % et 350 ms de pause ; équilibré, 100 % et 180 % sans pause ajoutée ; pauses rares, 100 % et 220 % sans pause ajoutée. La pause après une phrase se règle de 0 à 3 000 ms. Aucun dialogue n’est résumé.\n\nTraduction : dans la rubrique Traduction, choisis Azure, DeepL ou un serveur LibreTranslate HTTPS et vérifie la langue source. L’indexation et l’estimation seules n’envoient pas le texte. Une confirmation autorise les appels au fournisseur ; des caractères déjà traités peuvent être facturés même après annulation. La préparation complète reste le choix initial. Le mode progressif peut démarrer avec au moins une minute de tampon validé et s’arrête avant une réplique indisponible ; aucune réponse tardive ne reprend seule la vidéo. Les lots validés peuvent être repris après interruption. Le plafond de nouveaux caractères est local, sans connaître le quota réel du compte.\n\nLa narration utilise la traduction validée. L’affichage peut conserver l’original, montrer le français, présenter les deux dans une même zone ou masquer le texte, selon le choix proposé. Le rendu natif et le rendu traduit ne sont pas affichés en double. L’export SRT ou VTT demande un emplacement dans le sélecteur Android et écrit en UTF-8 ; il n’altère pas le fichier original. Les options DeepL de contexte, glossaire existant, modèle et registre dépendent du compte et de la langue : elles ne garantissent pas la fidélité linguistique. Les comparaisons de fournisseurs nécessitent leurs accès et une confirmation. Aucun moteur local de traduction n’est intégré.\n\nSéance et synchronisation : les choix de pistes, la position et les réglages d’une vidéo peuvent être mémorisés. Reprendre une séance reste une action explicite après vérification de son accès et de ses pistes ; une traduction ou une préparation manquante n’est pas déclarée prête. Si l’autorisation du fichier a expiré ou si la vidéo a été déplacée, le parcours de réparation permet de la sélectionner à nouveau sans effacer les originaux. Les réglages de décalage, dérive et calibration se trouvent dans Synchronisation. Le bilan de vocalisation de Diagnostic distingue les occurrences et les erreurs connues ; il ne prouve pas la qualité acoustique d’une voix ni l’absence universelle de défaut.\n\nStockage : le cache vocal ordinaire reste limité et évictable. Les préparations explicitement conservées pour une écoute hors ligne utilisent un stockage distinct, avec un état à vérifier et une gestion des œuvres conservées. Une préparation peut être reprise ou annulée ; une œuvre n’est prête hors ligne que si toutes ses données nécessaires ont été vérifiées et si la vidéo reste accessible. Préparer toute la vidéo dans le cache ordinaire ne garantit pas de conserver tous ses fichiers. Reste dans l’application pendant les traitements : une lecture ou une préparation durable en arrière-plan n’est pas garantie. Les profils modifient anticipation et mémoire, pas le processeur interne d’un moteur tiers.\n\nImage et son : étirement intégral conserve toute l’image avec proportions modifiées. La protection du cadre empêche les zooms et déplacements accidentels ; retirer des marges exige un aperçu et une confirmation. Les corrections d’image restent protégées pour le HDR/Dolby Vision. Les traitements audio experts du film restent séparés de la voix et limités au PCM16 mono/stéréo compatible ; ils n’annoncent pas de passthrough ou de normalisation du volume perçu.\n\nLimites : les pistes PGS/VobSub et les sous-titres incrustés dans les pixels ne sont pas vocalisés sans OCR, qui reste absent. Pas d’accès aux DRM d’autres applications, d’audiodescription ni de lecture durable en arrière-plan. Les décodeurs dépendent du téléphone ; choisir le secours logiciel n’installe pas un codec absent. Les voix restent fournies par des moteurs Android externes ; aucun runtime vocal neuronal GPU/NPU propre au lecteur n’est embarqué.\n\nConfidentialité : la traduction confirmée envoie le texte et ses options au fournisseur choisi, jamais la vidéo ou son audio. Une clé peut être mémorisée chiffrée avec Android Keystore ; ne la publie pas dans un diagnostic. Les données locales de préparation et de traduction peuvent contenir du texte ou de l’audio vocalisé. Aucun fichier original n’est modifié. La 0.5.0 conserve l’identité de l’édition Traduction ; la stable 0.3.2 reste une application distincte.")
             .setPositiveButton("Fermer", null).show()
     }
     companion object { private const val OPEN_VIDEO = 10; private const val OPEN_SUBTITLE = 11 }

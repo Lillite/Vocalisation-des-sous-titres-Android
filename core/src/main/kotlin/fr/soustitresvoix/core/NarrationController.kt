@@ -6,6 +6,17 @@ package fr.soustitresvoix.core
  * The existing machine remains the owner of occurrence identity and resume rules.
  */
 interface NarrationController {
+    fun setNarrationLanguage(languageTag: String?) = Unit
+    fun setJournalContext(contextId: String) = Unit
+    fun registerOccurrences(occurrences: List<NarrationLedger.Occurrence>) = Unit
+    fun markPrepared(identities: List<String>) = Unit
+    fun markFiltered(identities: List<String>) = Unit
+    fun pendingOccurrences(): List<NarrationLedger.Entry> = emptyList()
+    fun journalSnapshot(): NarrationLedger.Snapshot = NarrationLedger().snapshot()
+    fun exportJournalMetadata(): String = ""
+    fun restoreJournalMetadata(encoded: String): Boolean = false
+    fun replayOccurrence(identity: String, text: String): List<NarrationMachine.Effect> = emptyList()
+    fun setComprehensionHold(value: Boolean): List<NarrationMachine.Effect> = emptyList()
     fun snapshot(): NarrationMachine.Snapshot
     fun setSpeechReady(ready: Boolean): List<NarrationMachine.Effect>
     fun setMediaReady(ready: Boolean): List<NarrationMachine.Effect>
@@ -32,6 +43,17 @@ interface NarrationController {
 class ExistingNarrationController(
     private val machine: NarrationMachine = NarrationMachine()
 ) : NarrationController {
+    override fun setNarrationLanguage(languageTag: String?) { machine.languageTag = languageTag }
+    override fun setJournalContext(contextId: String) = machine.setJournalContext(contextId)
+    override fun registerOccurrences(occurrences: List<NarrationLedger.Occurrence>) = machine.registerOccurrences(occurrences)
+    override fun markPrepared(identities: List<String>) = machine.markPrepared(identities)
+    override fun markFiltered(identities: List<String>) = machine.markFiltered(identities)
+    override fun pendingOccurrences() = machine.pendingOccurrences()
+    override fun journalSnapshot() = machine.journalSnapshot()
+    override fun exportJournalMetadata() = machine.exportJournalMetadata()
+    override fun restoreJournalMetadata(encoded: String) = machine.restoreJournalMetadata(encoded)
+    override fun replayOccurrence(identity: String, text: String) = machine.replayOccurrence(identity, text)
+    override fun setComprehensionHold(value: Boolean) = machine.setComprehensionHold(value)
     override fun snapshot() = machine.snapshot()
     override fun setSpeechReady(ready: Boolean) = machine.setSpeechReady(ready)
     override fun setMediaReady(ready: Boolean) = machine.setMediaReady(ready)

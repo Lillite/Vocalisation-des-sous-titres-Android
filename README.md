@@ -1,118 +1,143 @@
 # Sous-titres en voix
 
-Lecteur vidéo Android qui vocalise les sous-titres et prépare leur traduction en français, avec des commandes accessibles, trois modes d’écoute et des réglages détaillés de l’image et du son.
+Lecteur vidéo Android destiné d’abord à **vocaliser intégralement les occurrences textuelles de la piste choisie** : dialogues, panneaux, chevauchements et répétitions réelles. Les modes Confort et Adaptatif donnent à la voix le temps de terminer ; une traduction manquante provoque une attente perceptible.
 
-**[Télécharger l’APK 0.4.0 — édition Traduction](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.4.0/SousTitresVoix-0.4.0-traduction.apk)** · [Notes de version](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0) · [Tous les guides](docs/README.md) · [Signaler un problème](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/issues/new/choose)
+**Version 0.5.0 — Confort intégral : validation et publication en cours.** Cette page décrit les sources de cette version. Le téléchargement publié reste pour l’instant [l’APK 0.4.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.4.0/SousTitresVoix-0.4.0-traduction.apk), dont les [notes historiques](docs/releases/0.4.0.md) décrivent les fonctions propres à cette ancienne version. Les nouveaux parcours ci-dessous nécessitent la 0.5.0.
 
-> **Installation distincte de la 0.3.2.** L’édition Traduction s’installe à côté de l’ancienne stable, avec sa propre signature et ses propres réglages. Sélectionner de nouveau la voix et les fichiers ; aucune désinstallation de la 0.3.2 n’est nécessaire.
+[Guide complet 0.5.0](docs/CONFORT_INTEGRAL_050.md) · [Tous les guides](docs/README.md) · [Parcours de tests sur téléphone](docs/TESTS_TELEPHONE.md) · [Signaler un problème](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/issues/new/choose)
 
-| Repère | Version disponible |
+| Repère | Version 0.5.0 |
 | --- | --- |
-| Application | **0.4.0 — édition Traduction**, code 6 |
+| Édition | **Confort intégral**, code 7 |
 | Android minimum | **Android 8.0 — API 26** |
-| Contenu | Les **six étapes précédentes**, réunies avec la **traduction de l’étape 7** |
-| Traduction intégrée | Azure Translator, deux points d’accès DeepL, serveur LibreTranslate HTTPS |
-| Hors ligne | Lecture locale avec une voix Android hors ligne prête ; réutilisation d’une traduction complète encore en cache |
-| Validation de l’APK publié | **612 exécutions JVM/Android réussies** et 39 tests Python d’outils ; lint sans erreur, avec 51 avertissements par variante |
-| Sources de l’APK | [`32864ba`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/32864ba732d834e71d87b887ae63f0d7bc09eb8c), [validation de `main`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40053284969) |
+| Identité Android | **fr.soustitresvoix.player.translation**, conservée depuis la 0.4.0 |
+| Narration | Lecture intégrale, Confort, Adaptatif, suivi par occurrence et relecture explicite |
+| Traduction | Azure Translator, DeepL API Free/payant, serveur LibreTranslate HTTPS ; préparation complète ou progressive sur choix explicite |
+| Préparation | Anticipation vocale, cache réglable et conservation durable par œuvre |
+| Validation | Résultats du commit distribué à établir dans [TESTING.md](TESTING.md) ; aucun résultat ancien n’est attribué à la 0.5.0 |
 
 **Ce projet est réalisé intégralement par intelligence artificielle : la conception de l’application, l’écriture du code, les corrections, les tests automatisés et la documentation sont produits par IA à partir des demandes, des indications et des retours de son utilisateur.** Cette mention concerne le travail propre au projet. Android, Kotlin, Media3, les moteurs vocaux, les services de traduction et les autres composants tiers restent les créations de leurs auteurs respectifs.
 
-## Sommaire
+## Installer et commencer sur Android
 
-- [Installer et faire un premier essai](#installer-et-faire-un-premier-essai)
-- [Traduire une piste en français](#traduire-une-piste-en-français)
-- [Choisir le service de traduction](#choisir-le-service-de-traduction)
-- [Comprendre les moteurs et modèles locaux](#comprendre-les-moteurs-et-modèles-locaux)
-- [Régler la voix et le confort d’écoute](#régler-la-voix-et-le-confort-découte)
-- [Régler l’image et le cadrage](#régler-limage-et-le-cadrage)
-- [Régler le son du film](#régler-le-son-du-film)
-- [Retrouver les sept étapes réunies](#retrouver-les-sept-étapes-réunies)
-- [Compatibilité et limites](#compatibilité-et-limites)
-- [Confidentialité et données](#confidentialité-et-données)
-- [Vérifications et identité du téléchargement](#vérifications-et-identité-du-téléchargement)
-- [Documentation et développement](#documentation-et-développement)
+La 0.5.0 conserve l’identité de la 0.4.0. Sa distribution doit employer le même certificat durable pour permettre une mise à jour Android et conserver les données de cette édition. **Ne pas désinstaller la 0.4.0 pour préparer cette mise à jour.** La 0.3.2 reste une autre application, avec sa propre identité et ses propres données.
 
-## Installer et faire un premier essai
+Une fois la release 0.5.0 publiée, son fichier installable sera nommé **SousTitresVoix-0.5.0-confort-integral.apk**. Les archives GitHub « Source code » ne sont pas des APK. Les liens et empreintes définitifs seront ajoutés après vérification de la publication.
 
-1. Depuis le téléphone, [télécharger `SousTitresVoix-0.4.0-traduction.apk`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.4.0/SousTitresVoix-0.4.0-traduction.apk). Ouvrir le fichier et autoriser son installation dans l’application utilisée pour l’ouvrir si Android le demande. Les archives **Source code** de GitHub ne sont pas des APK installables.
-2. Ouvrir **Sous-titres en voix — Traduction 0.4.0**, puis **Réglages de la voix et du confort**.
-3. Dans **Choisir le moteur vocal de CE lecteur**, sélectionner un moteur installé, puis **Choisir une voix hors ligne** et **Écouter un essai de la voix**. Une voix française prête est nécessaire pour vocaliser la traduction française. L’installation initiale d’un moteur ou d’une voix peut nécessiter Internet dans l’application de son fournisseur.
-4. Lancer **Essai intégré : sous-titres et mire de cadrage**. Cet exemple synthétique permet d’essayer la voix et de vérifier l’affichage avant d’ouvrir un fichier personnel.
-5. Ouvrir une vidéo locale, sélectionner sa piste de sous-titres textuels ou ajouter un fichier SRT, VTT, ASS/SSA. Choisir **Confort** ou **Adaptatif** pour préserver les phrases complètes. La traduction est une opération supplémentaire, décrite ci-dessous.
+1. Ouvrir **Réglages de la voix et du confort**.
+2. Dans **Voix**, choisir le moteur vocal de ce lecteur et une voix installée dans la langue à prononcer. Écouter un essai ; le choix ne modifie pas le moteur de TalkBack.
+3. Dans **Synchronisation**, utiliser **Préréglage : lecture intégrale** ou **Préréglage : compréhension confortable**.
+4. Lancer **Essai intégré : sous-titres et mire de cadrage** pour vérifier voix, commandes et image avec un contenu synthétique.
+5. Ouvrir une vidéo locale et sélectionner sa piste textuelle, ou ajouter un fichier SRT, VTT, ASS/SSA. Une piste française peut être vocalisée directement ; une traduction constitue une opération supplémentaire.
+6. Appuyer explicitement sur **Lire**. Une restauration, une préparation ou une fin de traduction ne doit pas démarrer seule la vidéo.
 
-L’identité de cette édition est `fr.soustitresvoix.player.translation`. La clé privée de signature de la 0.3.2 n’étant plus accessible, l’édition Traduction possède une nouvelle signature durable sauvegardée hors du dépôt. Ses données et ses autorisations de fichiers sont distinctes de celles de la 0.3.2. Les vidéos d’origine ne sont pas modifiées.
+La lecture dépend des codecs disponibles et d’une voix Android réellement prête. Les sous-titres PGS/VobSub ou uniquement incrustés dans les pixels demandent un OCR qui reste absent de cette version.
 
-Le [parcours de tests sur téléphone](docs/TESTS_TELEPHONE.md) accompagne le premier essai. L’[historique des versions et des branches](docs/HISTORIQUE_BRANCHES.md) permet de retrouver les éditions antérieures.
+## Trouver et modifier un réglage
 
-## Traduire une piste en français
+Les commandes sont réparties entre **Voix, Synchronisation, Traduction, Sous-titres, Image, Son, Stockage et Diagnostic**. Le sélecteur de rubrique et la recherche se trouvent au début du panneau défilant ; les boutons Fermer et Annuler modifications gardent leur zone dédiée, même en grande police.
 
-La 0.4.0 traduit **toute la piste textuelle avant la lecture**, puis utilise le résultat pour la narration. **Les sous-titres affichés sur la vidéo restent dans la langue originale.** La cible du parcours intégré est le français.
+La recherche filtre les commandes réelles dans toutes les rubriques, sans tenir compte des accents : **vitesse**, **voix**, **bandes noires** ou **traduction** donnent accès aux contrôles correspondants. Effacer la recherche ou choisir une rubrique revient à sa liste de commandes.
 
-1. Ouvrir la vidéo et choisir sa piste textuelle, intégrée ou ajoutée en fichier externe.
-2. Ouvrir **Traduire les sous-titres en français**, depuis la bibliothèque ou les réglages accessibles en mode cinéma.
-3. Choisir le fournisseur, indiquer la **langue des sous-titres** et renseigner les accès de son compte. Cette langue peut différer de celle de la piste audio.
-4. Appuyer sur **Indexer la piste et estimer la traduction**. La lecture est mise en pause ; la piste et son volume sont contrôlés **sans envoi du texte au fournisseur**.
-5. Vérifier le fournisseur, le nombre d’occurrences et le volume estimé. Confirmer **Traduire / réutiliser le cache** pour autoriser un nouvel appel si aucun cache complet correspondant n’est disponible. L’estimation n’est ni un prix garanti ni le solde du quota.
-6. Attendre l’annonce de la piste française prête. Si la vocalisation est activée, choisir une voix française prête ; appuyer ensuite sur **Lire**. La fin de traduction ne reprend jamais automatiquement la vidéo.
+Les réglages prennent effet immédiatement. **Fermer** les conserve ; **Annuler modifications** restaure les paramètres présents à l’ouverture du panneau. Cette annulation ne rétablit pas un fichier supprimé, ne retire pas un export et n’annule pas les opérations ou appels API déjà confirmés.
 
-| Situation | Comportement prévu |
+Les valeurs numériques concernées proposent un champ précis avec **Valider**, des boutons +/−, des présélections et un curseur lorsqu’il est adapté. Une saisie invalide produit un message et ne remplace pas le réglage. Après un changement de profil, les valeurs affichées sont actualisées immédiatement.
+
+## Donner la priorité à la vocalisation intégrale
+
+| Choix | Comportement |
 | --- | --- |
-| Traduction complète en cache | Réutilisation sans appel API et sans clé si la source, les langues et le moteur/serveur correspondent. |
-| Réponse incomplète ou invalide | Refus de la piste entière ; aucun résultat partiel n’est activé. L’original ne remplace pas silencieusement une traduction absente. |
-| Annulation ou changement de média/piste | Une réponse ancienne ne peut pas activer sa piste sur le nouveau média. Un appel déjà traité peut avoir consommé du quota. |
-| Retour à la narration originale | Utiliser la commande explicite **Revenir explicitement à la piste originale**. |
-| Dialogue, panneau ou répétition réelle | Chaque occurrence conserve son identité et ses minutages ; les textes identiques à des instants distincts restent distincts. |
+| **Lecture intégrale** | Préserve les dialogues, inscriptions et indications textuelles extraites de la piste choisie ; les filtres d’exclusion sont neutralisés. |
+| **Confort** | La vidéo attend quand la voix doit terminer. |
+| **Adaptatif** | Conserve le débit de base quand il suffit, accélère jusqu’au plafond choisi puis attend si nécessaire. |
+| **Compréhension confortable** | Présélection à 100 % de débit de base, plafond adaptatif à 140 % et pause de 350 ms après une phrase, avec conservation des phrases. |
+| **Compréhension équilibrée** | Présélection à 100 % de débit de base et plafond adaptatif à 180 %, sans pause ajoutée. |
+| **Pauses rares** | Présélection à 100 % de débit de base et plafond adaptatif à 220 %, sans pause ajoutée ; la vidéo attend si nécessaire pour terminer. |
+| **Continu** | Autorisation distincte après confirmation : peut couper une phrase pour suivre la vidéo et désactive la lecture intégrale. |
 
-Les lots sont bornés à **20 occurrences et 4 000 unités UTF-16**. Le cache privé conserve uniquement les pistes complètes, dans une limite de **32 Mio** ; il peut être évincé et ne constitue pas un export SRT. Il n’existe pas encore de reprise des lots partiels après interruption. La validation structurelle ne prouve pas la fidélité linguistique du résultat.
+Deux événements portant les mêmes mots à des instants distincts restent deux occurrences. Un panneau persistant ne doit pas être relu à chaque dialogue superposé. Le suivi distingue détection, préparation, attente, commande vocale commencée, fin, interruption, erreur et exclusion explicite.
 
-Le [guide fonctionnel](docs/TRADUCTION_ETAPE_7.md) détaille l’intégrité, l’annulation, le cache et les clés. Le [guide des moteurs](docs/GUIDE_MOTEURS_TRADUCTION.md) explique les comptes, les champs et le dépannage.
+Le **Bilan de vocalisation** compte les occurrences distinctes terminées au moins une fois et les interruptions à reprendre. Le journal conserve des identifiants hachés, des états et des temps, sans le texte des sous-titres. « Commencée » désigne la commande de synthèse émise, pas une mesure acoustique du premier son. Ce bilan porte sur les occurrences effectivement extraites ; une source non prise en charge ou un index incomplet produit une limite perceptible.
 
-## Choisir le service de traduction
+Répéter, relire une interruption et reprendre restent des actions explicites. Une pause demandée par l’utilisateur doit conserver sa priorité sur les réponses tardives d’un moteur ou d’une traduction.
 
-Le menu comprend **quatre choix pour trois services**. Ils utilisent des serveurs ; aucun poids de modèle n’est à installer dans cette version du lecteur. Les offres peuvent évoluer : vérifier les conditions du fournisseur avant de confirmer un service payant.
+## Préparer la voix et conserver une œuvre hors ligne
 
-| Choix du lecteur | Fonction et prérequis | Configuration complète |
-| --- | --- | --- |
-| **Microsoft Azure Translator** | Traduction sur les serveurs Microsoft par l’API Translator. Préparer une ressource Translator, une clé et la région si elle est requise ; vérifier palier, quota et plafonds. Un déploiement Azure OpenAI n’est pas nécessaire. | [Ressource, clé, région et langue](docs/GUIDE_MOTEURS_TRADUCTION.md#microsoft-azure-translator--configuration-complète) |
-| **DeepL — point d’accès API Free** | Utilise `api-free.deepl.com`. Préparer une clé **API** autorisée pour cet hôte. Le nom de l’endpoint ne garantit pas une offre gratuite pour un nouveau compte ; un abonnement au traducteur Web n’est pas automatiquement un accès API. | [Compte, endpoint et facturation](docs/GUIDE_MOTEURS_TRADUCTION.md#deepl--compte-point-daccès-et-facturation) |
-| **DeepL — point d’accès API payant** | Utilise `api.deepl.com` avec la clé et le contrat correspondants. Contrôler les coûts dans le compte ; le lecteur n’achète pas d’abonnement. | [Choisir l’accès DeepL adapté](docs/GUIDE_MOTEURS_TRADUCTION.md#deepl--compte-point-daccès-et-facturation) |
-| **LibreTranslate — serveur personnel HTTPS** | Traduction sur le serveur choisi, fondé sur Argos Translate. Fournir une adresse HTTPS à certificat valide, une paire de langues installée et une clé si l’instance l’exige. Hébergement et quotas sont distincts du logiciel libre. | [Serveur, adresse, clé et limites](docs/GUIDE_MOTEURS_TRADUCTION.md#libretranslate--utiliser-un-serveur-choisi) |
+Deux fonctions répondent à des usages différents :
 
-Chaque choix affiche ses prérequis et ses liens dans l’application. Le guide fournit les procédures depuis le navigateur Android, les codes de langue et les vérifications en cas de refus. Ne jamais publier une clé dans une issue ou une capture. Sa mémorisation locale chiffrée reste facultative.
-
-Le lecteur ne propose pas encore de glossaire, de choix de modèle DeepL, de contexte additionnel, de comparaison automatique des fournisseurs ou d’estimation de prix contractuelle. Ces possibilités demandent une étape distincte.
-
-## Comprendre les moteurs et modèles locaux
-
-**Aucun moteur local de traduction, import Hugging Face ou backend neuronal GPU/NPU n’est intégré à la 0.4.0.** Télécharger un modèle ne l’active pas dans cette application. Réutiliser hors ligne une traduction distante mise en cache ne transforme pas son fournisseur en moteur local.
-
-| Élément | Rôle |
+| Fonction | Usage |
 | --- | --- |
-| **Modèle** | Poids entraînés qui réalisent la tâche linguistique, avec leurs langues et leur licence. |
-| **Runtime** | Logiciel qui charge et calcule l’architecture exacte du modèle sur Android. |
-| **Format / quantification** | Organisation et précision des poids ; GGUF, Safetensors ou ONNX ne suffisent pas à prouver la compatibilité mobile. |
-| **Catalogue** | Site qui présente et distribue des fichiers, comme Hugging Face, ModelScope ou le catalogue Argos. Ce n’est pas automatiquement un runtime. |
+| **Cache vocal** | Anticipation réglable pendant la lecture ; les entrées anciennes peuvent être évincées. |
+| **Conserver pour une écoute hors ligne** | Préparation durable par œuvre, avec contrôle des segments nécessaires et de leur intégrité ; suppression explicite par l’utilisateur. |
 
-Le [guide des modèles locaux](docs/GUIDE_MOTEURS_TRADUCTION.md#modèles-et-solutions-locales-envisageables) décrit **Index-Translate-2B, ML Kit Translation, TranslateGemma, NLLB-200, MADLAD-400, M2M100, OPUS-MT/Marian et Argos Translate** : architecture, langues, licence, distribution et travail nécessaire sur Android. Il explique [comment examiner les fichiers sur Hugging Face](docs/GUIDE_MOTEURS_TRADUCTION.md#hugging-face-et-les-autres-catalogues--ce-quon-y-trouve), sans présenter leur consultation comme une installation fonctionnelle du lecteur.
+Pour une nouvelle configuration, les valeurs de départ sont **512 Mio de cache**, **256 segments maximum** et **120 secondes d’audio anticipé estimé**. Les préférences existantes restent conservées lors d’une mise à jour.
 
-L’[étude de traduction locale](docs/ETUDE_TRADUCTION_LOCALE.md) définit ce qu’il faudra vérifier avant de recommander un téléchargement : fichier et révision exacts, runtime compatible, intégrité, mémoire, qualité, durée et chauffe sur l’appareil cible. Les candidats n’ont pas été installés ni mesurés sur le OnePlus 15 dans ce projet. Le runtime, le téléchargement guidé et le catalogue de modèles vérifiés restent à décider ; ML Kit demande aussi une décision sur ses conditions et métriques.
+| Profil | Cache | Anticipation estimée | Segments maximum |
+| --- | --- | --- | --- |
+| Économie | 64 Mio | 15 s | 32 |
+| Équilibré | 512 Mio | 120 s | 256 |
+| Intensif | 2 048 Mio | 300 s | 1 024 |
 
-## Régler la voix et le confort d’écoute
+Les bornes manuelles sont de **16 à 8 192 Mio**, **1 à 4 096 segments** et **5 à 7 200 secondes**. Ces valeurs sont des plafonds de préparation, pas une réservation immédiate de mémoire ni une accélération artificielle du GPU/NPU. La narration courante reste prioritaire ; la préparation peut être arrêtée en cas d’état thermique sévère.
 
-Le moteur vocal Android transforme le texte en audio ; le traducteur transforme une langue en une autre. Choisir une voix ne modifie pas le fournisseur de traduction.
+Dans **Stockage**, ouvrir **Préparation conservée et stockage hors ligne**. L’application présente l’estimation d’espace, la place disponible, le nombre de segments prêts et la couverture temporelle vérifiée. L’estimation ne démarre pas une synthèse. Confirmer la conservation, puis consulter l’état jusqu’à la vérification finale.
 
-Dans **Réglages de la voix et du confort**, choisir explicitement moteur, voix prête, vitesse et volume, puis écouter l’essai. Le [catalogue vocal](docs/VOIX_CATALOGUE_2026.md) présente des moteurs et ressources externes ; disponibilité, permissions et voix dépendent de leurs fournisseurs.
+**Prêt hors ligne** demande un index et une traduction complets lorsqu’elle est utilisée, ainsi que les fichiers vocaux requis effectivement validés. Une source partielle ne peut pas obtenir ce statut. La vidéo doit toujours être accessible ; cette commande ne copie pas son fichier original. Une interruption conserve les éléments déjà produits pour une préparation ultérieure. Le gestionnaire permet de supprimer séparément voix, textes et index d’une œuvre.
 
-| Mode | Comportement |
+## Retrouver une séance et corriger la synchronisation
+
+Les séances conservent la position, les pistes audio/textuelles, le fichier externe associé, la voix, le moteur, le mode d’écoute, les réglages, l’image, la synchronisation et les dernières occurrences terminées ou interrompues. Les ressources de traduction et les pistes sont vérifiées à la réouverture.
+
+La restauration commence en pause et propose **Reprendre** ou **Relire la dernière réplique avant de reprendre**. La relecture laisse ensuite la vidéo en pause. Si le fichier n’est plus accessible, un parcours guidé permet de le sélectionner de nouveau, de réessayer ou d’oublier seulement la séance. Choisir la même édition ; des métadonnées compatibles ne prouvent pas que deux fichiers sont identiques.
+
+Si la file vocale était encore inachevée à la fermeture, **Reprendre** retrouve son premier événement dans la piste exacte et revient au début corrigé de cette occurrence avant de lire. Cela préserve une réplique dont l’affichage avait déjà expiré pendant que la vidéo attendait la voix. Un déplacement volontaire annule ce repère ; une piste ou une traduction indisponible maintient la pause avec un message.
+
+Dans **Synchronisation**, ouvrir **Décalage, dérive et calibration des sous-titres** :
+
+- **Décalage global**, en millisecondes : positif pour retarder les sous-titres.
+- **Décalage de narration** : correction propre à la voix, de −60 000 à +60 000 ms.
+- **Deux repères source/vidéo** : correction d’une dérive régulière.
+- **Repères supplémentaires** : interpolation continue, avec temps source et vidéo strictement croissants.
+- **Portions pour scènes ajoutées/supprimées** : début, fin et décalage signé par portion, sans suppression des textes ; ajout et retrait explicites.
+- **Aperçu**, puis validation ou **Annuler** : une annulation restaure la correction d’ouverture.
+
+Les corrections conservent les identités des occurrences et sont associées à la vidéo/piste. Une réplique traversant une limite de portion garde toute sa durée et le décalage de son début. Les chevauchements corrigés conservent tous leurs textes. Une différence de montage contenant des dialogues absents de l’image exige une vérification manuelle.
+
+## Traduire en français, entièrement ou progressivement
+
+La traduction complète reste le parcours par défaut. L’option **Traduction progressive** permet de commencer avec au moins une minute de tampon validé avant la prochaine occurrence non traduite. La traduction continue ensuite pendant le visionnage ; si le lecteur rattrape le travail, il s’arrête à une réplique indisponible et attend une commande **Lire** après progression. Aucune phrase manquante n’est remplacée silencieusement par l’original.
+
+1. Choisir une piste textuelle, puis ouvrir **Traduire les sous-titres en français**.
+2. Choisir fournisseur, langue source et accès de son compte ; la langue est celle des sous-titres, pas nécessairement celle de l’audio.
+3. Choisir éventuellement le mode progressif et un **plafond de nouveaux caractères UTF-16 pour cette tâche**.
+4. Utiliser **Indexer la piste et estimer la traduction** : cette phase n’envoie pas le texte.
+5. Examiner le volume restant après réutilisation du cache/progression, la destination et les limites ; confirmer l’envoi.
+6. Choisir une voix française prête, puis **Lire** lorsque la piste complète ou le tampon progressif est disponible.
+
+Les lots validés sont enregistrés pour reprise avec la même source et les mêmes paramètres. Une requête interrompue dont le résultat est inconnu peut déjà avoir été facturée : sa reprise demande une confirmation et peut consommer de nouveau du quota. Aucun redémarrage après fermeture n’est garanti sans réouverture et nouvelle confirmation.
+
+### Fournisseurs et options
+
+| Fournisseur | Configuration et fonctions |
 | --- | --- |
-| **Confort** | La vidéo attend lorsque la voix a besoin de temps pour terminer la phrase. |
-| **Adaptatif** | Conserve le débit de base quand le budget le permet, accélère dans la limite réglée et attend si nécessaire. |
-| **Continu** | La vidéo continue sans attendre ; une phrase trop longue peut être interrompue. Ce mode ne convient pas à l’objectif de vocalisation intégrale. |
+| **Azure Translator** | Ressource Translator, clé et région selon le compte ; langue source explicite. |
+| **DeepL API Free ou payant** | Point d’accès correspondant au contrat ; contexte facultatif, identifiant/révision d’un glossaire déjà créé, modèle et registre lorsque pris en charge ; consultation réelle du quota. |
+| **LibreTranslate HTTPS** | Serveur choisi, paire de langues installée et clé éventuelle ; traitement sur ce serveur. |
 
-Pour un premier essai Adaptatif, les réglages proposés sont **100 %** de vitesse de base, un plafond de **180 %** et **600 ms** de tolérance. Le confort dépend du moteur et du contenu. Une phrase préparée utilise sa durée WAV mesurée ; sans cache, le lecteur travaille avec une estimation.
+Le [guide des moteurs](docs/GUIDE_MOTEURS_TRADUCTION.md) détaille les comptes et points d’accès. Les offres et droits dépendent du fournisseur ; le lecteur ne crée ni compte ni abonnement. Le plafond local de caractères n’est pas un prix garanti, une limite contractuelle ou une réservation de quota. Pour Azure/LibreTranslate, consulter le tableau de bord ou l’administrateur pour les quotas.
 
-La préparation des cinq prochaines minutes ou de toute la vidéo est explicite et annulable. Elle met la lecture en pause et utilise un cache audio borné, distinct du cache de traduction : préparer une œuvre entière ne garantit pas de conserver simultanément tous ses fichiers audio. Répéter la dernière phrase et reprendre restent des actions explicites. Une pause de l’utilisateur ne doit pas être annulée par une fin de synthèse ou une réponse ancienne.
+Le contexte DeepL est envoyé avec les lots. Les options et révisions font partie de l’identité des résultats conservés. Une proposition locale de langue doit être confirmée ; elle ne transforme pas automatiquement une langue refusée en une langue voisine.
+
+### Afficher, corriger, conserver et exporter
+
+- Choisir **original**, **français**, **bilingue** ou **masqué**, indépendamment de la narration.
+- Consulter les alertes sur les nombres et longueurs inhabituelles ; ce sont des indices à vérifier, pas une mesure de fidélité.
+- Corriger une occurrence de la traduction complète ; sa voix dépend ensuite du nouveau texte.
+- **Conserver durablement** la traduction complète ou l’exporter en **SRT/VTT** via le sélecteur Android.
+- Réimporter l’export avec **Ajouter un fichier de sous-titres** : il devient une piste française autonome.
+- Comparer explicitement un échantillon sur plusieurs configurations, avec confirmation des destinations et de chaque consommation possible.
+
+Le cache évictable de traduction reste limité à **32 Mio**. Progression, conservation durable et export sont distincts. Les exports préservent textes et minutages, mais pas l’ensemble des styles avancés ASS.
 
 ## Régler l’image et le cadrage
 
@@ -157,88 +182,49 @@ La saisie précise accepte les pourcentages et durées dans leurs champs, avec p
 
 La chaîne avancée traite le **PCM16 mono/stéréo effectivement reçu**. Elle n’annonce ni multicanal ou passthrough, ni normalisation du volume perçu, ni limiteur *true-peak*. Une crête numérique ou un compteur de buffers ne mesure pas la qualité acoustique. Réglages et diagnostic ne doivent ni créer une synthèse supplémentaire ni reprendre une vidéo en pause.
 
-## Retrouver les sept étapes réunies
-
-La 0.4.0 réunit les travaux précédents. Les guides d’étape conservent leurs sources et résultats historiques ; leurs anciens effectifs ne remplacent pas la validation de l’APK publié.
-
-| Étape | Travail conservé dans la 0.4.0 | Détails |
-| --- | --- | --- |
-| **1 — Modularisation** | Composants distincts pour lecture, vidéo, audio, indexation et narration autour de Media3 et de TTS Android. | [Modularisation](docs/MODULARISATION_ETAPE_1.md) |
-| **2 — Capacités et observations** | Diagnostic distinguant demande, configuration et observation ; génération de média et confidentialité des informations copiées. | [Capacités et diagnostic](docs/CAPACITES_ETAPE_2.md) |
-| **3 — Commandes d’image** | Contrat typé, valeurs bornées, refus explicites, générations et protections HDR. | [Commandes d’image](docs/COMMANDES_IMAGE_ETAPE_3.md) |
-| **4 — Interface d’image** | Descriptions, saisie précise, corrections, cadrage, marges, zoom, Lanczos et luminosité de l’écran. | [Interface d’image](docs/INTERFACE_IMAGE_ETAPE_4.md) |
-| **5 — Commandes du film** | Validation commune des volumes, fondus et atténuation spectrale, en préservant narration et pauses. | [Commandes audio](docs/COMMANDES_AUDIO_ETAPE_5.md) |
-| **6 — Audio expert** | Saisie numérique, préampli, égaliseur, balance, mono, limiteur et diagnostic sur PCM16 compatible. | [Audio expert](docs/AUDIO_EXPERT_ETAPE_6.md) |
-| **7 — Traduction** | Piste française complète, trois services/quatre choix, cache privé et clés chiffrées facultatives. | [Traduction](docs/TRADUCTION_ETAPE_7.md) |
-
-Les [notes 0.4.0](docs/releases/0.4.0.md) et le [journal des changements](CHANGELOG.md) détaillent les ajouts et corrections. L’[historique des branches](docs/HISTORIQUE_BRANCHES.md) conserve les sauvegardes et références d’archives.
-
-## Compatibilité et limites
+## Compatibilité, confidentialité et limites
 
 | Domaine | Prise en charge et limites |
 | --- | --- |
-| **Vidéos locales** | Notamment MKV, MP4 et WebM ; codecs réellement lisibles selon Media3 et les décodeurs du téléphone. |
-| **Sous-titres textuels** | Pistes intégrées et fichiers SRT, VTT, ASS/SSA. Fichiers externes limités à 8 Mio ; choix d’encodage pour les fichiers anciens. Panneaux et répétitions réelles sont préservés lorsqu’ils figurent dans la piste choisie. |
-| **Sous-titres en images** | Pas d’OCR pour PGS/VobSub ou texte uniquement incrusté dans les pixels. |
-| **Traduction** | Préparation avant lecture, cible française et affichage original. La fidélité, les noms et le registre doivent être évalués sur les langues et contenus voulus. |
-| **Voix** | Moteur Android externe ; la voix hors ligne doit être installée et réellement prête. Aucun modèle vocal neuronal propre au projet n’est embarqué. |
-| **Fonctions absentes** | Pas d’audiodescription des scènes, d’accès aux contenus DRM d’autres applications, de lecture durable en arrière-plan, d’export des traductions ou de runtime local de traduction. |
-| **Validation matérielle** | Pas de résultat établi sur OnePlus 15 pour autonomie, chauffe ou accélération GPU/NPU. TalkBack réel, voix commerciales, HDR physique, Bluetooth et séances prolongées exigent des essais distincts. |
+| Vidéos | Fichiers locaux, notamment MKV, MP4 et WebM ; codecs selon Media3 et les décodeurs de l’appareil. |
+| Sous-titres | Pistes textuelles intégrées et fichiers SRT, VTT, ASS/SSA ; import externe limité à 8 Mio, avec choix d’encodage pour les fichiers anciens. |
+| Narration | Moteur TTS Android externe et voix installée ; les modes intégraux attendent si nécessaire. |
+| Traduction | Services en ligne choisis ; français dans le parcours utilisateur ; qualité sémantique à évaluer. |
+| Hors ligne | Lecture locale avec voix prête ; traductions et voix préparées réutilisables après contrôle de disponibilité. |
+| Fonctions absentes | OCR PGS/VobSub/incrustations, traduction locale, import Hugging Face, audiodescription, accès aux DRM d’autres applications et lecture durable en arrière-plan. |
+| Matériel | Aucune preuve d’usage neuronal GPU/NPU ou de performance sur OnePlus 15 déduite des profils de cache ou de tests sur émulateur. |
 
-Moteur local avec installation guidée, contexte/glossaires, reprise de lots partiels, export, profils audio et comparaison A/B restent des propositions soumises à décision. Ils ne sont pas présentés comme disponibles.
+- Ouverture par le sélecteur Android, sans permission microphone/caméra ni accès général au stockage.
+- La traduction confirmée envoie le texte et ses paramètres au fournisseur choisi ; elle n’envoie ni vidéo ni piste audio.
+- HTTPS, certificats système, tailles/délais bornés et redirections refusées ; erreurs sans clé ni corps privé.
+- Clés mémorisées facultativement par Android Keystore/AES-GCM, avec portée distincte par serveur LibreTranslate ; sauvegarde Android désactivée.
+- Sous-titres importés, traductions conservées et textes de préparation sont des données privées de l’application, sans chiffrement additionnel annoncé. Les journaux ordinaires de narration n’enregistrent pas les textes.
+- Les suppressions de cache, d’index ou de préparation ne modifient pas les vidéos originales. Les exports restent dans l’emplacement choisi.
+- Les permissions et traitements d’un moteur vocal externe dépendent de son fournisseur.
 
-## Confidentialité et données
+Le [guide 0.5.0](docs/CONFORT_INTEGRAL_050.md) détaille les contraintes de reprise, les limites et la conservation. Le [catalogue vocal](docs/VOIX_CATALOGUE_2026.md), l’[étude de traduction locale](docs/ETUDE_TRADUCTION_LOCALE.md) et l’[étude d’accélération](docs/ETUDE_ACCELERATION.md) séparent les ressources disponibles des pistes de recherche.
 
-- **Fichiers :** ouverture par le sélecteur Android, sans permission microphone, caméra ou accès général au stockage. Vidéos et audio ne sont pas téléversés par la traduction.
-- **Traduction :** permission Internet pour les demandes explicitement confirmées. Le fournisseur reçoit le texte et les paramètres nécessaires selon ses conditions ; l’indexation et l’estimation seules ne l’envoient pas.
-- **Transport :** HTTPS, certificats système, délais et tailles bornés, redirections refusées, aucune relance automatique facturable. Les erreurs affichées ne recopient ni clé, ni texte privé, ni corps de réponse du fournisseur.
-- **Clés API :** mémorisation facultative en AES-GCM avec Android Keystore, sans repli en clair ; clés LibreTranslate séparées par serveur. Sauvegarde Android de l’application désactivée. Un appareil compromis reste une limite de protection.
-- **Caches :** stockage privé, caches de traduction et de voix distincts. Le cache de traduction contient du texte de sous-titres et n’est pas annoncé comme chiffré ; il est évictable et ne constitue pas une sauvegarde durable.
-- **Composants externes :** vérifier les permissions et la voix hors ligne du moteur vocal. Les liens documentaires s’ouvrent sur demande. Les essais du projet utilisent des contenus synthétiques et des réponses API contrôlées.
+## Validation et identité du téléchargement
 
-Annuler ne rembourse pas les caractères déjà traités. Avant une nouvelle tentative, contrôler quota et plafonds du compte. Les clés privées de signature restent hors du dépôt et des releases.
+**Validation 0.5.0 en cours.** Les résultats définitifs, le commit source, les liens Actions, la taille, le certificat et le SHA-256 de l’APK seront ajoutés après les contrôles et la publication. Les résultats de la 0.4.0 restent historiques et ne valident pas ces nouvelles sources.
 
-## Vérifications et identité du téléchargement
-
-Le [run `40053284969`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40053284969) a réussi sur le commit source exact [`32864ba`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/32864ba732d834e71d87b887ae63f0d7bc09eb8c), avant publication. [TESTING.md](TESTING.md) conserve les résultats, les erreurs intermédiaires corrigées et les limites de preuve.
-
-| Vérification exécutée | Résultat |
-| --- | --- |
-| JVM debug | 87 tests du noyau + 137 tests de l’application réussis |
-| JVM release | Nouvelle exécution des mêmes 87 + 137 tests, réussie |
-| Android 36 release | Deux passages de 82 tests instrumentés réussis sur la même paire d’APK |
-| Total JVM/Android | **306 méthodes distinctes, 612 exécutions**, sans échec, erreur, méthode ignorée, manquante ou dupliquée |
-| Outils Python | **19** tests de publication + **13** de synchronisation des releases + **7** de rangement documentaire réussis |
-| Lint debug et release | **0 erreur, 51 avertissements par variante** ; les avertissements restent visibles |
-| Construction et publication | APK et APK de tests compilés ; manifeste, identité, signatures, alignement et empreintes contrôlés ; contenu hors signatures comparé à l’APK testé, puis téléchargement revérifié avant publication |
-
-L’instrumentation utilise Android, Media3 et un service TTS de fixture contrôlé. Les tests API n’utilisent pas de compte payant réel. Ils ne prouvent pas une traduction parfaite, la qualité acoustique d’une voix externe, les droits d’un compte personnel ou l’absence universelle de bug.
-
-| Identité de l’APK 0.4.0 | Valeur |
-| --- | --- |
-| Fichier | `SousTitresVoix-0.4.0-traduction.apk` |
-| Taille | **5 066 480 octets** |
-| Application | `fr.soustitresvoix.player.translation` |
-| SHA-256 | `30d1126392a9fd995867f599b12436b1e2d9e8e1d41bc60d20dca76c9b88f298` |
-| Certificat SHA-256 | `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d` |
-| Fichier de contrôle | [`SHA256SUMS`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.4.0/SHA256SUMS), sur la [release 0.4.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0) |
+[TESTING.md](TESTING.md) distingue compilation, tests JVM, instrumentation Android, contrôles de publication et essais manuels. Les tests automatisés utilisent des contenus synthétiques, des réponses API contrôlées et une fixture TTS. La fidélité des fournisseurs, les droits/quota d’un compte, les voix commerciales, TalkBack réel, Bluetooth, HDR physique, autonomie et chauffe demandent leurs essais distincts.
 
 ## Documentation et développement
 
 | Besoin | Point d’entrée |
 | --- | --- |
-| Parcourir les guides | [Index de la documentation](docs/README.md) |
-| Configurer un traducteur ou comprendre les modèles | [Moteurs, comptes, modèles et dépannage](docs/GUIDE_MOTEURS_TRADUCTION.md) |
-| Comprendre piste française, cache et clés | [Fonctionnement de la traduction](docs/TRADUCTION_ETAPE_7.md) |
-| Étudier une future traduction locale | [Étude locale et protocole d’évaluation](docs/ETUDE_TRADUCTION_LOCALE.md) |
-| Essayer la version sur téléphone | [Parcours manuel](docs/TESTS_TELEPHONE.md) |
-| Régler image et son | [Image et cadrage](docs/INTERFACE_IMAGE_ETAPE_4.md), [mixage](docs/COMMANDES_AUDIO_ETAPE_5.md), [audio expert](docs/AUDIO_EXPERT_ETAPE_6.md) |
-| Choisir un moteur vocal | [Catalogue vocal daté](docs/VOIX_CATALOGUE_2026.md) |
-| Tester, compiler et signer | [Procédure de vérification](TESTING.md) |
-| Comprendre le code | [Architecture](docs/ARCHITECTURE.md) |
-| Retrouver versions et sources | [Changelog](CHANGELOG.md), [historique des branches et APK](docs/HISTORIQUE_BRANCHES.md) |
-| Contribuer | [Procédure de contribution](CONTRIBUTING.md), [consignes pour les agents](AGENTS.md) |
+| Utiliser les nouvelles fonctions | [Guide Confort intégral 0.5.0](docs/CONFORT_INTEGRAL_050.md) |
+| Lire les changements de cette version | [Notes 0.5.0](docs/releases/0.5.0.md), [changelog](CHANGELOG.md) |
+| Parcourir tous les guides | [Index documentaire](docs/README.md) |
+| Configurer les comptes de traduction | [Moteurs et dépannage](docs/GUIDE_MOTEURS_TRADUCTION.md) |
+| Tester sur téléphone | [Parcours manuel](docs/TESTS_TELEPHONE.md) |
+| Régler image et son | [Image](docs/INTERFACE_IMAGE_ETAPE_4.md), [mixage](docs/COMMANDES_AUDIO_ETAPE_5.md), [audio expert](docs/AUDIO_EXPERT_ETAPE_6.md) |
+| Compiler et contrôler les livraisons | [Procédure et résultats](TESTING.md) |
+| Comprendre les composants | [Architecture](docs/ARCHITECTURE.md), [modularisation](docs/MODULARISATION_ETAPE_1.md) |
+| Contribuer | [Contribution](CONTRIBUTING.md), [consignes agents](AGENTS.md) |
+| Retrouver les anciennes étapes | [Versions et branches](docs/HISTORIQUE_BRANCHES.md), [notes 0.4.0](docs/releases/0.4.0.md) |
 
-Le dépôt contient `app/` pour l’application et les tests Android, `core/` pour le moteur indépendant d’Android, `docs/` pour les guides, `examples/` pour les sous-titres synthétiques et `tools/` pour les contrôles. La compilation utilise Java 17 ; Robolectric Android 36 utilise Java 21. Les versions et commandes figurent dans [TESTING.md](TESTING.md). FFmpeg génère l’exemple lors de la compilation ; il n’est pas à installer sur le téléphone.
+Le dépôt contient l’application Android dans **app/**, le moteur indépendant d’Android dans **core/**, les guides dans **docs/**, les démonstrations synthétiques dans **examples/** et les contrôles dans **tools/**. La compilation utilise JDK 17 ; les tests Robolectric Android 36 utilisent JDK 21. FFmpeg génère le média de démonstration à la compilation ; il n’est pas nécessaire sur le téléphone.
 
-**Tout travail terminé et vérifié est intégré à `main`.** Les propositions passent par une demande de fusion et leurs contrôles ; le commit fusionné est ensuite vérifié sur `main`. Le tag `v0.4.0` conserve les sources exactes de l’APK publié, tandis que `main` peut recevoir des améliorations documentaires. Sauvegardes et archives permettent de retrouver les étapes sans confondre une ancienne branche de travail avec la version à installer.
+**Tout travail terminé et vérifié est intégré à main avant d’être annoncé livré.** Une proposition de fusion et ses contrôles précèdent cette intégration, puis le commit de main est vérifié. Les tags publiés conservent les sources exactes des APK antérieurs. Les guides des étapes 1 à 7 décrivent leur version de référence ; le guide 0.5.0 prévaut pour les fonctions ajoutées ici.

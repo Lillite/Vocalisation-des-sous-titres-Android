@@ -149,8 +149,10 @@ class PlaybackDiagnosticsAndroidTest {
                 // The general settings panel already pauses on entry. Capture
                 // the baseline after that existing action, never weaken it.
                 onView(withText("Réglages de la voix et du confort")).perform(scrollTo(), click())
+                onView(androidx.test.espresso.matcher.ViewMatchers.withContentDescription("Rechercher dans les huit rubriques de réglages"))
+                    .inRoot(isDialog()).perform(androidx.test.espresso.action.ViewActions.replaceText("diagnostic"), androidx.test.espresso.action.ViewActions.closeSoftKeyboard())
                 Closeable {
-                    onView(withText("Appliquer et fermer")).inRoot(isDialog()).perform(click())
+                    onView(withText("Fermer")).inRoot(isDialog()).perform(click())
                 }.use {
                     var barrier: PlayerMessage? = null
                     scenario.onActivity { current ->

@@ -119,8 +119,8 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
         return object : SubtitleParser.Factory by default {
             override fun create(format: Format): SubtitleParser {
                 val parser = default.create(format)
-                if (format.sampleMimeType == MimeTypes.TEXT_SSA) {
-                    return SsaOccurrenceParser(parser, format, { truncated = true }) { group, origins, output ->
+                if (format.sampleMimeType in setOf(MimeTypes.TEXT_SSA, MimeTypes.APPLICATION_SUBRIP, MimeTypes.TEXT_VTT)) {
+                    val annotated: (CuesWithTiming, List<SsaOccurrence>?, Consumer<CuesWithTiming>) -> Unit = { group, origins, output ->
                         if (sidecar) {
                             report("external-subtitle", group, origins)
                             output.accept(group)
@@ -134,6 +134,9 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
                             }
                         }
                     }
+                    return if (format.sampleMimeType == MimeTypes.TEXT_SSA)
+                        SsaOccurrenceParser(parser, format, { truncated = true }, annotated)
+                    else TextOccurrenceParser(parser, format, { truncated = true }, annotated)
                 }
                 if (!sidecar) return parser
                 return object : SubtitleParser by parser {
@@ -211,15 +214,17 @@ class CueAheadIndex {
         frames.remove(key)?.forEach { unique.remove(it); characters -= it.raw.length; trackSnapshots.remove(it.track) }
     }
     @Synchronized fun selected(track: String?): List<Item> = frames.values.flatten().filter { it.track == track }
+    /** Source-timeline lookup for corrected display/narration; identity remains untouched. */
+    @Synchronized fun activeItems(track: String?, timeUs: Long): List<Item> = active(track, timeUs)
     @Synchronized fun future(track: String?, positionMs: Long, filters: SpeechTools.Filters, count: Int, seconds: Int = 60,
-        textFor: (Item) -> String? = { it.raw }): List<String> {
+        languageTag: String? = null, textFor: (Item) -> String? = { it.raw }): List<String> {
         cursorUs = positionMs.coerceAtLeast(0) * 1000
         val futureEnd = cursorUs + seconds.coerceIn(5, 7200) * 1_000_000L
         if (futureEnd < cursorUs) return emptyList()
         return frames.subMap(cursorUs, true, futureEnd, false).values.asSequence().flatten()
             .filter { it.track == track }
             .mapNotNull { textFor(it) }
-            .flatMap { SpeechTools.segments(SpeechTools.filter(it, filters)).asSequence() }
+            .flatMap { SpeechTools.segments(SpeechTools.filter(it, filters), languageTag).asSequence() }
             .distinct().take(count.coerceIn(0, 100_000)).toList()
     }
     @Synchronized fun windowEnd(track: String?, text: String, positionMs: Long, filters: SpeechTools.Filters): Long? =

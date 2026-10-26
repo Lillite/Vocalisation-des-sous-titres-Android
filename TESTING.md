@@ -1,5 +1,215 @@
 # Vérifications de régression
 
+## Version 0.5.0 — validation de la candidate en cours
+
+La candidate **0.5.0, code 7**, conserve l’identité Android
+`fr.soustitresvoix.player.translation`. La [fiche de version](docs/releases/0.5.0.md)
+et le [guide des fonctions](docs/CONFORT_INTEGRAL_050.md) décrivent ses changements.
+**Au moment de cette rédaction, les passages complets finaux debug, release et
+Android, la validation de `main` et la publication restent à confirmer.** Les
+résultats publiés de la 0.4.0 ci-dessous ne valident pas les nouvelles sources.
+
+L’inventaire des annotations `@Test` du 26 octobre 2026 contient **178 méthodes
+JVM du noyau, 238 méthodes JVM de l’application et 87 méthodes instrumentées
+Android**, soit **503 méthodes distinctes**. Le parcours complet exigé exécute
+chaque suite deux fois : debug puis release pour la JVM, deux passages de la
+même paire d’APK release pour Android. Il doit donc attester **1 006 exécutions
+JUnit**. Ces effectifs sont des critères de complétude, pas des résultats.
+
+| Groupe de régressions 0.5.0 | Ce qui doit être vérifié |
+| --- | --- |
+| Occurrences et lecture intégrale | Identités source distinctes, répétitions légitimes identiques, panneaux persistants, chevauchements, changements de style ASS, sous-titres SRT/VTT simultanés et très brefs entre deux mises à jour, déplacements et fin de vidéo après correction temporelle. |
+| File et journal de narration | États détectée, préparée, en attente, commencée, terminée, interrompue et erreur ; conservation et reprise des textes en attente en cas de surcharge ; export de métadonnées sans texte et refus des contextes divergents ; absence de reprise sur callback périmé. |
+| Réglages et compréhension | Recherche accentuée et rubriques, champs numériques et bornes, boutons et présélections, actualisation des profils, annulation synchrone des changements et pauses de compréhension. |
+| Séances et synchronisation | Sauvegarde atomique par vidéo, choix des pistes réellement sélectionnées, restauration locale de la traduction en pause, réglages par piste, corrections à deux points ou par portions, aperçu annulable, fichier déplacé et oubli sans résurrection d’un ancien enregistrement. |
+| Conservation hors ligne | Index et segments durables, contrôle WAV et SHA-256, estimation de l’espace, reprise, suppression par type, invalidation des préparations périmées, priorité à la lecture et refus de « Prêt hors ligne » sur une source incomplète. |
+| Traduction progressive | Lots validés sauvegardés, refus des reprises facturables incertaines, plafond de consommation, correspondance entrée/sortie, seuil initial et pause au premier texte manquant, correction isolée, affichages et export SRT/VTT réimportable. |
+| Android réel | Interactions de réglages et préparation hors ligne, en plus des scénarios existants de narration, Media3, diagnostic, image, audio et traduction, sur émulateur Android 36. |
+
+Les tests d’application sous `app/src/test` s’exécutent sur la JVM avec
+Robolectric et les vrais parseurs Media3. Ils ne remplacent pas les tests sous
+`app/src/androidTest`, qui doivent être **exécutés** sur Android. Construire
+`assembleDebugAndroidTest` ou `assembleReleaseAndroidTest` ne suffit pas.
+
+### Instantanés techniques de l’émulateur
+
+Pendant la commande d’instrumentation, un échantillonneur facultatif conserve
+les sorties `dumpsys meminfo` de l’application, `gfxinfo framestats` et `cpuinfo`
+dans `live-metrics/`. Il vise un départ toutes les trente secondes, avec au plus
+quarante échantillons et cinq secondes au maximum par commande. Le fichier
+`samples.tsv` associe chaque sortie à son numéro, son heure UTC et son statut.
+La période inclut le déploiement et des tests synthétiques mixtes : certains
+échantillons peuvent donc précéder le lancement du processus ou suivre sa
+fermeture entre scénarios. Les compteurs de trames ne sont pas remis à zéro.
+Le groupe de processus du moniteur est arrêté à la fin de Gradle et par le
+nettoyage de sortie, y compris pour un passage en échec, sans modifier son
+résultat. Le nettoyage attend au plus environ deux secondes avant d’envoyer
+un arrêt forcé aux seules commandes de diagnostic de ce groupe.
+
+À la sortie de chaque passage instrumenté, le script tente aussi de conserver
+les sorties Android `dumpsys meminfo` de l’application, `gfxinfo framestats`,
+`cpuinfo`, `package` et `thermalservice`, en plus des fenêtres et de logcat.
+`diagnostic-snapshots.tsv` indique l’heure UTC et le code de sortie de chaque
+commande ; chaque tentative est limitée à dix secondes. Ces fichiers restent
+dans les preuves de validation du passage, sur l’émulateur jetable et ses seuls
+contenus synthétiques. Le recueil est aussi tenté si la préparation échoue :
+les métadonnées précisent alors le statut de sortie du script, sans prétendre
+qu’une instrumentation a eu lieu.
+
+Il s’agit d’**échantillons pendant le parcours et d’instantanés à sa fin**, pas
+d’un benchmark de visionnage continu. Un processus déjà arrêté ou un service indisponible peut
+ne fournir aucune mesure exploitable ; ce cas ne fait pas échouer une suite
+réussie et ne masque jamais son statut initial. Les données ne prouvent ni un
+nombre d’images par seconde stable pendant un film, ni la latence acoustique,
+la qualité vocale, l’autonomie ou les performances du téléphone cible. Aucun
+résultat chiffré n’est attribué à ces commandes avant lecture de leurs sorties
+sur le run effectivement exécuté.
+
+Dans les preuves du premier [run 40352075138](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40352075138), les instantanés finaux mémoire/trames des deux passages indiquaient `No process found`, bien que les commandes retournent zéro. Ils ne constituent donc pas des mesures mémoire ou de fluidité de l’application. Le recueil pendant l’instrumentation est ajouté pour observer aussi des phases où son processus est actif ; sa présence dans le script ne remplace pas la lecture des preuves du passage suivant.
+
+### Contrôles d’outillage exécutés le 26 octobre 2026
+
+Les commandes suivantes ont réellement réussi sur l’arbre de travail de la
+candidate :
+
+```sh
+python3 tools/check-project.py
+python3 tools/test-publish-verified-release.py
+python3 tools/test-emulator-readiness.py
+python3 tools/test_sync_releases.py
+python3 tools/test-documentation-cleanup.py
+```
+
+Le contrôle structurel a examiné **67 fichiers Kotlin de production**, les XML,
+la configuration réseau, la démonstration synthétique et l’absence de clé privée
+versionnée. Les suites comportementales ont réussi **19 + 20 + 13 + 10 = 62 tests
+Python**, dont les nouveaux contrôles de démarrage de l’émulateur. Elles utilisent des réponses contrôlées en mémoire : ce résultat ne
+constitue ni une publication réelle ni une validation Android.
+
+### Échecs intermédiaires conservés
+
+Les passages de développement ont révélé des annulations de réglages et d’aperçu
+qui intervenaient trop tard, une pause de compréhension susceptible de rester
+bloquée, ainsi qu’une perte de répétitions SRT strictement simultanées lorsque
+seuls les groupes de rendu étaient utilisés. Des corrections et des régressions
+spécifiques sont ajoutées. Leur présence ne vaut pas réussite du passage final.
+Une exécution interrompue, un rapport incomplet ou un XML d’un passage précédent
+ne doit pas être compté comme un succès.
+
+Le [run 40352075138](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40352075138)
+a exécuté les 87 méthodes instrumentées deux fois : **81 réussites et 6 échecs
+à chaque passage**. Les erreurs concernaient les boutons de fermeture des
+réglages rognés en grande police et deux attentes de tests devenues inexactes
+après l’ajout des nouvelles commandes. Les actions des réglages ont été placées
+dans une zone séparée du contenu défilant ; les tests exigent toujours des
+boutons entièrement visibles et vérifient les dix champs réels du formulaire
+de traduction.
+
+Le [run 40358043991](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40358043991)
+a ensuite exécuté les mêmes 87 méthodes deux fois : **86 réussites et un échec
+à chaque passage**. Le dernier échec provenait du contrôle de défilement du
+formulaire, qui mélangeait les coordonnées de l’écran et celles de la fenêtre
+du dialogue. La correction emploie le même repère pour le champ et sa zone
+visible, sans relâcher les exigences de visibilité ni supprimer de test.
+
+Le [run 40365760856](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40365760856)
+de la [PR #13](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/13),
+dont la tête était `c14e85fa906610f5ddaafd0ac5c95b75f5edbfe1`, a réellement réussi
+les six suites : **166 + 226** méthodes JVM en debug, **166 + 226** en release,
+puis **87 + 87** méthodes instrumentées sur la même paire d’APK release. Ses
+rapports établissent **958 exécutions réussies**, sans échec, erreur ni test
+ignoré, manquant, inattendu ou dupliqué. Le commit effectivement extrait par
+Actions était le commit de fusion provisoire de la proposition
+`2abca37882dd768259e658a3f790f5fc894e1b1c`, consigné dans
+`build/verification/source-commit.txt` ; il ne faut pas le confondre avec la
+tête de branche ni avec une fusion publiée dans `main`. Le rapport lint release
+contient **0 erreur, 69 avertissements et une indication** : recommandations
+KTX, internationalisation, versions de dépendances, constructeurs de vues,
+règles de sauvegarde et détection statique d’un clic déjà transmis à
+`performClick()` par le détecteur de gestes. Aucun de ces avertissements n’a
+été masqué pour obtenir ce résultat.
+
+Ce passage réussi reste une étape de développement. Une revue ciblée a ensuite
+reproduit deux défauts de sélection de la réplique à relire : remettre en file
+une ancienne occurrence déjà terminée pouvait la faire passer pour la dernière
+achevée ; abandonner une réplique en attente qui n’avait jamais commencé pouvait
+masquer l’interruption de celle réellement commencée. Le correctif et ses
+régressions sont en cours de vérification. Les résultats ci-dessus ne valident
+pas encore ces changements supplémentaires, `main` ni un APK distribué.
+
+La [tentative 1 du run 40374255289](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40374255289/attempts/1),
+tête `63cfd6a49699516cf421814f662cf399093cf492`, a réussi les suites JVM
+174/228 en debug et en release ainsi que les compilations et contrôles d’APK,
+puis s’est arrêtée **avant toute instrumentation Android**. Le garde-fou a
+détecté un ANR de `com.android.systemui` au démarrage ; les diagnostics package
+confirment que notre application n’était pas encore installée et les sorties
+mémoire indiquent `No process found`. Aucun test Android de cette tentative ne
+compte comme exécuté. L’archive de rapports conservée a pour SHA-256
+`1d921c3fce99a22192a4920053639f15f993c9327f0d6ee4b466fead9682b8f6`.
+Le job complet a été relancé sur un nouvel environnement sans fermer le dialogue,
+retirer le garde-fou ni filtrer une suite. Les logs montrent une forte pression
+CPU au démarrage et aucune saturation mémoire détectée ; cela motive un essai
+avec quatre cœurs d’émulateur, sans prétendre établir la cause ni garantir
+l’absence d’ANR système. Les [ressources standard du runner public Ubuntu](https://docs.github.com/actions/using-jobs/choosing-the-runner-for-a-job)
+sont documentées par GitHub ; les ressources réellement observées restent dans
+les preuves de chaque run.
+
+La [tentative 2 de ce même run 40374255289](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40374255289/attempts/2)
+a ensuite réussi les six suites de cette tête `63cfd6` : **978 exécutions**, dont
+87 tests Android réellement exécutés dans chacun des deux passages. Elle ne
+valide pas les correctifs de reprise ajoutés ensuite.
+
+Une autre revue a confirmé une perte possible lors de **Reprendre après mort du
+processus** : une occurrence A dont la voix continuait à la frontière de B pouvait
+avoir expiré visuellement à la position sauvegardée. Restaurer seulement le
+journal et la position ne reconstruisait pas cette file. La candidate conserve
+donc un repère de la vraie file inachevée, distinct des interruptions historiques
+après déplacement. Les tests de cette correction couvrent aussi la restauration
+de la traduction, les corrections temporelles, les sauvegardes précoces et les
+commandes utilisateur qui invalident une reprise différée. Ces nouveaux
+scénarios doivent réussir sur les sources finales avant publication.
+
+La tête `c0994407f2f4c3d13c354e08b78768a09f676a2e` a passé **832 exécutions JVM**
+par tentative (178 + 238 en debug et autant en release), lint et les compilations
+dans les [tentatives 1 et 2 du run 40380367522](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40380367522).
+Les deux démarrages se sont arrêtés avant installation de l’application et
+avant tout test Android, sur un ANR de Launcher3 sans fenêtre focalisée. Les
+journaux montrent l’injection de la touche 82 par l’action d’émulation avant
+l’affichage de sa première fenêtre et avant notre script ; cette attribution
+causale reste une inférence appuyée par la chronologie. Les deux archives ont
+pour SHA-256 `75e852a2c3d184be54e7b9d15de1d638f71fee9a308f9fc446d60b4799c421bf`
+et `24d5f871992b3809ee2beb051901a06a39db79d7621b8100a604bfd597068bd2`.
+Les quatre cœurs n’ont donc pas suffi à éviter ce défaut de démarrage.
+
+Le lancement CI utilise désormais les outils CLI du SDK officiel, sans cette
+injection précoce. Un contrôle en lecture seule exige boot, service framework,
+animation arrêtée et fenêtre focalisée, affichée et stable sur trois observations.
+Le verrouillage éventuel est traité seulement après cette première vérification,
+puis la fenêtre de Launcher est vérifiée avant les deux suites existantes.
+Un ANR reste un échec immédiat ; aucun dialogue n’est fermé et aucune suite n’est
+réessayée dans le lanceur. **20 tests comportementaux** ont vérifié ce contrôle,
+ses délais et son refus des appareils physiques. Son analyseur a aussi accepté
+un vrai dump sain Android 36 et refusé un vrai dump ANR conservé. La validation
+réelle du nouveau lancement reste à établir par les runs finaux.
+
+En local, les inventaires complets finaux ont passé **178 tests core, 238 tests
+app debug et 238 tests app release**, sans échec ni méthode ignorée ou manquante.
+Deux assemblages ont rencontré un fichier dex temporaire disparu dans les sorties
+partagées. La reconstruction avec un répertoire de build isolé a ensuite réussi
+les APK debug et de tests, lint debug (**0 erreur, 67 avertissements**), manifestes,
+signatures correspondantes et alignement 16 Kio. Ces APK locaux restent des
+contrôles ; ils ne remplacent pas l’artefact exact de `main` destiné à la publication.
+
+Avant de remplacer ce statut par un bilan final, consigner le commit exact,
+les liens des runs de la proposition et de `main`, les résultats JUnit contrôlés
+contre l’inventaire, les alertes lint réellement présentes, les manifestes,
+les signatures et les empreintes de la paire d’APK. L’APK distribué doit provenir
+de l’artefact exact de la CI réussie, puis être signé avec la clé durable hors
+dépôt, contrôlé et téléchargé à nouveau après publication. Les API de comptes
+personnels, la fidélité linguistique, les voix commerciales, TalkBack, Bluetooth
+et les performances sur le téléphone cible restent des essais séparés ; aucune
+garantie universelle d’absence de défaut n’est déduite des tests automatisés.
+
 ## Version publiée 0.4.0 — résultats de référence
 
 La [release 0.4.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0), publiée le **24 octobre 2026**, est issue du commit [`32864ba`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/32864ba732d834e71d87b887ae63f0d7bc09eb8c). Le [run Android 40053284969, tentative 1](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40053284969) a réellement réussi sur ce commit de `main`.
@@ -127,10 +337,10 @@ Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcou
 | Étape | Contrôles exigés |
 | --- | --- |
 | Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 87 tests JVM du noyau, 137 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 87 tests du noyau et des 137 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Variante debug | 178 tests JVM du noyau, 238 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 178 tests du noyau et des 238 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
 | Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
-| Android 36 | Deux passages complets des 82 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
+| Android 36 | Deux passages complets des 87 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
 | Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
 
 Ces effectifs incluent les suites de la version 0.3.2 et les compléments de la
@@ -150,7 +360,8 @@ scénarios Android. Les totaux 40/41/69 de l’étape 2, 44/46/70 de l’étape 
 de l’étape 5 sont 50/64/73. La [sixième étape](docs/AUDIO_EXPERT_ETAPE_6.md)
 ajoute 27 méthodes noyau, 28 méthodes JVM de l’application et deux scénarios
 Android ; le scénario ASS de l’étape 5 est aussi étendu aux commandes DSP.
-Les effectifs exigés pour la version 0.4.0 sont **87/137/82**.
+Les effectifs de référence de la version 0.4.0 restent **87/137/82** ; ceux
+de la candidate 0.5.0 sont **178/238/87**.
 Ces nombres sont des critères à contrôler,
 pas une preuve d’exécution :
 consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
@@ -200,7 +411,22 @@ Exécuter la validation complète depuis la racine :
 gradle --no-daemon :core:clean :app:clean
 gradle --no-daemon --rerun-tasks --no-build-cache :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
 python3 tools/check-project.py
+python3 tools/test-publish-verified-release.py
+python3 tools/test_sync_releases.py
+python3 tools/test-documentation-cleanup.py
 ```
+
+Contrôler ensuite chaque rapport JVM contre les méthodes attendues :
+
+```sh
+python3 tools/verify-test-results.py --reports core/build/test-results/test --expected-count 178 --sources core/src/test/kotlin --output build/verification/local-debug-core-summary.json
+python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 238 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
+```
+
+Pour une preuve finale, fournir aussi `--not-before-ns` avec l’instant de début
+du passage, comme le workflow CI, afin de refuser les XML périmés. Après la
+variante release, utiliser `testReleaseUnitTest` et conserver séparément les
+XML debug avant de relancer le noyau.
 
 Les tests `app/src/test` emploient les vraies classes de l'application et les
 parseurs Media3 épinglés. Les petits ASS et MKV sous `app/src/test/resources/ssa`

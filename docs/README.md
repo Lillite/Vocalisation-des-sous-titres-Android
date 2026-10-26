@@ -1,65 +1,70 @@
 # Documentation de Sous-titres en voix
 
-[Accueil du projet](../README.md) · [Télécharger la version 0.4.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0)
+[Accueil du projet](../README.md) · [Guide Confort intégral 0.5.0](CONFORT_INTEGRAL_050.md) · [Validation](../TESTING.md)
 
-La version publiée **0.4.0 — édition Traduction** rassemble les **sept étapes** de développement : modularisation, diagnostics, commandes d’image, interface d’image, commandes audio, traitements audio avancés et traduction avant vocalisation. Les guides ci-dessous distinguent l’utilisation actuelle, les preuves de validation et l’historique du développement.
+Les sources **0.5.0 — Confort intégral** sont en cours de validation et de publication. Le dernier APK publié reste la [0.4.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0) tant que la publication 0.5.0 n’est pas confirmée. Les guides distinguent le fonctionnement actuel des sources, les résultats exécutés et l’historique des étapes.
 
-## Commencer sur Android
-
-| Besoin | Document |
-|---|---|
-| Télécharger l’APK, installer l’édition et découvrir ses commandes | [Présentation et démarrage rapide](../README.md) |
-| Choisir un traducteur, créer son compte et saisir ses paramètres | [Guide des moteurs de traduction](GUIDE_MOTEURS_TRADUCTION.md) |
-| Vérifier pas à pas la voix, la traduction, l’image et le son sur son téléphone | [Parcours de tests sur téléphone](TESTS_TELEPHONE.md) |
-| Essayer une piste anglaise synthétique de cinq occurrences | [Fichier SRT de démonstration](../examples/essai-traduction-en.srt) |
-| Choisir un moteur vocal Android et comprendre les modèles proposés | [Catalogue des voix et moteurs](VOIX_CATALOGUE_2026.md) |
-| Lire la description exacte de cette livraison | [Notes de la version 0.4.0](releases/0.4.0.md) |
-
-L’édition Traduction s’installe **à côté de la 0.3.2** sous l’identité `fr.soustitresvoix.player.translation`. Choisir de nouveau les fichiers, le moteur vocal et les réglages dans cette édition. Une voix française est nécessaire pour vocaliser la traduction. Les textes affichés dans la vidéo restent ceux de la piste originale.
-
-## Comprendre les fonctions et leurs limites
-
-| Sujet | Document de référence |
-|---|---|
-| Minutages et occurrences, validation complète, annulation, cache et clés API | [Traduction — étape 7](TRADUCTION_ETAPE_7.md) |
-| Azure, DeepL et serveur LibreTranslate : accès, paramètres, confidentialité et limites | [Guide des moteurs de traduction](GUIDE_MOTEURS_TRADUCTION.md) |
-| Hugging Face, formats de modèles, licences et runtimes possibles | [Étude de traduction locale](ETUDE_TRADUCTION_LOCALE.md) |
-| CPU, GPU et NPU : possibilités réelles et contraintes | [Étude de l’accélération](ETUDE_ACCELERATION.md) |
-| Cadrage, bandes, saisie précise et paramètres de l’image | [Interface d’image — étape 4](INTERFACE_IMAGE_ETAPE_4.md) |
-| Volumes, atténuation du film et fondus | [Commandes audio — étape 5](COMMANDES_AUDIO_ETAPE_5.md) |
-| Préampli, cinq bandes paramétriques, balance, mono et limiteur | [Audio avancé — étape 6](AUDIO_EXPERT_ETAPE_6.md) |
-
-**Aucun moteur local de traduction, import de modèle Hugging Face ou OCR n’est intégré dans la 0.4.0.** Une traduction complète déjà en cache peut être réutilisée sans réseau ; cela ne constitue pas une nouvelle traduction locale. Les études présentent des candidats et les travaux nécessaires, pas des fonctions disponibles. Le moteur vocal Android est externe au lecteur ; son installation ne crée pas de moteur de traduction.
-
-## Développer et vérifier
+## Utiliser la version 0.5.0 sur téléphone
 
 | Besoin | Document |
-|---|---|
-| Comprendre les composants et les invariants de lecture | [Architecture](ARCHITECTURE.md) |
-| Retrouver les interfaces de composants | [Modularisation — étape 1](MODULARISATION_ETAPE_1.md) |
-| Distinguer capacités déclarées, paramètres demandés et observations | [Capacités et observations — étape 2](CAPACITES_ETAPE_2.md) |
-| Comprendre les commandes d’image et leur validation | [Commandes d’image — étape 3](COMMANDES_IMAGE_ETAPE_3.md) |
-| Compiler, exécuter les tests et contrôler l’APK signé | [Procédure et résultats de validation](../TESTING.md) |
-| Préparer une modification et sa fusion dans `main` | [Contribution](../CONTRIBUTING.md) |
-| Lire les consignes de développement | [AGENTS.md](../AGENTS.md) |
-| Retrouver les commits, fusions, archives et sources des APK | [Historique des branches et publications](HISTORIQUE_BRANCHES.md) |
-| Parcourir les changements par version | [Journal des changements](../CHANGELOG.md) |
+| --- | --- |
+| Installer, choisir une voix et ouvrir une vidéo | [Présentation et démarrage rapide](../README.md) |
+| Trouver les huit rubriques, rechercher et régler précisément | [Guide Confort intégral](CONFORT_INTEGRAL_050.md#réglages--huit-rubriques-et-une-recherche) |
+| Conserver les phrases, consulter le bilan et relire une interruption | [Lecture et suivi](CONFORT_INTEGRAL_050.md#suivi-des-occurrences-et-bilan) |
+| Retrouver la séance ou réparer l’accès à un fichier | [Séances et réparation](CONFORT_INTEGRAL_050.md#séances-mémorisées-et-réparation-daccès) |
+| Corriger décalage, dérive et portions | [Synchronisation](CONFORT_INTEGRAL_050.md#synchronisation--décalage-dérive-et-portions) |
+| Préparer les voix et vérifier la disponibilité hors ligne | [Conservation hors ligne](CONFORT_INTEGRAL_050.md#conserver-pour-une-écoute-hors-ligne) |
+| Traduire avant lecture ou progressivement, reprendre et exporter | [Traduction 0.5.0](CONFORT_INTEGRAL_050.md#traduction-complète-reprise-et-mode-progressif) |
+| Configurer les comptes Azure, DeepL et LibreTranslate | [Guide des moteurs de traduction](GUIDE_MOTEURS_TRADUCTION.md) |
+| Choisir un moteur vocal externe | [Catalogue des voix et moteurs](VOIX_CATALOGUE_2026.md) |
+| Vérifier les parcours sur un téléphone réel | [Tests sur téléphone](TESTS_TELEPHONE.md) |
+| Lire tous les changements de la version | [Notes 0.5.0](releases/0.5.0.md), [journal des changements](../CHANGELOG.md) |
 
-L’APK 0.4.0 correspond au commit [`32864ba`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/32864ba732d834e71d87b887ae63f0d7bc09eb8c), validé par le [run Android 40053284969](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40053284969) : **612 exécutions réussies**, ainsi que **39 tests Python d’outillage** dans les workflows concernés. Lint relève zéro erreur et 51 avertissements dans chaque variante. Les nombres, environnements, erreurs corrigées et limites des preuves sont détaillés dans [TESTING.md](../TESTING.md).
+La 0.5.0 garde l’identité de l’édition Traduction 0.4.0 et doit être signée avec son certificat durable pour la mettre à jour. La stable 0.3.2 reste une application distincte. Les originaux vidéo ne sont pas modifiés. L’affichage propose original, français, bilingue ou masqué ; la narration utilise la piste choisie indépendamment.
 
-Les tests sur émulateur ne déclarent pas réussis les essais manuels sur un téléphone réel, TalkBack, la qualité acoustique d’une voix ou la qualité linguistique des fournisseurs. Les guides des étapes 1 à 6 conservent leurs états intermédiaires avec un avertissement historique ; leurs fonctions sont regroupées dans la version publiée.
+## Références des fonctions conservées
 
-## Consulter les versions précédentes
+| Sujet | Document |
+| --- | --- |
+| Cadrage, bandes, corrections, zoom, luminosité et saisie précise | [Interface d’image — étape 4](INTERFACE_IMAGE_ETAPE_4.md) |
+| Volumes, fondus et atténuation du film | [Commandes audio — étape 5](COMMANDES_AUDIO_ETAPE_5.md) |
+| Préampli, égaliseur, balance, mono et limiteur | [Audio expert — étape 6](AUDIO_EXPERT_ETAPE_6.md) |
+| Intégrité des occurrences et contrat initial de traduction complète | [Traduction — référence 0.4.0](TRADUCTION_ETAPE_7.md) |
+| CPU/GPU/NPU, ressources et mesures nécessaires | [Étude de l’accélération](ETUDE_ACCELERATION.md) |
+| Modèles locaux, catalogues, runtimes et limites | [Étude de traduction locale](ETUDE_TRADUCTION_LOCALE.md) |
 
-| Version ou document | Objet conservé |
-|---|---|
-| [0.3.2 — ancienne stable](releases/0.3.2.md) | Édition antérieure, avec identité et signature distinctes |
-| [0.3.1 — préversion Cinéma](releases/0.3.1-cinema-test.md) | Cadrage et correctifs de cette préversion |
+Le guide 0.5.0 prévaut pour le mode progressif, la reprise des lots, la conservation, les exports et le choix d’affichage ajoutés après la 0.4.0. Les contrats d’étape conservent leurs résultats et limites historiques.
+
+**Aucun OCR, moteur local de traduction, import Hugging Face ou service de lecture durable en arrière-plan n’est intégré ici.** Réutiliser une traduction conservée sans réseau ne constitue pas une nouvelle traduction locale. Les profils de préparation ne prouvent pas un usage neuronal du GPU/NPU.
+
+## Développer, tester et contribuer
+
+| Besoin | Document |
+| --- | --- |
+| Vérifier la couverture de toutes les demandes 0.5.0 et les tests associés | [Matrice de couverture 0.5.0](COUVERTURE_DEMANDES_050.md) |
+| Résultats attachés au commit distribué, compilation et contrôle APK | [TESTING.md](../TESTING.md) |
+| Architecture et invariants de lecture | [Architecture](ARCHITECTURE.md) |
+| Interfaces et composition des composants | [Modularisation — étape 1](MODULARISATION_ETAPE_1.md) |
+| Capacités déclarées, demandes, configuration et observations | [Capacités — étape 2](CAPACITES_ETAPE_2.md) |
+| Contrat des commandes d’image | [Commandes d’image — étape 3](COMMANDES_IMAGE_ETAPE_3.md) |
+| Fusion des modifications vérifiées dans main | [Contribution](../CONTRIBUTING.md), [AGENTS.md](../AGENTS.md) |
+| Archives, commits, branches et sources des APK précédents | [Historique](HISTORIQUE_BRANCHES.md) |
+| Démonstration anglaise de cinq occurrences | [SRT synthétique](../examples/essai-traduction-en.srt) |
+
+La validation de la 0.5.0 reste à terminer. Les chiffres de la 0.4.0 et de ses maintenances ne sont pas des résultats de ces nouvelles sources. Un test sur émulateur ne déclare pas réussis TalkBack réel, l’écoute d’une voix commerciale, un compte API personnel, la fidélité linguistique, l’autonomie ou les performances du OnePlus 15.
+
+## Versions et développement antérieurs
+
+| Version ou document | Repère |
+| --- | --- |
+| [0.4.0 — Traduction](releases/0.4.0.md) | Version publiée le 24 octobre 2026 ; sept étapes consolidées |
+| [0.3.2 — ancienne stable](releases/0.3.2.md) | Identité et signature distinctes |
+| [0.3.1 — préversion Cinéma](releases/0.3.1-cinema-test.md) | Cadrage et corrections de cette série |
 | [0.2.0 — préversion Cinéma](releases/0.2.0-cinema-test.md) | Première série Cinéma |
 | [0.1.0 — première préversion](releases/0.1.0-test.md) | Première livraison |
-| [Révision 0.3](REVISION_03.md) | Adaptatif, préparation, cadrage, audio et limites de l’époque |
-| [Révision 0.3.1](REVISION_031.md) | Corrections et constats des validations de cette série |
-| [Couverture des demandes 0.3.1](COUVERTURE_DEMANDES_031.md) | Correspondance entre demandes, code, preuves et limites |
-| [Régression Android initiale](REGRESSION_ANDROID.md) | Exception du moteur d’expressions régulières Android et contrôles ajoutés |
+| [Révision 0.3](REVISION_03.md) | Adaptatif, préparation, cadrage et audio de l’époque |
+| [Révision 0.3.1](REVISION_031.md) | Corrections et constats de validation |
+| [Couverture des demandes 0.3.1](COUVERTURE_DEMANDES_031.md) | Correspondance demandes/code/preuves |
+| [Régression Android initiale](REGRESSION_ANDROID.md) | Défaut d’expressions régulières et contrôles ajoutés |
 
-Pour installer la version actuelle, partir des liens de téléchargement en tête de page. Les anciens identifiants d’application, signatures, effectifs de tests et instructions de branche restent des informations historiques.
+Les anciens numéros, signatures, branches et effectifs restent historiques. Pour l’APK actuel, suivre le lien disponible en tête du README et vérifier les preuves de cette publication.

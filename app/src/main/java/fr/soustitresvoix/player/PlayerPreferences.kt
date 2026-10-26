@@ -37,8 +37,12 @@ class PlayerPreferences(context: Context) {
     var voiceName: String
         get() = p.getString("voiceName", "") ?: ""
         set(v) { p.edit().putString("voiceName", v).apply() }
-    val mode get() = runCatching { NarrationMachine.Mode.valueOf(p.getString("mode", "")!!) }.getOrDefault(
-        if (comfort) NarrationMachine.Mode.COMFORT else NarrationMachine.Mode.CONTINUOUS)
+    val mode get(): NarrationMachine.Mode {
+        val chosen = runCatching { NarrationMachine.Mode.valueOf(p.getString("mode", "")!!) }.getOrDefault(
+            if (comfort) NarrationMachine.Mode.COMFORT else NarrationMachine.Mode.CONTINUOUS)
+        return if (bool("integralReading", true) && chosen == NarrationMachine.Mode.CONTINUOUS)
+            NarrationMachine.Mode.COMFORT else chosen
+    }
     fun setMode(mode: NarrationMachine.Mode) { p.edit().putString("mode", mode.name).apply() }
     var enginePackage: String
         get() = p.getString("engine", "") ?: ""
@@ -67,13 +71,40 @@ class PlayerPreferences(context: Context) {
     val adaptiveMax get() = int("adaptiveMax", 180, 100, 250) / 100f
     val resumePolicy get() = NarrationMachine.ResumePolicy.values()[int("resumePolicy", 0, 0, 2)]
     val cacheEnabled get() = bool("cache", true)
-    val cacheBytes get() = int("cacheMiB", 256, 16, 2048).toLong() * 1024 * 1024
-    val lookAheadCount get() = int("lookAheadCount", 64, 1, 512)
-    val lookAheadSeconds get() = int("lookAheadSeconds", 45, 5, 600)
+    val cacheBytes get() = int("cacheMiB", 512, 16, 8192).toLong() * 1024 * 1024
+    val lookAheadCount get() = int("lookAheadCount", 256, 1, 4096)
+    val lookAheadSeconds get() = int("lookAheadSeconds", 120, 5, 7200)
     val allowedLagMs get() = int("allowedLagMs", 600, 0, 2000)
     val protectFrame get() = bool("protectFrame", true)
-    val filters get() = fr.soustitresvoix.core.SpeechTools.Filters(skipDescriptions,
-        bool("skipSpeakers"), bool("skipSongs"), bool("skipNotes"))
+    val filters get() = if (bool("integralReading", true)) fr.soustitresvoix.core.SpeechTools.Filters()
+        else fr.soustitresvoix.core.SpeechTools.Filters(skipDescriptions,
+            bool("skipSpeakers"), bool("skipSongs"), bool("skipNotes"))
+    /** Only user settings. Media locations, journal data and credentials never enter this snapshot. */
+    fun settingsSnapshot(): Map<String, Any> = p.all.filterKeys { it in SETTINGS_KEYS }
+        .mapNotNull { (key, value) -> value?.takeIf { it is Boolean || it is Int || it is Long || it is Float || it is String }?.let { key to it } }.toMap()
+
+    fun restoreSettings(snapshot: Map<String, Any>) {
+        p.edit {
+            SETTINGS_KEYS.forEach { remove(it) }
+            snapshot.forEach { (key, value) -> if (key in SETTINGS_KEYS) when (value) {
+                is Boolean -> putBoolean(key, value)
+                is Int -> putInt(key, value)
+                is Long -> putLong(key, value)
+                is Float -> if (value.isFinite()) putFloat(key, value)
+                is String -> if (value.length <= 65_536) putString(key, value)
+            } }
+        }
+    }
+    companion object {
+        internal val SETTINGS_KEYS = setOf("narration", "comfort", "speechRate", "movieVolume", "duckVolume",
+            "voiceVolume", "subtitleSp", "skipDescriptions", "showSubtitles", "voiceName", "mode", "engine",
+            "duckAttack", "duckRelease", "duckHold", "spectralDucking", AudioDspPreferences.KEY,
+            "adaptiveMax", "resumePolicy", "cache", "cacheMiB", "lookAheadCount", "lookAheadSeconds", "allowedLagMs",
+            "protectFrame", "skipSpeakers", "skipSongs", "skipNotes", "matchFrameRate", "preferSoftware",
+            "imageMode", "imageDefaultMode", "orientation", "gestures", "gestureSeek", "gestureLevels", "gestureZoom",
+            "controlsTimeout", "performanceProfile", "modelRevision", "comprehensionPauseMs",
+            "comprehensionProfile", "integralReading", "translationDisplay")
+    }
     fun lastMedia(): SavedMedia? {
         val uri = p.getString("lastUri", null) ?: return null
         return SavedMedia(uri, p.getString("lastTitle", "Vidéo") ?: "Vidéo",

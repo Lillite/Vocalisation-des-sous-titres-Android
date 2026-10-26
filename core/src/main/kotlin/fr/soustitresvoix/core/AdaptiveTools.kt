@@ -6,10 +6,26 @@ import kotlin.math.ceil
 
 /** Punctuation is retained for the TTS engine. No silence is removed from audio. */
 object LinguisticSegments {
-    const val VERSION = "fr-boundaries-5"
+    const val VERSION = "language-boundaries-6"
     private val abbreviations = setOf("m", "mm", "mme", "mmes", "mlle", "dr", "pr", "prof", "st", "ste", "mr", "mrs", "ms", "etc", "cf", "av", "art", "vol", "p", "pp", "fig", "n", "no")
+    private val languageAbbreviations = mapOf(
+        "fr" to setOf("m", "mm", "mme", "mmes", "mlle", "pr", "ste", "av", "art", "tél", "env", "éd"),
+        "en" to setOf("mr", "mrs", "ms", "dr", "prof", "sr", "jr", "rev", "gen", "hon", "vs", "approx"),
+        "de" to setOf("hr", "fr", "dr", "prof", "bzw", "usw", "ggf", "str", "abb", "ca", "nr"),
+        "es" to setOf("sr", "sra", "srta", "dr", "dra", "ud", "uds", "núm", "aprox", "pág"),
+        "it" to setOf("sig", "sigg", "sigra", "sig.na", "dott", "dottssa", "prof", "ing", "avv", "ecc", "pag"),
+        "pt" to setOf("sr", "sra", "srta", "dr", "dra", "prof", "exmo", "aprox", "pág"),
+        "ru" to setOf("г", "ул", "д", "кв", "рис", "стр", "им", "тов", "проф"),
+        "sr" to setOf("dr", "mr", "prof", "br", "str", "god", "др", "мр", "проф", "бр", "стр", "год")
+    )
+    private fun abbreviationsFor(languageTag: String?): Set<String> {
+        val language = languageTag?.substringBefore('-')?.substringBefore('_')?.lowercase(Locale.ROOT)
+        // Unknown/unspecified language retains the historical conservative rules.
+        return languageAbbreviations[language]?.plus(setOf("etc", "cf", "fig", "vol", "no")) ?: abbreviations
+    }
     private val speaker = Regex("^\\s*(?:[-–—]\\s+|[\\p{Lu}][\\p{Lu}\\p{N} _'’.-]{0,35}:\\s+)")
-    fun split(text: String): List<String> {
+    fun split(text: String, languageTag: String? = null): List<String> {
+        val protectedAbbreviations = abbreviationsFor(languageTag)
         if (text.isBlank()) return emptyList()
         val paragraphs = mutableListOf<String>(); val current = StringBuilder()
         text.replace("\r\n", "\n").replace('\r', '\n').lines().forEach { line ->
@@ -27,7 +43,7 @@ object LinguisticSegments {
                 if (c !in ".!?…。！？؟۔।॥") { i++; continue }
                 val decimal = c == '.' && i > 0 && i + 1 < p.length && p[i-1].isDigit() && p[i+1].isDigit()
                 val token = p.substring(start, i).takeLastWhile { it.isLetter() }.lowercase(Locale.ROOT)
-                val abbreviation = c == '.' && (token in abbreviations || (token.length == 1 && token[0].isLetter()))
+                val abbreviation = c == '.' && (token in protectedAbbreviations || (token.length == 1 && token[0].isLetter()))
                 var end = i + 1
                 while (end < p.length && p[end] in ".!?…。！？؟۔।॥\"'’»”)]」』】）》") end++
                 // French typography places a space before a closing guillemet.
@@ -57,9 +73,20 @@ object LinguisticSegments {
 class SpeechDurationModel {
     private val wordsPattern = Regex("[\\p{L}\\p{N}]+(?:['’][\\p{L}]+)*")
     private val naturalDurations = LinkedHashMap<String, Long>()
+    private val measuredDurations = LinkedHashMap<Pair<String, Int>, Long>()
+    /** WAV durations for this exact text/rate; callers clear on any voice configuration change. */
+    @Synchronized fun rememberMeasured(text: String, durationMs: Long, baseRate: Float) {
+        if (text.isBlank() || text.length > 24_000 || durationMs !in 1..180_000 || !baseRate.isFinite()) return
+        val key = text to baseRate.toBits()
+        measuredDurations.remove(key)
+        measuredDurations[key] = durationMs
+        while (measuredDurations.size > 4096) measuredDurations.remove(measuredDurations.keys.first())
+    }
+    @Synchronized fun measured(text: String, baseRate: Float): Long? = measuredDurations[text to baseRate.toBits()]
     private var correction = 1.0
     var observations = 0; private set
-    fun estimate(text: String, baseRate: Float): Long {
+    @Synchronized fun estimate(text: String, baseRate: Float): Long {
+        measured(text, baseRate)?.let { return it }
         val natural = naturalDurations.getOrPut(text) {
             val words = wordsPattern.findAll(text).count()
             val letters = text.count { it.isLetterOrDigit() }
@@ -71,13 +98,13 @@ class SpeechDurationModel {
         if (naturalDurations.size > 256) naturalDurations.remove(naturalDurations.keys.first())
         return (natural * correction / baseRate.coerceIn(0.6f, 2f)).toLong().coerceIn(150, 180_000)
     }
-    fun observe(text: String, normalizedAudioMs: Long, baseRate: Float) {
+    @Synchronized fun observe(text: String, normalizedAudioMs: Long, baseRate: Float) {
         if (normalizedAudioMs !in 200..180_000 || text.length < 6) return
         val old = estimate(text, baseRate).toDouble()
         val ratio = (normalizedAudioMs / old).coerceIn(0.65, 1.6)
         correction = (correction * (0.8 + 0.2 * ratio)).coerceIn(0.5, 2.5); observations++
     }
-    fun clear() { correction = 1.0; observations = 0; naturalDurations.clear() }
+    @Synchronized fun clear() { correction = 1.0; observations = 0; naturalDurations.clear(); measuredDurations.clear() }
 }
 
 object AdaptiveTiming {
