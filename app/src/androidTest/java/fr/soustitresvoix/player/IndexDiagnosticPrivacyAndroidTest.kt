@@ -106,12 +106,14 @@ class IndexDiagnosticPrivacyAndroidTest {
                         ClipData.newPlainText("Diagnostic regression sentinel", "No diagnostic copied yet"))
                 }
                 onView(withText("Réglages de la voix et du confort")).perform(scrollTo(), click())
+                onView(androidx.test.espresso.matcher.ViewMatchers.withContentDescription("Rechercher dans les huit rubriques de réglages"))
+                    .inRoot(isDialog()).perform(androidx.test.espresso.action.ViewActions.replaceText("diagnostic"), androidx.test.espresso.action.ViewActions.closeSoftKeyboard())
                 // Target each dialog explicitly: an unscoped Back can select
                 // the unfocused activity while the dialog below regains focus.
                 // Nested use scopes also preserve an assertion failure if a
                 // later dialog cleanup fails, and still attempt both closures.
                 Closeable {
-                    onView(withText("Appliquer et fermer")).inRoot(isDialog()).perform(click())
+                    onView(withText("Fermer")).inRoot(isDialog()).perform(click())
                 }.use {
                     onView(withText("Copier le diagnostic complet")).inRoot(isDialog()).perform(scrollTo(), click())
                     Closeable {

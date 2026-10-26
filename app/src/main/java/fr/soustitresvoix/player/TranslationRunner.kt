@@ -15,29 +15,98 @@ import java.nio.charset.CodingErrorAction
  * validated track is committed. A cache miss (including a corrupt entry) uses the
  * engine only within an explicitly requested run; there are no automatic retries.
  */
-class TranslationRunner(private val directory: File) {
+class TranslationRunner(private val directory: File,
+    checkpointDirectory: File? = null, private val retainedDirectory: File? = null) {
+    private val checkpoints = checkpointDirectory?.let { TranslationCheckpointStore(it) }
+    fun checkpointSummary(plan: TranslationPlan): Pair<Int, Boolean> = checkpoints?.read(plan)?.let { it.texts.size to it.uncertainRequest } ?: (0 to false)
+    @Synchronized fun readExisting(plan: TranslationPlan, expectedResultFingerprint: String? = null): TranslatedTrack? =
+        readRetained(plan, expectedResultFingerprint) ?: read(plan)?.takeIf { expectedResultFingerprint == null || it.fingerprint == expectedResultFingerprint }
+    /** Explicit durable retention; never evicts another saved translation. */
+    @Synchronized fun retain(plan: TranslationPlan, track: TranslatedTrack): Boolean {
+        val destination = retainedDirectory ?: return false
+        require(plan.complete(track.cues.map { it.text }).fingerprint == track.fingerprint)
+        cacheWarning = null
+        write(plan, track, destination, false)
+        return cacheWarning == null
+    }
+    /** Each offline work owns its copy, so deleting it cannot unpin another work. */
+    @Synchronized fun retainForWork(workKey: String, plan: TranslationPlan, track: TranslatedTrack): Boolean {
+        if (!WORK_KEY.matches(workKey)) return false
+        val root = retainedDirectory ?: return false
+        val works = File(root, "works")
+        val destination = File(works, workKey)
+        if (!destination.isDirectory && workFolders().size >= MAX_RETAINED_WORKS) return false
+        require(plan.complete(track.cues.map { it.text }).fingerprint == track.fingerprint)
+        cacheWarning = null
+        write(plan, track, destination, false)
+        return cacheWarning == null
+    }
+    @Synchronized fun removeRetained(plan: TranslationPlan): Boolean = retainedDirectory?.let { folder ->
+        val atomic = AtomicFile(file(plan, folder)); atomic.delete(); !file(plan, folder).exists()
+    } ?: false
+    /** Only owned private translation files of this exact work are removed. */
+    @Synchronized fun removeRetainedForWork(workKey: String): Boolean {
+        if (!WORK_KEY.matches(workKey)) return false
+        val root = retainedDirectory ?: return false
+        val folder = File(File(root, "works"), workKey)
+        val entries = folder.listFiles()?.filter { it.isFile && owned(it) }.orEmpty()
+        entries.forEach { entry ->
+            val name = entry.name.removeSuffix(".bak").removeSuffix(".new")
+            AtomicFile(File(folder, name)).delete()
+        }
+        val removed = folder.listFiles()?.none { it.isFile && owned(it) } ?: true
+        if (folder.listFiles()?.isEmpty() == true) folder.delete()
+        return removed
+    }
+    @Synchronized fun retainedStorageSummary(): Pair<Int, Long> {
+        val files = retainedDirectory?.listFiles()?.filter { it.isFile && ENTRY.matches(it.name) }.orEmpty() +
+            workFolders().flatMap { folder -> folder.listFiles()?.filter { it.isFile && ENTRY.matches(it.name) }.orEmpty() }
+        return files.size to files.sumOf { it.length() }
+    }
+    private fun workFolders(): List<File> = retainedDirectory?.let { File(it, "works").listFiles() }
+        ?.filter { it.isDirectory && WORK_KEY.matches(it.name) }?.take(MAX_RETAINED_WORKS).orEmpty()
+    private fun readRetained(plan: TranslationPlan, expectedResultFingerprint: String? = null): TranslatedTrack? {
+        fun matches(track: TranslatedTrack?) = track?.takeIf { expectedResultFingerprint == null || it.fingerprint == expectedResultFingerprint }
+        matches(retainedDirectory?.let { read(plan, it) })?.let { return it }
+        return workFolders().firstNotNullOfOrNull { matches(read(plan, it)) }
+    }
     /** A cache write is optional; its failure must not discard a valid paid result. */
     var cacheWarning: String? = null
         private set
 
     @Synchronized fun run(plan: TranslationPlan, engine: TranslationEngine,
-        cancelled: () -> Boolean, progress: (done: Int, total: Int) -> Unit): TranslatedTrack {
+        cancelled: () -> Boolean, progress: (done: Int, total: Int) -> Unit): TranslatedTrack =
+        run(plan, engine, cancelled, progress, TranslationRunPolicy())
+
+    @Synchronized fun run(plan: TranslationPlan, engine: TranslationEngine,
+        cancelled: () -> Boolean, progress: (done: Int, total: Int) -> Unit,
+        policy: TranslationRunPolicy, validatedPrefix: (List<String>) -> Unit = {}): TranslatedTrack {
         cacheWarning = null
         checkCancelled(cancelled)
         if (engine.id != plan.providerId) throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
         // Validate the entire batching plan before sending even its first request.
         val batches = plan.batches(MAX_BATCH_CHARACTERS, MAX_BATCH_ITEMS)
-        read(plan)?.let { track ->
+        (readRetained(plan) ?: read(plan))?.let { track ->
             checkCancelled(cancelled)
             progress(plan.cues.size, plan.cues.size)
             return track
         }
         checkCancelled(cancelled)
         progress(0, plan.cues.size)
-        val texts = ArrayList<String>(plan.cues.size)
-        var translatedCharacters = 0L
+        val restored = checkpoints?.read(plan)
+        val texts = ArrayList<String>(plan.cues.size).apply { restored?.texts?.let { addAll(it) } }
+        // Only whole validated batch boundaries are resumable. No partial request is guessed.
+        val validBoundary = texts.size == plan.cues.size || batches.any { it.firstIndex == texts.size }
+        if (!validBoundary) texts.clear()
+        if (texts.isNotEmpty()) { progress(texts.size, plan.cues.size); validatedPrefix(texts.toList()) }
+        val remainingCharacters = plan.cues.drop(texts.size).sumOf { it.text.length.toLong() }
+        if (remainingCharacters > policy.maximumNewCharacters) throw TranslationFailure(TranslationFailure.Reason.BUDGET)
+        var translatedCharacters = texts.sumOf { it.length.toLong() }
         for (batch in batches) {
+            if (batch.firstIndex < texts.size) continue
             checkCancelled(cancelled)
+            // Mark the request before sending: a lost response may already have consumed quota.
+            checkpoints?.let { if (!it.write(plan, texts, true)) cacheWarning = "La progression n’a pas pu être enregistrée ; garde cette session ouverte." }
             val response = engine.translate(batch.texts, plan.sourceLanguage, plan.targetLanguage, cancelled).toList()
             checkCancelled(cancelled)
             // Validate each response immediately, so an invalid first lot cannot
@@ -51,6 +120,8 @@ class TranslationRunner(private val directory: File) {
             translatedCharacters += response.sumOf { it.length.toLong() }
             if (translatedCharacters > TranslationPlan.MAX_TRACK_CHARACTERS)
                 throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
+            checkpoints?.let { if (!it.write(plan, texts, false)) cacheWarning = "Un lot validé n’a pas pu être enregistré pour la reprise." }
+            validatedPrefix(texts.toList())
             progress(texts.size, plan.cues.size)
         }
         checkCancelled(cancelled)
@@ -58,6 +129,8 @@ class TranslationRunner(private val directory: File) {
             catch (_: IllegalArgumentException) { throw TranslationFailure(TranslationFailure.Reason.RESPONSE) }
         checkCancelled(cancelled)
         write(plan, result)
+        // Preserve a fully validated journal if the evictable cache could not be committed.
+        if (read(plan)?.fingerprint == result.fingerprint) checkpoints?.remove(plan)
         checkCancelled(cancelled)
         return result
     }
@@ -67,11 +140,11 @@ class TranslationRunner(private val directory: File) {
         directory.listFiles()?.filter { owned(it) }?.forEach { it.delete() }
     }
 
-    private fun read(plan: TranslationPlan): TranslatedTrack? = try {
-        val atomic = AtomicFile(file(plan))
+    private fun read(plan: TranslationPlan, folder: File = directory): TranslatedTrack? = try {
+        val atomic = AtomicFile(file(plan, folder))
         // AtomicFile may restore a previous complete copy after process death.
         atomic.openRead().use { stream ->
-            val base = file(plan)
+            val base = file(plan, folder)
             if (base.length() !in 1..MAX_CACHE_BYTES) return null
             DataInputStream(stream.buffered()).use { input ->
                 if (input.readInt() != MAGIC || input.readInt() != VERSION) return null
@@ -95,7 +168,7 @@ class TranslationRunner(private val directory: File) {
         }
     } catch (_: Exception) { null }
 
-    private fun write(plan: TranslationPlan, track: TranslatedTrack) {
+    private fun write(plan: TranslationPlan, track: TranslatedTrack, folder: File = directory, evict: Boolean = true) {
         // Count UTF-8 bytes before touching AtomicFile, including every length
         // prefix and header. Large valid tracks can still play without caching.
         val size = 4L + 4 + 4 + 64 + 4 + 64 + 4 +
@@ -107,8 +180,8 @@ class TranslationRunner(private val directory: File) {
         var atomic: AtomicFile? = null
         var stream: java.io.FileOutputStream? = null
         try {
-            if (!directory.isDirectory && !directory.mkdirs()) throw IOException()
-            atomic = AtomicFile(file(plan))
+            if (!folder.isDirectory && !folder.mkdirs()) throw IOException()
+            atomic = AtomicFile(file(plan, folder))
             stream = atomic.startWrite()
             val output = DataOutputStream(stream)
             output.writeInt(MAGIC); output.writeInt(VERSION)
@@ -118,7 +191,7 @@ class TranslationRunner(private val directory: File) {
             output.flush()
             atomic.finishWrite(stream)
             stream = null
-            trim(file(plan))
+            if (evict) trim(file(plan, folder))
         } catch (_: Exception) {
             runCatching { atomic?.failWrite(stream) }
             cacheWarning = "La traduction complète est prête, mais sa sauvegarde locale a échoué. Elle reste disponible pour cette session ; une nouvelle session pourra nécessiter une nouvelle traduction."
@@ -138,7 +211,7 @@ class TranslationRunner(private val directory: File) {
         if (size > MAX_CACHE_BYTES) cacheWarning = "La traduction est prête ; certains anciens fichiers du cache n’ont pas pu être supprimés."
     }
 
-    private fun file(plan: TranslationPlan) = File(directory, "${plan.fingerprint}.track")
+    private fun file(plan: TranslationPlan, folder: File = directory) = File(folder, "${plan.fingerprint}.track")
     private fun owned(file: File) = ENTRY.matches(file.name) ||
         listOf(".bak", ".new").any { suffix -> file.name.endsWith(suffix) && ENTRY.matches(file.name.removeSuffix(suffix)) }
     private fun checkCancelled(cancelled: () -> Boolean) {
@@ -166,5 +239,7 @@ class TranslationRunner(private val directory: File) {
         private const val MAGIC = 0x53545654
         private const val VERSION = 1
         private val ENTRY = Regex("[0-9a-f]{64}\\.track")
+        private val WORK_KEY = Regex("[0-9a-f]{64}")
+        private const val MAX_RETAINED_WORKS = 256
     }
 }

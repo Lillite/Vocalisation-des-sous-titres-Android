@@ -1008,6 +1008,8 @@ class Revision03AndroidTest {
                 interaction.perform(androidx.test.espresso.action.ViewActions.click())
             }
             click("Réglages de la voix et du confort", true)
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withContentDescription("Rechercher dans les huit rubriques de réglages"))
+                .perform(androidx.test.espresso.action.ViewActions.replaceText("Banc d’essai de lecture"), androidx.test.espresso.action.ViewActions.closeSoftKeyboard())
             click("Banc d’essai de lecture : 2 ou 30 minutes", true)
             click("Court : 2 minutes")
             waitFor("Dismissing settings cancelled the requested benchmark") {

@@ -2,6 +2,27 @@
 
 Ce journal présente les étapes principales vérifiables dans l’historique du dépôt. Les rapports détaillés restent accessibles dans l’[index documentaire](docs/README.md). Les numéros ci-dessous désignent les versions de l’application ; les correspondances avec les publications GitHub figurent dans l’[historique](docs/HISTORIQUE_BRANCHES.md).
 
+## 0.5.0 — Confort intégral, séances et traduction progressive
+
+**Validation et publication en cours.** [Guide complet](docs/CONFORT_INTEGRAL_050.md) · [Notes de version](docs/releases/0.5.0.md). Les résultats du commit effectivement distribué seront attachés dans [TESTING.md](TESTING.md).
+
+- Réglages répartis entre huit rubriques et recherche sans accents vers les commandes réelles ; champs numériques précis, pas et présélections partagent la validation.
+- Effet immédiat explicite : Fermer conserve les réglages ; Annuler modifications restaure ceux de l’ouverture sans prétendre annuler suppressions, exports ou appels déjà confirmés.
+- Profils de préparation avec actualisation immédiate ; valeurs de départ 512 Mio, 256 segments et 120 secondes, bornes relevées à 8 192 Mio, 4 096 segments et 7 200 secondes.
+- Profil Lecture intégrale, Confort/Adaptatif et compréhension confortable préservent les phrases ; le mode Continu demande une confirmation distincte permettant les coupures.
+- Journal par occurrence avec identifiants hachés, temps, états et compteurs ; aucune phrase dans le journal ordinaire, bilan distinct des répétitions manuelles et relecture d’une interruption en pause.
+- Séances par vidéo conservant position, pistes, fichier externe, moteur/voix/mode, paramètres, image, synchronisation et métadonnées de traduction ; réouverture en pause et réparation guidée des accès.
+- Décalages séparés des sous-titres et de la narration, correction à deux points et interpolation continue ; portions explicites avec début/fin source et décalage signé pour les scènes ajoutées/supprimées, aperçu transactionnel et conservation des identités et des répliques traversant une limite.
+- Conservation vocale durable par œuvre, estimation d’espace, fichiers validés, préparation reprenable et suppression séparée des voix/textes/index ; disponibilité hors ligne conditionnée à une source complète.
+- Segmentation tenant compte de la langue et réutilisation des durées audio déjà mesurées pour améliorer l’anticipation.
+- Reprise durable des lots de traduction validés, marqueur d’appel au résultat incertain et plafond local de nouveaux caractères.
+- Traduction progressive facultative avec tampon initial d’une minute et arrêt avant une occurrence indisponible ; aucune reprise automatique et aucune substitution par l’original.
+- Options DeepL pour contexte, glossaire distant/révision, modèle et registre ; interrogation réelle du quota et comparaison d’échantillon explicitement confirmée.
+- Proposition locale de langue à confirmer, alertes linguistiques heuristiques, correction d’une occurrence, affichage original/français/bilingue/masqué et exports SRT/VTT réimportables.
+- Identité Android conservée depuis la 0.4.0 ; même certificat durable exigé pour la mise à jour. Aucun OCR, runtime local de traduction, nouveau moteur vocal intégré ou service de lecture durable en arrière-plan n’est annoncé.
+
+La 0.5.0 conserve les fonctions des étapes précédentes. Les preuves de la 0.4.0 ci-dessous restent historiques et ne valident pas ces nouvelles sources. Le détail des limites figure dans le guide et les résultats réellement exécutés dans TESTING.md.
+
 ## 0.4.0 — Traduction avant lecture et consolidation des étapes 1 à 6
 
 **Publiée le 24 octobre 2026.** [Télécharger la version](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0) · [Sources exactes `32864ba`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/32864ba732d834e71d87b887ae63f0d7bc09eb8c) · [Notes de version](docs/releases/0.4.0.md).

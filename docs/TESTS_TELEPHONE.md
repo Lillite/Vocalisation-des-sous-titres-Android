@@ -1,104 +1,209 @@
-# Vérifier la version 0.4.0 sur le téléphone
+# Vérifier la version 0.5.0 sur le téléphone
 
-[Documentation](README.md) · [Installation et présentation](../README.md) · [Guide des traducteurs](GUIDE_MOTEURS_TRADUCTION.md)
+[Documentation](README.md) · [Guide Confort intégral](CONFORT_INTEGRAL_050.md) · [Installation](../README.md) · [Fournisseurs](GUIDE_MOTEURS_TRADUCTION.md)
 
-Ce parcours concerne **Sous-titres en voix — Traduction 0.4.0**, version interne `0.4.0`, code `6`, identité `fr.soustitresvoix.player.translation`. **Les essais sur un téléphone réel décrits ici restent à effectuer : ils ne sont pas déclarés réussis par une compilation ou les tests sur émulateur.** Pour chaque ligne, noter « réussi », « échec » ou « non testé », puis les actions et résultats observés.
+Ce parcours concerne **0.5.0 — Confort intégral**, code **7**, identité **fr.soustitresvoix.player.translation**. La version est en cours de validation et de publication. **Les essais sur téléphone décrits ici sont à consigner séparément : ni compilation ni instrumentation sur émulateur ne les déclarent réussis.**
+
+Pour chaque ligne, relever **réussi**, **échec** ou **non testé**, l’attendu, l’observé et les étapes exactes. L’objectif principal est de vérifier la vocalisation de toutes les occurrences textuelles de la piste prise en charge, avec répétitions réelles conservées.
 
 ## Préparer une séance reproductible
 
-Noter le modèle du téléphone, sa version Android, le moteur vocal et le nom exact de la voix. Garder un volume confortable et commencer par les fichiers synthétiques. Le lecteur ne demande pas d’envoyer une vidéo personnelle pour un diagnostic.
+| Élément | À relever |
+| --- | --- |
+| Application | Nom affiché, version 0.5.0, code 7, date |
+| Téléphone | Modèle exact, Android, orientation, taille des polices |
+| Voix | Moteur, voix, langue, données installées, vitesse |
+| Narration | Profil intégral, mode, plafond, reprise après Pause |
+| Préparation | Cache, segments, horizon et état de conservation |
+| Traduction | Fournisseur, langues, complet/progressif, options ; jamais la clé |
+| Accessibilité | TalkBack/version, grossissement et méthode de navigation |
+| Résultat | Attendu, observé, état et instant du média |
 
-| Élément | Valeur à relever |
-|---|---|
-| Application | Nom affiché, version 0.4.0, date de l’essai |
-| Téléphone | Modèle, Android, orientation, taille de police |
-| Voix | Moteur, voix, langue, données installées, débit |
-| Narration | Mode Confort, Adaptatif ou Continu ; reprise après Pause |
-| Traduction | Fournisseur, langue source, serveur/région si applicable ; jamais la clé |
-| Accessibilité | TalkBack activé ou non, version si connue |
-| Résultat | Réussi, échec ou non testé ; attendu puis observé |
+Commencer par les contenus synthétiques du dépôt, à volume confortable. Ne pas téléverser un film personnel, une clé API ou les fichiers de signature pour rendre un test reproductible.
 
-## Installer la bonne édition
+## Installer la bonne version
 
-1. Depuis Android, ouvrir la [release 0.4.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0), puis télécharger [SousTitresVoix-0.4.0-traduction.apk](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.4.0/SousTitresVoix-0.4.0-traduction.apk). Les archives « Source code » ne sont pas installables.
-2. Ouvrir le fichier téléchargé. Si Android le demande, autoriser cette installation depuis le navigateur ou le gestionnaire de fichiers utilisé. Aucun ordinateur n’est nécessaire.
-3. Ouvrir **Sous-titres en voix — Traduction 0.4.0**. Cette édition s’installe **à côté de la stable 0.3.2** ; ne pas désinstaller la 0.3.2 pour cet essai. Sa signature distincte impose cette identité séparée. Les fichiers vidéo d’origine ne sont pas modifiés.
-4. Choisir de nouveau les vidéos, le moteur vocal, la voix et les réglages dans cette édition : ses données privées ne sont pas celles de la 0.3.2.
+1. Vérifier que la release 0.5.0 a été publiée sur [la page du projet](../README.md).
+2. Télécharger **SousTitresVoix-0.5.0-confort-integral.apk** ; les archives « Source code » ne sont pas installables.
+3. Ouvrir le fichier et autoriser l’installation depuis l’application de téléchargement si Android le demande.
+4. Avec la 0.4.0 déjà installée, vérifier qu’Android propose sa mise à jour et conserve les réglages/données. Ne pas désinstaller pour forcer un échec de signature.
+5. Vérifier version/code dans l’application et les repères de la release.
 
-L’APK publié mesure **5 066 480 octets**. Sa somme SHA-256 est `30d1126392a9fd995867f599b12436b1e2d9e8e1d41bc60d20dca76c9b88f298` ; le fichier [SHA256SUMS](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.4.0/SHA256SUMS) fournit la même référence. Le commit source est [`32864ba`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/32864ba732d834e71d87b887ae63f0d7bc09eb8c). La procédure de vérification technique figure dans [TESTING.md](../TESTING.md).
+La 0.5.0 conserve l’identité de la 0.4.0 ; la 0.3.2 reste une autre application. Les empreintes, taille et résultats définitifs seront disponibles dans [TESTING.md](../TESTING.md) et les notes de la publication.
 
-## Choisir une voix et vérifier la narration originale
-
-1. Ouvrir **Réglages de la voix et du confort**. Si nécessaire, utiliser **Choisir le moteur vocal de CE lecteur**, puis installer les données vocales dans ce moteur. Le choix du lecteur ne modifie pas le moteur de TalkBack.
-2. Utiliser **Choisir une voix hors ligne** et choisir une voix française pour la démonstration intégrée et la future narration traduite. Une voix disponible en ligne uniquement ne devient pas hors ligne en désactivant Internet.
-3. Appuyer sur **Écouter un essai de la voix**. Vérifier que le film reste en pause. Ajuster le débit et les volumes à un niveau confortable.
-4. Choisir **Confort : phrases complètes**, puis **Essai intégré : sous-titres et mire de cadrage**.
+## Parcourir les huit rubriques et les champs numériques
 
 | Essai | Résultat à vérifier |
-|---|---|
-| Écouter la première phrase | Une seule lecture de cette occurrence, sans boucle |
-| Laisser finir une phrase longue en Confort | La vidéo attend si nécessaire ; la phrase n’est pas coupée pour rattraper le film |
-| Appuyer sur Pause au milieu d’une phrase | Vidéo et voix s’arrêtent ; aucune reprise spontanée |
-| Reprendre explicitement | Le comportement correspond au choix de **Choisir la reprise après Pause** |
-| Reculer de dix secondes pendant la narration | L’ancienne phrase ne se poursuit pas au nouvel instant |
-| **Répéter la dernière phrase — met en pause** | La phrase est répétée ; le film reste en pause à la fin |
-| Atteindre la fin de la démonstration en Confort | La dernière phrase peut se terminer |
-| Refaire l’essai en Adaptatif | Accélération limitée au plafond choisi, puis pause si le temps manque ; aucun mot sacrifié pour tenir le délai |
+| --- | --- |
+| Ouvrir les réglages | Séance en pause ; recherche et sélecteur de rubrique accessibles |
+| Parcourir Voix, Synchronisation, Traduction, Sous-titres, Image, Son, Stockage, Diagnostic | Commandes classées sans perte d’accès aux anciennes fonctions |
+| Chercher « vitesse », « voix », « bandes noires », « traduction » | Contrôles pertinents visibles ; recherche avec/sans accents équivalente |
+| Effacer la recherche ou changer de rubrique | Liste de la rubrique choisie restaurée |
+| Saisir une vitesse précise puis Valider | Valeur appliquée et relue avec l’unité |
+| Utiliser +/− et une présélection | Même validation et annonce du paramètre modifié |
+| Saisir vide, lettres ou valeur hors bornes | Erreur accessible ; réglage précédent conservé |
+| Changer le profil de préparation | Cache, segments et secondes actualisés sans rouvrir |
+| Modifier puis Fermer et rouvrir | Valeurs conservées |
+| Modifier puis Annuler modifications | Paramètres du début du panneau restaurés ; vidéo toujours en pause |
+| Refaire portrait/paysage, grandes polices, clavier ouvert et TalkBack | Champs, erreurs et boutons utilisables ; focus retrouvé |
 
-Pour Adaptatif, une base à 100 %, un plafond à 180 % et une tolérance de 600 ms constituent un point de départ à ajuster à l’écoute. Le mode **Continu : peut couper les phrases** ne convient pas pour vérifier la vocalisation complète.
+L’annulation des réglages ne remet pas un fichier supprimé et ne retire pas un appel API déjà confirmé. Ne pas utiliser une suppression personnelle pour essayer le retour aux valeurs.
 
-## Préparer la piste anglaise synthétique
+## Vérifier les phrases complètes et le bilan
 
-1. Télécharger le fichier [essai-traduction-en.srt](https://raw.githubusercontent.com/Lillite/Vocalisation-des-sous-titres-Android/main/examples/essai-traduction-en.srt). Si le navigateur affiche son texte, utiliser son option de téléchargement ou d’enregistrement et conserver l’extension `.srt`.
-2. Ouvrir la démonstration intégrée ou une vidéo synthétique d’au moins 24 secondes.
-3. Choisir **Ajouter un fichier de sous-titres**, sélectionner le SRT téléchargé, puis vérifier que cette piste est choisie dans **Choisir la piste de sous-titres**.
-4. Revenir au début et garder la lecture en pause. La langue de cette piste est l’anglais : utiliser `en`, même si l’audio de la vidéo est dans une autre langue.
-
-Le fichier contient **cinq occurrences** : un panneau continu, un dialogue qui lui est superposé, deux occurrences distinctes contenant les mêmes mots, puis une phrase plus longue. Le traducteur peut produire des formulations françaises différentes ; vérifier le sens et la conservation des cinq occurrences, sans exiger une phrase française unique.
-
-| Occurrence | Horaire source | Texte source | Contrôle |
-|---|---|---|---|
-| 1 | 00:00–00:12 | `STATION ENTRANCE` | Le panneau continu n’est pas relu à chaque nouveau dialogue |
-| 2 | 00:02–00:05 | `Welcome. Please follow me.` | Le dialogue superposé au panneau n’est pas perdu |
-| 3 | 00:06–00:08 | `Wait here.` | Première occurrence conservée |
-| 4 | 00:09–00:11 | `Wait here.` | Deuxième occurrence également conservée |
-| 5 | 00:13–00:24 | `The next train will arrive soon. We have enough time to finish this sentence before leaving.` | Phrase complète en Confort, avec pause si nécessaire |
-
-## Traduire cette piste vers le français
-
-La traduction initiale nécessite un fournisseur configuré et une connexion réseau. Les [instructions par fournisseur](GUIDE_MOTEURS_TRADUCTION.md) expliquent Azure, les deux points d’accès DeepL et les serveurs LibreTranslate. Une clé de moteur vocal ou un abonnement d’une autre application ne constitue pas automatiquement une clé API de traduction.
-
-1. Ouvrir **Traduire les sous-titres en français**. Vérifier que le film se met en pause.
-2. Choisir le fournisseur correspondant au compte et lire sa description. Pour DeepL, choisir explicitement API Free ou le point d’accès payant adapté ; pour Azure, saisir la région de la ressource si nécessaire ; pour LibreTranslate, saisir l’adresse de base HTTPS du serveur.
-3. Indiquer `en` comme langue originale et saisir la clé personnelle si une nouvelle traduction en exige une. La case de mémorisation chiffrée est facultative. Ne pas partager de capture contenant une clé.
-4. Appuyer sur **Indexer la piste et estimer la traduction**. Vérifier l’annonce de **cinq occurrences** et le volume estimé. Cette phase d’indexation n’envoie pas la piste au fournisseur.
-5. Lire la confirmation : fournisseur/serveur, volume et avertissements. L’application ne mesure ni le solde du compte ni le coût exact. Appuyer sur **Traduire / réutiliser le cache** autorise l’envoi du texte si aucun cache complet correspondant n’existe. La vidéo et l’audio ne sont pas envoyés par cette traduction.
-6. Attendre le résultat dans l’application. Une réussite active uniquement une piste complète validée ; le film et la voix doivent rester en pause. Choisir une voix française prête si la vocalisation est activée, puis appuyer explicitement sur Lire.
-7. Vérifier que la voix prononce le français tandis que l’affichage vidéo conserve les sous-titres anglais originaux. Observer les cinq occurrences du tableau et leur correspondance temporelle.
-8. Ouvrir de nouveau le panneau et utiliser **Revenir explicitement à la piste originale**. Vérifier la pause, puis choisir une voix correspondant à la piste originale avant de reprendre.
-
-Une validation structurelle ne garantit pas une traduction linguistiquement parfaite. Relever séparément une formulation incorrecte, une occurrence manquante et un problème de synchronisation.
-
-## Vérifier le cache, l’annulation et les erreurs
+1. Dans Voix, choisir le moteur du lecteur et une voix française hors ligne prête.
+2. Écouter l’essai, puis choisir **Préréglage : lecture intégrale** dans Synchronisation.
+3. Lancer **Essai intégré : sous-titres et mire de cadrage**.
+4. Refaire les scénarios avec Adaptatif et compréhension confortable.
 
 | Essai | Résultat à vérifier |
-|---|---|
-| Une traduction complète a réussi ; fermer/réouvrir l’application, sélectionner exactement le même média et la même piste, puis demander le même moteur/langues/serveur sans clé | Si le cache correspondant est encore présent, réutilisation complète sans nouvelle requête |
-| Après cette réussite, couper le réseau et répéter la demande | La piste complète en cache peut être réutilisée ; une piste absente du cache ne peut pas être traduite hors ligne |
-| Annuler l’indexation ou fermer le panneau avant confirmation | Aucune confirmation tardive ni reprise automatique du film |
-| Annuler une traduction déjà confirmée | Aucun résultat partiel activé et aucune reprise automatique ; une requête déjà reçue par le fournisseur peut avoir été facturée |
-| Changer de piste ou de vidéo pendant le travail | Une ancienne réponse ne remplace pas la nouvelle piste |
-| Sans cache correspondant, demander une traduction sans clé alors que le fournisseur l’exige | Erreur visible ; aucune substitution silencieuse par la piste originale |
-| Utiliser **Effacer la clé mémorisée pour ce moteur** | La clé de ce moteur/serveur est effacée ; sa suppression n’efface pas les traductions complètes déjà en cache |
-| Avec LibreTranslate, changer l’adresse du serveur | La clé d’un autre serveur n’est pas conservée dans le champ |
+| --- | --- |
+| Première occurrence | Une seule lecture de cet événement |
+| Phrase trop longue pour sa durée affichée | La vidéo attend ; tous les mots sont prononcés |
+| Pause au milieu d’une phrase | Vidéo et voix s’arrêtent ; aucune reprise spontanée |
+| Reprise selon la politique choisie | Réplique entière, segment ou commande explicite conformément au réglage |
+| Répéter la dernière phrase | Relecture explicite ; vidéo reste en pause à la fin |
+| Recul/avance pendant une narration | Ancienne commande ne continue pas au nouvel instant |
+| Fin du fichier pendant la dernière phrase | La phrase peut se terminer dans le parcours intégral |
+| Bilan avant/après répétition | Nombre d’occurrences distinctes terminées inchangé par la seule répétition |
+| Relecture d’une interruption | Occurrence correspondante retrouvée ; reprise vidéo explicite |
+| Demander Continu | Confirmation indiquant les coupures ; annuler conserve le parcours intégral |
+| Appliquer le profil intégral après des exclusions | Exclusions neutralisées et narration complète rétablie |
 
-Noter « non testé » lorsqu’une condition ne peut pas être reproduite sans modifier un compte ou engager un coût. Ne pas multiplier les traductions payantes pour provoquer des pannes. Une réponse réseau perdue peut déjà avoir été facturée ; le lecteur ne la relance pas automatiquement. Le cache privé est limité à 32 Mio et peut être évincé ; il ne sauvegarde pas de progression partielle et ne fournit pas d’export de traduction.
+**Commencée** est une commande vocale, pas une mesure du premier son. Le bilan doit signaler une couverture ou une capacité incomplète au lieu de prétendre que tout le fichier a été lu.
 
-## Vérifier les autres pistes textuelles
+## Panneaux, chevauchements et répétitions
 
-Choisir une vidéo synthétique avec une piste intégrée, puis un fichier externe SRT, VTT ou ASS/SSA connu. Pour les panneaux et sous-titres FULL, vérifier que les dialogues superposés restent prononcés, que deux événements distincts portant les mêmes mots sont conservés et qu’un panneau réapparaissant plus tard est de nouveau lu. Un changement de piste ou un déplacement ne doit pas laisser continuer une ancienne phrase.
+Utiliser la piste synthétique [essai-traduction-en.srt](../examples/essai-traduction-en.srt), d’une durée de 24 secondes, dans une vidéo suffisamment longue. Elle contient :
 
-Un MKV peut contenir un codec non pris en charge. Les sous-titres en images PGS/VobSub et le texte incrusté dans l’image nécessitent un OCR absent de cette version. Les formats de modèles GGUF, SafeTensors et ONNX ne s’importent pas dans ce lecteur ; voir l’[étude de traduction locale](ETUDE_TRADUCTION_LOCALE.md).
+| Occurrence | Temps source | Contrôle |
+| --- | --- | --- |
+| STATION ENTRANCE | 00:00–00:12 | Panneau continu lu une fois, malgré les dialogues superposés |
+| Welcome. Please follow me. | 00:02–00:05 | Dialogue conservé avec le panneau |
+| Wait here. | 00:06–00:08 | Première occurrence conservée |
+| Wait here. | 00:09–00:11 | Deuxième occurrence également conservée |
+| Longue annonce du train | 00:13–00:24 | Tous les mots prononcés avec attente si nécessaire |
+
+Répéter avec les fixtures ASS intégrées/externes du projet et les variantes de styles : panneau persistant, inscriptions superposées, événements simultanés identiques, nouvelle apparition, déplacements avant/arrière et piste traduite.
+
+Comparer les occurrences attendues, celles terminées et les interruptions à reprendre. Une ressemblance de texte ne doit pas effacer un événement réel ; un changement de style du même événement ne doit pas créer des dizaines de narrations.
+
+## Restaurer la séance et réparer l’accès
+
+| Essai | Résultat à vérifier |
+| --- | --- |
+| Choisir pistes, voix, mode, sous-titre externe et réglages propres à une vidéo | Les choix sont relus après fermeture/réouverture |
+| Alterner deux vidéos synthétiques | Chaque vidéo retrouve son contexte et sa position |
+| Fermer au milieu d’une réplique | L’interruption est retrouvable ; ouverture en pause |
+| Choisir Reprendre | Lecture explicite à la position proposée |
+| Choisir Relire la dernière réplique avant de reprendre | Réplique retrouvée puis vidéo reste en pause |
+| Traduction conservée encore présente | Restauration locale après vérification, sans nouvel envoi |
+| Traduction manquante ou piste différente | Attente/erreur perceptible, aucune ancienne piste appliquée au mauvais média |
+| Avec une copie synthétique déplacée | Parcours guidé pour choisir de nouveau la même édition |
+| Annuler le sélecteur de réparation | Séance conservée, pas de lecture involontaire |
+| Oublier seulement une séance synthétique | Fichier vidéo et préparations inchangés |
+
+La vérification des métadonnées ne prouve pas l’identité octet par octet d’une édition. Tester une vidéo modifiée sous la même URI doit produire une remise en question des anciens minutages et choix.
+
+## Vérifier les corrections de synchronisation
+
+1. Choisir une piste connue et ouvrir **Décalage, dérive et calibration des sous-titres**.
+2. Attendre l’index complet.
+3. Tester le décalage global par ±50 ms, par champ et par présélection.
+4. Tester séparément le décalage de narration.
+5. Ajouter deux repères de dérive, puis des repères supplémentaires sur un contenu synthétique.
+6. Ajouter une portion avec début/fin source et décalage signé pour reproduire un changement brusque de montage ; prévisualiser, annuler, puis valider et rouvrir.
+
+| Essai | Résultat à vérifier |
+| --- | --- |
+| Décalage positif | Apparition/voix retardées selon le contrôle choisi |
+| Correction de narration seule | Affichage conservé à son propre temps |
+| Prévisualiser puis Annuler | Carte temporelle d’ouverture restaurée |
+| Valider et rouvrir la vidéo/piste | Correction conservée pour son contexte |
+| Repères inversés/dupliqués ou saisie invalide | Refus visible, aucun résultat partiel |
+| Sous-titre très bref entre deux rafraîchissements | Occurrence vocale conservée |
+| Deux occurrences identiques après correction | Deux événements distincts, aucun écrasement |
+| Portion avancée créant un chevauchement dans la vidéo | Toutes les occurrences vocalisées, pause de l’image si nécessaire |
+| Réplique traversant une limite de portion | Décalage du début conservé pour toute sa durée ; aucun texte coupé |
+| Portions source superposées ou désordonnées | Validation refusée ; retirer ou corriger la portion concernée |
+| Changer de piste pendant un éditeur ouvert | Ancienne correction refusée pour le nouveau contexte |
+| Déplacer la lecture pendant une pause de compréhension | Aucun callback ancien ne redémarre la vidéo |
+
+## Tester la traduction complète
+
+Pour un essai réseau réel, employer une piste synthétique et une configuration autorisée. Consulter les limites du compte. Les scénarios d’échec payants sont couverts avec des réponses contrôlées dans les tests automatisés ; ne pas multiplier les appels réels pour provoquer une panne.
+
+1. Ouvrir **Traduire les sous-titres en français**.
+2. Choisir fournisseur, langue source et accès du compte ; laisser Progressif désactivé.
+3. Indexer et estimer ; vérifier les cinq occurrences synthétiques sans envoi.
+4. Examiner la confirmation, le volume restant, le budget et les destinations.
+5. Confirmer une seule fois.
+6. Attendre la piste complète, choisir une voix française et appuyer explicitement sur Lire.
+
+Vérifier la conservation des cinq occurrences et la distinction entre leur identité, leur traduction et leur minutage. La qualité sémantique est jugée séparément : nombres, négations, noms, idiomes et registre.
+
+## Tester la reprise, le budget et le mode progressif
+
+| Essai | Résultat à vérifier |
+| --- | --- |
+| Reprendre une piste ayant des lots validés | Préfixe réutilisé, estimation de nouveaux caractères réduite |
+| Requête interrompue au résultat inconnu | Avertissement de facturation incertaine avant reprise |
+| Budget trop petit pour les nouveaux lots | Refus sans envoi au-delà du plafond |
+| Budget zéro avec résultat complet local compatible | Réutilisation sans nouvel appel |
+| Modifier contexte/glossaire/révision/modèle | Résultat d’une ancienne configuration non réutilisé comme identique |
+| Annuler ou changer vidéo/piste | Ancienne réponse ne remplace pas la piste courante |
+| Terminer un lot | Aucun démarrage automatique de la vidéo |
+
+Le petit exemple de 24 secondes ne suffit pas à observer un tampon initial d’une minute avant la fin. Pour le progressif, employer un contenu synthétique plus long ou le scénario contrôlé de la suite automatisée.
+
+1. Cocher **Traduction progressive**.
+2. Confirmer la préparation de la piste synthétique.
+3. Essayer Lire avant le tampon : refus/attente perceptible.
+4. Quand le tampon validé est suffisant, appuyer sur Lire.
+5. Observer la progression sans répétition ni interruption d’une phrase déjà en cours.
+6. Si la lecture rattrape le travail, vérifier l’arrêt sur l’occurrence indisponible.
+7. Attendre puis appuyer de nouveau sur Lire ; aucune substitution originale ni reprise spontanée.
+8. Essayer un déplacement vers une portion encore indisponible : attente contrôlée.
+
+Un résultat partiel n’est pas exportable comme une traduction entière et ne peut pas rendre l’œuvre Prêt hors ligne.
+
+## Affichage, correction, export et fournisseurs
+
+| Essai | Résultat à vérifier |
+| --- | --- |
+| Choisir original/français/bilingue/masqué | Un seul parcours visuel actif ; narration inchangée |
+| Masquer le texte | La voix continue selon le mode choisi |
+| Corriger une occurrence de la piste complète | Lecture en pause ; nouvelle formulation prononcée après préparation |
+| Consulter les alertes | Indices expliqués ; aucune certitude de fidélité annoncée |
+| Conserver durablement puis fermer/réouvrir | Résultat local compatible retrouvé sans requête |
+| Exporter SRT et VTT via Android | Texte/minutages conservés, aucun secret |
+| Annuler le choix de destination | Pas de fichier écrit ni reprise |
+| Réimporter les exports | Piste française autonome, occurrences et répétitions conservées |
+| Proposer une langue après indexation | Proposition à confirmer, pas de changement automatique |
+| Quota DeepL | Valeurs réelles du fournisseur ou erreur claire ; aucun sous-titre envoyé par cette consultation |
+| Comparatif choisi | Destinations/volume confirmés ; résultats numérotés et aucun classement linguistique automatique |
+| Changer de média avant confirmation d’échantillon | Confirmation périmée refusée |
+
+Les disponibilités d’options DeepL dépendent du contrat et de la paire de langues. Un quota affiché n’est pas une réservation et le plafond UTF-16 local n’est pas un prix en euros.
+
+## Cache vocal et conservation hors ligne
+
+| Essai | Résultat à vérifier |
+| --- | --- |
+| Réglages de cache/segments/secondes | Saisie bornée et valeurs immédiatement actualisées |
+| Préparer cinq minutes puis annuler | Données déjà calculées conservées ; aucune reprise spontanée |
+| Préparer toute une œuvre dans le cache ordinaire | Limite/éviction annoncées ; pas de faux statut intégral |
+| Estimer la conservation durable | Espace et volume estimés, aucune synthèse ni texte durable avant confirmation |
+| Conserver puis interrompre/reprendre | Segments compatibles déjà produits réutilisés |
+| Conserver pendant lecture | Narration courante prioritaire, progression sans coupure |
+| Fin de préparation | Tous les segments requis et l’intégrité contrôlés avant Prêt hors ligne |
+| Source/traduction partielle | Statut Prêt hors ligne impossible |
+| Changer voix, débit ou configuration | Anciens audios incompatibles non utilisés comme à jour |
+| Vider le cache ordinaire | Voix explicitement conservées non supprimées par cette seule action |
+| Suppression voix/textes/index d’une œuvre synthétique | Seule catégorie choisie supprimée ; disponibilité recalculée |
+| Redémarrer sans réseau avec œuvre vérifiée | Lecture locale possible si vidéo et ressources restent accessibles |
+
+Relever séparément « segments prêts » et « minutes vérifiées ». Une estimation de fin ou un nombre de fichiers ne remplace pas la vérification finale.
 
 ## Vérifier l’image et le plein écran
 
@@ -128,24 +233,22 @@ Commencer avec les traitements avancés désactivés et un volume modéré. Ne p
 
 Ces traitements concernent le **PCM16 mono/stéréo effectivement reçu**. Un test sur ce parcours ne prouve pas un fonctionnement en passthrough, multicanal ou sur tous les codecs. Pour les valeurs, domaines et interactions, consulter les [commandes audio](COMMANDES_AUDIO_ETAPE_5.md) et l’[audio avancé](AUDIO_EXPERT_ETAPE_6.md).
 
-## Préparation vocale et moteur externe
-
-- Essayer **Préparer les 5 prochaines minutes**, puis annuler : état compréhensible et aucune reprise spontanée.
-- Avec un extrait court, essayer **Indexer et préparer toute la vidéo**, puis vérifier la lecture et la réouverture de l’application. Une préparation achevée ne garantit pas qu’un long film tient encore dans le cache vocal limité.
-- Changer de voix ou de débit : l’ancien audio préparé ne doit pas être réutilisé comme s’il était à jour.
-- Utiliser **Vider le cache vocal**, puis vérifier la synthèse directe. Ce cache audio est distinct du cache de textes traduits.
-- Si un moteur devient indisponible, vérifier l’erreur et la possibilité de choisir un autre moteur. Ce scénario peut rester « non testé » ; il n’exige pas de désinstaller un moteur employé ailleurs.
-
 ## Accessibilité, interruptions et séance prolongée
 
-Vérifier les libellés, l’ordre de navigation et l’accès aux champs avec TalkBack, notamment le formulaire de traduction et sa confirmation. Essayer les polices agrandies, le portrait/paysage et l’agrandissement système. Les sous-titres ne doivent pas être lus involontairement deux fois par TalkBack et la synthèse du lecteur. Les commandes doivent rester accessibles sans geste obligatoire.
+Effectuer les parcours complets avec TalkBack : ouvrir vidéo, sélectionner piste, renseigner les paramètres de traduction, confirmer, régler une valeur, annuler, consulter une erreur, relire et sortir du plein écran. Vérifier noms, ordre/restauration du focus, clavier, grossissement, grandes polices et paysage.
 
-Tester la mise en arrière-plan, le verrouillage, une interruption audio et le branchement/débranchement d’un casque. Vérifier l’absence de reprise inattendue. Une traduction confirmée n’est pas un travail durable garanti après fermeture du processus ; revenir dans l’application et vérifier son état.
+Les sous-titres ne doivent pas être lus une seconde fois par TalkBack en plus de la narration. Les états pertinents restent perceptibles sans annonce répétitive du compteur de position. Les actions doivent rester disponibles sans geste obligatoire.
 
-Effectuer enfin une séance prolongée avec les fichiers et le moteur habituels. Relever synchronisation, intelligibilité, pauses, blocages éventuels, chauffe et consommation observée. Un émulateur ne mesure pas les performances, la qualité acoustique ou l’autonomie du téléphone.
+Tester mise en arrière-plan, verrouillage, appel, interruption audio et connexion/déconnexion casque/Bluetooth. La lecture durable en arrière-plan reste absente ; vérifier la pause et l’absence de reprise inattendue.
+
+Effectuer une séance prolongée avec le moteur habituel, puis relever synchronisation, intelligibilité, interruptions, mémoire, chauffe et consommation. Les profils de préparation ne prouvent pas l’emploi du GPU/NPU. Un émulateur ne mesure pas l’autonomie ni la qualité acoustique du téléphone.
+
+Les preuves CI peuvent contenir des instantanés de mémoire, trames, CPU, version du paquet et état thermique à la fin des suites synthétiques. Ils aident à examiner le contexte de l’émulateur ; ils ne remplacent pas ces observations pendant une séance sur le téléphone. Un service indisponible ou un processus arrêté est indiqué par la sortie de la commande et son statut, sans inventer de valeur de mesure. Voir [la portée des instantanés](../TESTING.md#instantanés-techniques-de-lémulateur).
 
 ## Signaler un résultat exploitable
 
-Indiquer version, téléphone, Android, moteur et voix, mode vocal, étapes exactes, résultat attendu puis observé. Pour la traduction, ajouter fournisseur, langue source et utilisation éventuelle du cache, sans clé API. Pour la lecture, préciser conteneur, codecs, type de sous-titres et instant concerné.
+Indiquer version, téléphone, Android, moteur/voix, mode, type de sous-titres, source intégrée/externe, paramètres, instant concerné et étapes exactes. Pour la traduction, ajouter fournisseur, langues, complet/progressif et réutilisation du cache, sans clé API.
 
-**Copier le diagnostic complet** peut aider. Relire le contenu avant partage et retirer toute information personnelle inutile. Privilégier un court exemple de sous-titres synthétiques reproduisant le problème ; ne pas joindre un film personnel ni les fichiers privés de signature.
+Distinguer texte absent de la source, occurrence extraite non prononcée, répétition artificielle, contresens, mauvaise prononciation et problème de temps. Le bilan peut aider, avec ses limites de couverture explicites.
+
+Relire le diagnostic avant partage. Privilégier un petit exemple synthétique. Ne pas joindre de film personnel, secret API ou fichier privé de signature. Reporter les résultats matériels sans les confondre avec les suites automatisées décrites dans [TESTING.md](../TESTING.md).

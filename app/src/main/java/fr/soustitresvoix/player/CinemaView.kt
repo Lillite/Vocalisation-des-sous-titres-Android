@@ -47,6 +47,7 @@ class CinemaView(
     private val dialogs = mutableSetOf<AlertDialog>()
     private val imageRefreshers = mutableSetOf<() -> Unit>()
     private var zoom = 1f
+    private var pendingPan: Pair<Float, Float>? = null
     private var framingMediaUri: String? = null
     private var framingRestored = false
     private var previousPlaybackIntent = false
@@ -64,6 +65,7 @@ class CinemaView(
             !hasAccessibleFocus(this) && session.machine.snapshot().wantsPlayback && !locked) showControls(false)
     }
     private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
+    fun showImageSettings() = imageDialog()
     private fun label(value: String) = TextView(activity).apply {
         text = value; textSize = 17f; setTextColor(Color.WHITE); setPadding(dp(8), dp(4), dp(8), dp(4))
     }
@@ -144,6 +146,8 @@ class CinemaView(
             top.setPadding(left, up, right, 0); bottom.setPadding(left, 0, right, down)
             (unlock.layoutParams as LayoutParams).apply { topMargin = up; rightMargin = right }
             video.subtitleView?.setPadding(left + dp(8), 0, right + dp(8), down)
+            video.findViewWithTag<androidx.media3.ui.SubtitleView>("narration-subtitle-overlay")
+                ?.setPadding(left + dp(8), 0, right + dp(8), down)
             insets
         }
         val scale = ScaleGestureDetector(activity, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -269,6 +273,7 @@ class CinemaView(
         if (disposed) return
         val space = if (visibleControls && height > 0) (bottom.height.toFloat() / height + 0.02f).coerceIn(0.08f, 0.60f) else 0.08f
         video.subtitleView?.setBottomPaddingFraction(space)
+        video.findViewWithTag<androidx.media3.ui.SubtitleView>("narration-subtitle-overlay")?.setBottomPaddingFraction(space)
     }
     private fun setLocked(value: Boolean) {
         locked = value; showControls(!value); unlock.visibility = if (value) View.VISIBLE else View.GONE
@@ -291,11 +296,16 @@ class CinemaView(
         framingMediaUri = session.media?.uri; framingRestored = true
         val previousSafe = prefs.int("imageMode", 0, 0, 2).takeIf { it != 1 } ?: 0
         val default = prefs.int("imageDefaultMode", previousSafe, 0, 2).takeIf { it != 1 } ?: 0
-        val mode = framingMediaUri?.let { uri ->
+        val rememberedMode = (session.imageViewport["frameMode"] as? Number)?.toInt()?.takeIf { it in 0..2 }
+        val mode = rememberedMode ?: framingMediaUri?.let { uri ->
             prefs.int("frame-${fr.soustitresvoix.core.SpeechTools.key("framing", uri)}", default, 0, 2)
         } ?: default
-        prefs.putInt("imageMode", mode); prefs.putBool("protectFrame", mode != 1)
-        zoom = 1f; dx = 0f; dy = 0f
+        prefs.putInt("imageMode", mode)
+        prefs.putBool("protectFrame", session.imageViewport["protectFrame"] as? Boolean ?: (mode != 1))
+        zoom = (session.imageViewport["zoom"] as? Number)?.toFloat()?.takeIf { it.isFinite() }?.coerceIn(1f, 4f) ?: 1f
+        fun pan(key: String) = (session.imageViewport[key] as? Number)?.toFloat()?.takeIf { it.isFinite() }?.coerceIn(-1.5f, 1.5f) ?: 0f
+        pendingPan = pan("panX") to pan("panY")
+        dx = 0f; dy = 0f
     }
     internal fun setFrameProtection(enabled: Boolean) {
         if (disposed) return
@@ -327,6 +337,7 @@ class CinemaView(
     }
     private fun applyImage() {
         if (disposed) return
+        if (width > 0 && height > 0) pendingPan?.let { (x, y) -> dx = x * width; dy = y * height; pendingPan = null }
         session.finishPlaybackBenchmark("Cadrage ou zoom modifié : essai interrompu")
         if (prefs.protectFrame) {
             zoom=1f; dx=0f; dy=0f
@@ -341,6 +352,9 @@ class CinemaView(
         dx = dx.coerceIn(-width * (zoom - 1) / 2, width * (zoom - 1) / 2)
         dy = dy.coerceIn(-height * (zoom - 1) / 2, height * (zoom - 1) / 2)
         video.videoSurfaceView?.apply { scaleX = zoom; scaleY = zoom; translationX = dx; translationY = dy }
+        session.imageViewport = mapOf("zoom" to zoom, "panX" to (pendingPan?.first ?: if (width > 0) dx / width else 0f),
+            "panY" to (pendingPan?.second ?: if (height > 0) dy / height else 0f),
+            "frameMode" to prefs.int("imageMode", 0, 0, 2), "protectFrame" to prefs.protectFrame)
     }
     fun imageDialog() {
         if (disposed) return
@@ -504,5 +518,6 @@ class CinemaView(
         dialogs.toList().forEach { it.dismiss() }; dialogs.clear()
         video.videoSurfaceView?.apply { scaleX = 1f; scaleY = 1f; translationX = 0f; translationY = 0f }
         video.subtitleView?.setBottomPaddingFraction(0.08f)
+        video.findViewWithTag<androidx.media3.ui.SubtitleView>("narration-subtitle-overlay")?.setBottomPaddingFraction(0.08f)
     }
 }

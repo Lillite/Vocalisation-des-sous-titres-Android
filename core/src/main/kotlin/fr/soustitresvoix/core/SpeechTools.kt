@@ -19,7 +19,7 @@ object SpeechTools {
     }.joinToString("\n").trim()
 
     /** Sentence-sized replay segments, then engine-safe chunks. Keeps all words. */
-    fun segments(text: String): List<String> = LinguisticSegments.split(text)
+    fun segments(text: String, languageTag: String? = null): List<String> = LinguisticSegments.split(text, languageTag)
     fun adaptiveFactor(durationMs: Long?, availableMs: Long?, maximum: Float): Float {
         if (durationMs == null || availableMs == null || availableMs <= 0 || durationMs <= 0) return 1f
         return (durationMs.toDouble() / availableMs).toFloat().coerceIn(1f, maximum.coerceIn(1f, 1.6f))
@@ -130,7 +130,7 @@ class SpeechDiskCache(private val directory: File, private val limitBytes: () ->
         val files = directory.listFiles()?.filter { it.extension == "wav" }?.sortedBy { it.lastModified() } ?: return
         var size = files.sumOf { it.length() }
         for (file in files) {
-            if (size <= limitBytes().coerceIn(16L shl 20, 2048L shl 20)) break
+            if (size <= limitBytes().coerceIn(16L shl 20, 8192L shl 20)) break
             if (file.name != protect) { val n = file.length(); if (file.delete()) { size -= n; File(directory, "${file.nameWithoutExtension}.sha256").delete() } }
         }
     }

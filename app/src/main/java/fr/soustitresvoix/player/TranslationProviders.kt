@@ -27,7 +27,8 @@ class TranslationProviderConfig(
     val provider: TranslationProvider,
     val apiKey: String = "",
     val region: String = "",
-    val endpoint: String = ""
+    val endpoint: String = "",
+    val options: TranslationOptions = TranslationOptions()
 ) {
     override fun toString(): String = "TranslationProviderConfig(provider=${provider.id}, credentials=hidden)"
 }
@@ -44,6 +45,7 @@ class TranslationCancelledException : IOException("Traduction annulée ; aucune 
 /** Only application-owned messages cross the UI boundary; no cause/body/URI is attached. */
 class TranslationFailure(val reason: Reason) : IOException(reason.message) {
     enum class Reason(val message: String) {
+        BUDGET("Le volume restant dépasse ton plafond local de nouveaux caractères. Aucun nouveau lot n’a été envoyé."),
         CONFIGURATION("Configuration du traducteur invalide. Vérifie le moteur, sa clé, sa région et les langues."),
         AUTHENTICATION("Accès au traducteur refusé. Vérifie la clé et les autorisations du compte."),
         QUOTA("Quota ou limite du traducteur atteint. Vérifie le compte avant de relancer ; aucune relance automatique."),
@@ -58,7 +60,7 @@ class TranslationFailure(val reason: Reason) : IOException(reason.message) {
 /** Request objects deliberately do not print text, credentials, headers or URLs. */
 class TranslationHttpRequest(val uri: URI, headers: Map<String, String>, val body: String) {
     val headers: Map<String, String> = Collections.unmodifiableMap(HashMap(headers))
-    override fun toString(): String = "TranslationHttpRequest(HTTPS POST, content hidden)"
+    override fun toString(): String = "TranslationHttpRequest(HTTPS request, content hidden)"
 }
 
 class TranslationHttpResponse(val status: Int, val body: String) {
@@ -67,6 +69,8 @@ class TranslationHttpResponse(val status: Int, val body: String) {
 
 interface TranslationHttpTransport : Closeable {
     fun post(request: TranslationHttpRequest, cancelled: () -> Boolean): TranslationHttpResponse
+    fun get(request: TranslationHttpRequest, cancelled: () -> Boolean): TranslationHttpResponse =
+        throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
     override fun close() { }
 }
 
@@ -74,7 +78,9 @@ interface TranslationHttpTransport : Closeable {
 class HttpsTranslationTransport : TranslationHttpTransport {
     @Volatile private var active: HttpsURLConnection? = null
     private val closed = AtomicBoolean(false)
-    override fun post(request: TranslationHttpRequest, cancelled: () -> Boolean): TranslationHttpResponse {
+    override fun post(request: TranslationHttpRequest, cancelled: () -> Boolean): TranslationHttpResponse = execute(request, "POST", cancelled)
+    override fun get(request: TranslationHttpRequest, cancelled: () -> Boolean): TranslationHttpResponse = execute(request, "GET", cancelled)
+    private fun execute(request: TranslationHttpRequest, method: String, cancelled: () -> Boolean): TranslationHttpResponse {
         fun checkCancelled() {
             if (closed.get() || cancelled() || Thread.currentThread().isInterrupted) throw TranslationCancelledException()
         }
@@ -85,15 +91,17 @@ class HttpsTranslationTransport : TranslationHttpTransport {
         try {
             checkCancelled()
             connection.instanceFollowRedirects = false
-            connection.requestMethod = "POST"
+            connection.requestMethod = method
             connection.connectTimeout = 15_000
             connection.readTimeout = 30_000
             connection.useCaches = false
-            connection.doOutput = true
+            connection.doOutput = method == "POST"
             request.headers.forEach { (key, value) -> connection.setRequestProperty(key, value) }
-            val bytes = request.body.toByteArray(Charsets.UTF_8)
-            connection.setFixedLengthStreamingMode(bytes.size)
-            connection.outputStream.use { stream -> checkCancelled(); stream.write(bytes) }
+            if (method == "POST") {
+                val bytes = request.body.toByteArray(Charsets.UTF_8)
+                connection.setFixedLengthStreamingMode(bytes.size)
+                connection.outputStream.use { stream -> checkCancelled(); stream.write(bytes) }
+            } else require(request.body.isEmpty())
             checkCancelled()
             val status = connection.responseCode
             // Do not read error bodies, which may repeat private text or credentials.
@@ -137,6 +145,74 @@ object TranslationEngines {
         return "${config.provider.id}-$digest"
     }
 
+    internal fun validateForRequest(config: TranslationProviderConfig, source: String, target: String) {
+        config.options.validate(config.provider)
+        identity(config)
+        if (!language.matches(source) || !language.matches(target) || target == "auto" ||
+            (config.provider != TranslationProvider.LIBRE && config.apiKey.isBlank()) ||
+            config.apiKey.length > 4096 || config.apiKey.any { it.code !in 33..126 } ||
+            config.region.length > 100 || config.region.any { !(it.isLetterOrDigit() || it == '-') } ||
+            config.options.glossaryId.isNotBlank() && source == "auto")
+            throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
+    }
+
+    /** Translation settings are separate from the credential scope; secrets never enter the digest. */
+    fun translationIdentity(config: TranslationProviderConfig): String {
+        config.options.validate(config.provider)
+        val scope = identity(config)
+        if (config.options.isDefault) return scope
+        val digest = MessageDigest.getInstance("SHA-256")
+        listOf(scope, config.options.context, config.options.glossaryId, config.options.glossaryRevision,
+            config.options.modelType, config.options.formality).forEach { field ->
+            val bytes = field.toByteArray(Charsets.UTF_8)
+            digest.update(byteArrayOf((bytes.size ushr 24).toByte(), (bytes.size ushr 16).toByte(),
+                (bytes.size ushr 8).toByte(), bytes.size.toByte()))
+            digest.update(bytes)
+        }
+        return config.provider.id + "-options-" + digest.digest().joinToString("") {
+            "%02x".format(Locale.ROOT, it.toInt() and 255)
+        }
+    }
+
+    /** Called only by an explicit quota command; no subtitle text is sent and no retry is made. */
+    fun usage(config: TranslationProviderConfig, cancelled: () -> Boolean = { false },
+        transport: TranslationHttpTransport = HttpsTranslationTransport()): TranslationUsage {
+        fun checkCancelled() { if (cancelled() || Thread.currentThread().isInterrupted) throw TranslationCancelledException() }
+        try {
+            checkCancelled()
+            if (config.provider != TranslationProvider.DEEPL_FREE && config.provider != TranslationProvider.DEEPL_PRO ||
+                config.apiKey.isBlank() || config.apiKey.length > 4096 || config.apiKey.any { it.code !in 33..126 })
+                throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
+            val host = if (config.provider == TranslationProvider.DEEPL_FREE) "api-free.deepl.com" else "api.deepl.com"
+            val request = TranslationHttpRequest(URI("https://$host/v2/usage"),
+                mapOf("Authorization" to "DeepL-Auth-Key ${config.apiKey}", "Accept" to "application/json"), "")
+            val response = transport.use { it.get(request, cancelled) }
+            checkCancelled()
+            when (response.status) {
+                200 -> Unit
+                in 300..399 -> throw TranslationFailure(TranslationFailure.Reason.REDIRECT)
+                401, 403 -> throw TranslationFailure(TranslationFailure.Reason.AUTHENTICATION)
+                429, 456 -> throw TranslationFailure(TranslationFailure.Reason.QUOTA)
+                else -> throw TranslationFailure(TranslationFailure.Reason.SERVER)
+            }
+            if (response.body.toByteArray(Charsets.UTF_8).size > HttpsTranslationTransport.MAX_RESPONSE_BYTES)
+                throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
+            val value = JSONObject(response.body)
+            fun number(name: String, optional: Boolean = false): Long? {
+                if (optional && !value.has(name)) return null
+                val raw = value.get(name)
+                val number = when (raw) { is Int -> raw.toLong(); is Long -> raw; else -> throw TranslationFailure(TranslationFailure.Reason.RESPONSE) }
+                if (number < 0) throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
+                return number
+            }
+            return TranslationUsage(number("character_count")!!, number("character_limit")!!,
+                number("api_key_character_count", true), number("api_key_character_limit", true))
+        } catch (cancel: TranslationCancelledException) { throw cancel }
+        catch (failure: TranslationFailure) { throw failure }
+        catch (_: org.json.JSONException) { throw TranslationFailure(TranslationFailure.Reason.RESPONSE) }
+        catch (_: Exception) { checkCancelled(); throw TranslationFailure(TranslationFailure.Reason.NETWORK) }
+    }
+
     /** Canonical base URL; the /translate path is added by this adapter. */
     fun libreEndpoint(value: String): URI {
         val uri = try { URI(value.trim()) } catch (_: Exception) { throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION) }
@@ -153,7 +229,7 @@ object TranslationEngines {
 
     private class HttpEngine(private val config: TranslationProviderConfig,
         private val transport: TranslationHttpTransport) : TranslationEngine {
-        override val id: String = identity(config)
+        override val id: String = translationIdentity(config)
         private val closed = AtomicBoolean(false)
         override fun close() { closed.set(true); transport.close() }
         override fun translate(texts: List<String>, sourceLanguage: String, targetLanguage: String,
@@ -167,11 +243,8 @@ object TranslationEngines {
                     texts.any { it.isBlank() || !validText(it) } ||
                     !language.matches(sourceLanguage) || !language.matches(targetLanguage) || targetLanguage == "auto")
                     throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
+                validateForRequest(config, sourceLanguage, targetLanguage)
                 val key = config.apiKey
-                if ((config.provider != TranslationProvider.LIBRE && key.isBlank()) ||
-                    key.length > 4096 || key.any { it.code !in 33..126 } ||
-                    config.region.length > 100 || config.region.any { !(it.isLetterOrDigit() || it == '-') })
-                    throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
                 val headers = linkedMapOf("Content-Type" to "application/json; charset=UTF-8", "Accept" to "application/json")
                 val request = when (config.provider) {
                     TranslationProvider.AZURE -> {
@@ -187,6 +260,14 @@ object TranslationEngines {
                         val body = JSONObject().put("text", JSONArray(texts)).put("target_lang", targetLanguage.uppercase(Locale.ROOT))
                             .put("preserve_formatting", true)
                         if (sourceLanguage != "auto") body.put("source_lang", sourceLanguage.uppercase(Locale.ROOT))
+                        val options = config.options
+                        if (options.context.isNotBlank()) body.put("context", options.context)
+                        if (options.glossaryId.isNotBlank()) {
+                            if (sourceLanguage == "auto") throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
+                            body.put("glossary_id", options.glossaryId)
+                        }
+                        if (options.modelType.isNotBlank()) body.put("model_type", options.modelType)
+                        if (options.formality != "default") body.put("formality", options.formality)
                         val host = if (config.provider == TranslationProvider.DEEPL_FREE) "api-free.deepl.com" else "api.deepl.com"
                         TranslationHttpRequest(URI("https://$host/v2/translate"), headers, body.toString())
                     }

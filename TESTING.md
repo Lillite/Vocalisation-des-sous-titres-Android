@@ -1,5 +1,95 @@
 # Vérifications de régression
 
+## Version 0.5.0 — validation de la candidate en cours
+
+La candidate **0.5.0, code 7**, conserve l’identité Android
+`fr.soustitresvoix.player.translation`. La [fiche de version](docs/releases/0.5.0.md)
+et le [guide des fonctions](docs/CONFORT_INTEGRAL_050.md) décrivent ses changements.
+**Au moment de cette rédaction, les passages complets finaux debug, release et
+Android, la validation de `main` et la publication restent à confirmer.** Les
+résultats publiés de la 0.4.0 ci-dessous ne valident pas les nouvelles sources.
+
+L’inventaire des annotations `@Test` du 26 octobre 2026 contient **166 méthodes
+JVM du noyau, 225 méthodes JVM de l’application et 87 méthodes instrumentées
+Android**, soit **478 méthodes distinctes**. Le parcours complet exigé exécute
+chaque suite deux fois : debug puis release pour la JVM, deux passages de la
+même paire d’APK release pour Android. Il doit donc attester **956 exécutions
+JUnit**. Ces effectifs sont des critères de complétude, pas des résultats.
+
+| Groupe de régressions 0.5.0 | Ce qui doit être vérifié |
+| --- | --- |
+| Occurrences et lecture intégrale | Identités source distinctes, répétitions légitimes identiques, panneaux persistants, chevauchements, changements de style ASS, sous-titres SRT/VTT simultanés et très brefs entre deux mises à jour, déplacements et fin de vidéo après correction temporelle. |
+| File et journal de narration | États détectée, préparée, en attente, commencée, terminée, interrompue et erreur ; conservation et reprise des textes en attente en cas de surcharge ; export de métadonnées sans texte et refus des contextes divergents ; absence de reprise sur callback périmé. |
+| Réglages et compréhension | Recherche accentuée et rubriques, champs numériques et bornes, boutons et présélections, actualisation des profils, annulation synchrone des changements et pauses de compréhension. |
+| Séances et synchronisation | Sauvegarde atomique par vidéo, choix des pistes réellement sélectionnées, restauration locale de la traduction en pause, réglages par piste, corrections à deux points ou par portions, aperçu annulable, fichier déplacé et oubli sans résurrection d’un ancien enregistrement. |
+| Conservation hors ligne | Index et segments durables, contrôle WAV et SHA-256, estimation de l’espace, reprise, suppression par type, invalidation des préparations périmées, priorité à la lecture et refus de « Prêt hors ligne » sur une source incomplète. |
+| Traduction progressive | Lots validés sauvegardés, refus des reprises facturables incertaines, plafond de consommation, correspondance entrée/sortie, seuil initial et pause au premier texte manquant, correction isolée, affichages et export SRT/VTT réimportable. |
+| Android réel | Interactions de réglages et préparation hors ligne, en plus des scénarios existants de narration, Media3, diagnostic, image, audio et traduction, sur émulateur Android 36. |
+
+Les tests d’application sous `app/src/test` s’exécutent sur la JVM avec
+Robolectric et les vrais parseurs Media3. Ils ne remplacent pas les tests sous
+`app/src/androidTest`, qui doivent être **exécutés** sur Android. Construire
+`assembleDebugAndroidTest` ou `assembleReleaseAndroidTest` ne suffit pas.
+
+### Instantanés techniques de l’émulateur
+
+À la sortie de chaque passage instrumenté, le script tente aussi de conserver
+les sorties Android `dumpsys meminfo` de l’application, `gfxinfo framestats`,
+`cpuinfo`, `package` et `thermalservice`, en plus des fenêtres et de logcat.
+`diagnostic-snapshots.tsv` indique l’heure UTC et le code de sortie de chaque
+commande ; chaque tentative est limitée à dix secondes. Ces fichiers restent
+dans les preuves de validation du passage, sur l’émulateur jetable et ses seuls
+contenus synthétiques. Le recueil est aussi tenté si la préparation échoue :
+les métadonnées précisent alors le statut de sortie du script, sans prétendre
+qu’une instrumentation a eu lieu.
+
+Il s’agit d’**instantanés de diagnostic à la fin du parcours**, pas d’un benchmark
+de visionnage continu. Un processus déjà arrêté ou un service indisponible peut
+ne fournir aucune mesure exploitable ; ce cas ne fait pas échouer une suite
+réussie et ne masque jamais son statut initial. Les données ne prouvent ni un
+nombre d’images par seconde stable pendant un film, ni la latence acoustique,
+la qualité vocale, l’autonomie ou les performances du téléphone cible. Aucun
+résultat chiffré n’est attribué à ces commandes avant lecture de leurs sorties
+sur le run effectivement exécuté.
+
+### Contrôles d’outillage exécutés le 26 octobre 2026
+
+Les commandes suivantes ont réellement réussi sur l’arbre de travail de la
+candidate :
+
+```sh
+python3 tools/check-project.py
+python3 tools/test-publish-verified-release.py
+python3 tools/test_sync_releases.py
+python3 tools/test-documentation-cleanup.py
+```
+
+Le contrôle structurel a examiné **67 fichiers Kotlin de production**, les XML,
+la configuration réseau, la démonstration synthétique et l’absence de clé privée
+versionnée. Les suites comportementales ont réussi **19 + 13 + 10 = 42 tests
+Python**. Elles utilisent des réponses contrôlées en mémoire : ce résultat ne
+constitue ni une publication réelle ni une validation Android.
+
+### Échecs intermédiaires conservés
+
+Les passages de développement ont révélé des annulations de réglages et d’aperçu
+qui intervenaient trop tard, une pause de compréhension susceptible de rester
+bloquée, ainsi qu’une perte de répétitions SRT strictement simultanées lorsque
+seuls les groupes de rendu étaient utilisés. Des corrections et des régressions
+spécifiques sont ajoutées. Leur présence ne vaut pas réussite du passage final.
+Une exécution interrompue, un rapport incomplet ou un XML d’un passage précédent
+ne doit pas être compté comme un succès.
+
+Avant de remplacer ce statut par un bilan final, consigner le commit exact,
+les liens des runs de la proposition et de `main`, les résultats JUnit contrôlés
+contre l’inventaire, les alertes lint réellement présentes, les manifestes,
+les signatures et les empreintes de la paire d’APK. L’APK distribué doit provenir
+de l’artefact exact de la CI réussie, puis être signé avec la clé durable hors
+dépôt, contrôlé et téléchargé à nouveau après publication. Les API de comptes
+personnels, la fidélité linguistique, les voix commerciales, TalkBack, Bluetooth
+et les performances sur le téléphone cible restent des essais séparés ; aucune
+garantie universelle d’absence de défaut n’est déduite des tests automatisés.
+
 ## Version publiée 0.4.0 — résultats de référence
 
 La [release 0.4.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0), publiée le **24 octobre 2026**, est issue du commit [`32864ba`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/32864ba732d834e71d87b887ae63f0d7bc09eb8c). Le [run Android 40053284969, tentative 1](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40053284969) a réellement réussi sur ce commit de `main`.
@@ -127,10 +217,10 @@ Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcou
 | Étape | Contrôles exigés |
 | --- | --- |
 | Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 87 tests JVM du noyau, 137 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 87 tests du noyau et des 137 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Variante debug | 166 tests JVM du noyau, 225 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 166 tests du noyau et des 225 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
 | Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
-| Android 36 | Deux passages complets des 82 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
+| Android 36 | Deux passages complets des 87 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
 | Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
 
 Ces effectifs incluent les suites de la version 0.3.2 et les compléments de la
@@ -150,7 +240,8 @@ scénarios Android. Les totaux 40/41/69 de l’étape 2, 44/46/70 de l’étape 
 de l’étape 5 sont 50/64/73. La [sixième étape](docs/AUDIO_EXPERT_ETAPE_6.md)
 ajoute 27 méthodes noyau, 28 méthodes JVM de l’application et deux scénarios
 Android ; le scénario ASS de l’étape 5 est aussi étendu aux commandes DSP.
-Les effectifs exigés pour la version 0.4.0 sont **87/137/82**.
+Les effectifs de référence de la version 0.4.0 restent **87/137/82** ; ceux
+de la candidate 0.5.0 sont **166/225/87**.
 Ces nombres sont des critères à contrôler,
 pas une preuve d’exécution :
 consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
@@ -200,7 +291,22 @@ Exécuter la validation complète depuis la racine :
 gradle --no-daemon :core:clean :app:clean
 gradle --no-daemon --rerun-tasks --no-build-cache :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
 python3 tools/check-project.py
+python3 tools/test-publish-verified-release.py
+python3 tools/test_sync_releases.py
+python3 tools/test-documentation-cleanup.py
 ```
+
+Contrôler ensuite chaque rapport JVM contre les méthodes attendues :
+
+```sh
+python3 tools/verify-test-results.py --reports core/build/test-results/test --expected-count 166 --sources core/src/test/kotlin --output build/verification/local-debug-core-summary.json
+python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 225 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
+```
+
+Pour une preuve finale, fournir aussi `--not-before-ns` avec l’instant de début
+du passage, comme le workflow CI, afin de refuser les XML périmés. Après la
+variante release, utiliser `testReleaseUnitTest` et conserver séparément les
+XML debug avant de relancer le noyau.
 
 Les tests `app/src/test` emploient les vraies classes de l'application et les
 parseurs Media3 épinglés. Les petits ASS et MKV sous `app/src/test/resources/ssa`

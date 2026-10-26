@@ -3,6 +3,9 @@ package fr.soustitresvoix.player
 import android.content.Context
 import fr.soustitresvoix.core.LatencyWindow
 import fr.soustitresvoix.core.SpeechDurationModel
+import fr.soustitresvoix.core.OfflineSpeechCue
+import fr.soustitresvoix.core.OfflineSpeechStatus
+import fr.soustitresvoix.core.OfflineSpeechWork
 
 data class SpeechVoiceChoice(val name: String, val label: String, val languageTag: String)
 data class SpeechEngineChoice(val name: String, val label: String)
@@ -35,6 +38,19 @@ interface SpeechService {
     val lastFactor: Float
     val cacheSize: Long
     val preparationStatus: String
+    val offlinePreparationActive: Boolean get() = false
+    val offlineStatus: OfflineSpeechStatus get() = OfflineSpeechStatus()
+    fun offlineWorks(): List<OfflineSpeechWork> = emptyList()
+    fun measuredDurationMs(text: String): Long? = null
+    fun configureOfflineWork(mediaKey: String, cues: List<OfflineSpeechCue>, totalDurationMs: Long,
+        complete: Boolean = true, title: String = "") = Unit
+    fun clearOfflineSelection() = Unit
+    fun estimateOffline() = Unit
+    fun prepareOffline() = Unit
+    fun refreshOfflineStatus() = Unit
+    fun removeOfflineVoices(mediaKey: String) = Unit
+    fun removeOfflineTexts(mediaKey: String) = Unit
+    fun removeOfflineIndex(mediaKey: String) = Unit
     fun engines(): List<SpeechEngineChoice>
     fun retry()
     fun applyPreferences()
@@ -57,6 +73,19 @@ class AndroidSpeechService(
     onDone: (String) -> Unit, onFailure: (String, String) -> Unit
 ) : SpeechService {
     private val speech = AndroidSpeech(context, preferences, onAvailability, onDone, onFailure)
+    override val offlinePreparationActive get() = speech.offlinePreparationActive
+    override val offlineStatus get() = speech.offlineStatus
+    override fun offlineWorks() = speech.offlineWorks()
+    override fun measuredDurationMs(text: String) = speech.measuredDurationMs(text)
+    override fun configureOfflineWork(mediaKey: String, cues: List<OfflineSpeechCue>, totalDurationMs: Long,
+        complete: Boolean, title: String) = speech.configureOfflineWork(mediaKey, cues, totalDurationMs, complete, title)
+    override fun clearOfflineSelection() = speech.clearOfflineSelection()
+    override fun estimateOffline() = speech.estimateOffline()
+    override fun prepareOffline() = speech.prepareOffline()
+    override fun refreshOfflineStatus() = speech.refreshOfflineStatus()
+    override fun removeOfflineVoices(mediaKey: String) = speech.removeOfflineVoices(mediaKey)
+    override fun removeOfflineTexts(mediaKey: String) = speech.removeOfflineTexts(mediaKey)
+    override fun removeOfflineIndex(mediaKey: String) = speech.removeOfflineIndex(mediaKey)
     override val durations get() = speech.durations
     override val synthesisLatency get() = speech.synthesisLatency
     override val firstAudioLatency get() = speech.firstAudioLatency
