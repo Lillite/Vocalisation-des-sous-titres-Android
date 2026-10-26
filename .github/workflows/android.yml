@@ -56,7 +56,7 @@ jobs:
           tail -n 180 build/verification/debug-build-console.txt
           python3 tools/verify-test-results.py --reports core/build/test-results/test --expected-count 178 --sources core/src/test/kotlin --not-before-ns "$started_ns" --output build/verification/debug-core-test-summary.json
           core_result=$?
-          python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 238 --sources app/src/test/java --not-before-ns "$started_ns" --output build/verification/debug-app-test-summary.json
+          python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 242 --sources app/src/test/java --not-before-ns "$started_ns" --output build/verification/debug-app-test-summary.json
           app_result=$?
           # The release step reruns the core suite: retain the debug XML as evidence.
           cp -a core/build/test-results/test build/verification/debug-core-junit
@@ -119,7 +119,7 @@ jobs:
           tail -n 180 build/verification/release-build-console.txt
           python3 tools/verify-test-results.py --reports core/build/test-results/test --expected-count 178 --sources core/src/test/kotlin --not-before-ns "$started_ns" --output build/verification/release-core-test-summary.json
           core_result=$?
-          python3 tools/verify-test-results.py --reports app/build/test-results/testReleaseUnitTest --expected-count 238 --sources app/src/test/java --not-before-ns "$started_ns" --output build/verification/release-app-test-summary.json
+          python3 tools/verify-test-results.py --reports app/build/test-results/testReleaseUnitTest --expected-count 242 --sources app/src/test/java --not-before-ns "$started_ns" --output build/verification/release-app-test-summary.json
           app_result=$?
           if [[ "$result" != 0 ]]; then exit "$result"; fi
           if [[ "$core_result" != 0 ]]; then exit "$core_result"; fi
@@ -202,7 +202,7 @@ jobs:
             exit 1
           fi
           df -h /
-      - name: Deux passages complets des 87 tests release sur Android 36
+      - name: Deux passages complets des 88 tests release sur Android 36
         shell: bash
         run: bash tools/run-ci-emulator.sh
       - name: Verifier les artefacts apres les deux passages

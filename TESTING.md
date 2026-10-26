@@ -10,10 +10,10 @@ Android, la validation de `main` et la publication restent à confirmer.** Les
 résultats publiés de la 0.4.0 ci-dessous ne valident pas les nouvelles sources.
 
 L’inventaire des annotations `@Test` du 26 octobre 2026 contient **178 méthodes
-JVM du noyau, 238 méthodes JVM de l’application et 87 méthodes instrumentées
-Android**, soit **503 méthodes distinctes**. Le parcours complet exigé exécute
+JVM du noyau, 242 méthodes JVM de l’application et 88 méthodes instrumentées
+Android**, soit **508 méthodes distinctes**. Le parcours complet exigé exécute
 chaque suite deux fois : debug puis release pour la JVM, deux passages de la
-même paire d’APK release pour Android. Il doit donc attester **1 006 exécutions
+même paire d’APK release pour Android. Il doit donc attester **1 016 exécutions
 JUnit**. Ces effectifs sont des critères de complétude, pas des résultats.
 
 | Groupe de régressions 0.5.0 | Ce qui doit être vérifié |
@@ -192,13 +192,41 @@ ses délais et son refus des appareils physiques. Son analyseur a aussi accepté
 un vrai dump sain Android 36 et refusé un vrai dump ANR conservé. La validation
 réelle du nouveau lancement reste à établir par les runs finaux.
 
-En local, les inventaires complets finaux ont passé **178 tests core, 238 tests
+En local, les inventaires complets avant le correctif de plein écran ont passé **178 tests core, 238 tests
 app debug et 238 tests app release**, sans échec ni méthode ignorée ou manquante.
 Deux assemblages ont rencontré un fichier dex temporaire disparu dans les sorties
 partagées. La reconstruction avec un répertoire de build isolé a ensuite réussi
 les APK debug et de tests, lint debug (**0 erreur, 67 avertissements**), manifestes,
 signatures correspondantes et alignement 16 Kio. Ces APK locaux restent des
 contrôles ; ils ne remplacent pas l’artefact exact de `main` destiné à la publication.
+
+La révision `1442f62ccafe13987eb0ad85c25ce240b5db7e45` a ensuite réussi les
+**1 006 exécutions** de la proposition dans le [run 40386234171](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40386234171).
+La fusion de la PR #13 a produit `db346e703c5b591757a3c1c326c9b052075b6620`.
+Son [run main 40392692955](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40392692955)
+a correctement bloqué la publication : **1 005 réussites et un échec sur
+1 006 exécutions**, avec 86/87 au premier passage Android et 87/87 au second.
+Le second succès ne remplace pas le premier échec. Le lancement CLI a bien obtenu
+trois observations de fenêtres affichées et stables et conservé le statut d’échec.
+
+L’exception réelle `The specified child already has a parent` provenait du
+rattachement du `PlayerView` dans `MainActivity.buildUi`, pendant
+`CinemaInstrumentationTest.landscapeFullscreenHidesSystemBarsAndBackExitsOnlyCinema`.
+Une régression déterministe avec de vrais parents Android a reproduit cette
+exception sur l’ancien code : un changement de configuration et une sortie du
+plein écran intervenaient pendant le retrait de la vue. Le correctif sérialise
+ces reconstructions et regroupe la demande suivante, en conservant le dernier
+état demandé. Les tests ciblés passent après correction et le nouveau test
+instrumenté vérifie l’unicité des vues, la même surface et la pause sur plusieurs
+cycles. Le dialogue de reprise est aussi libéré à la destruction de l’activité,
+car un `WindowLeaked` distinct était présent dans ce même journal.
+
+L’archive de cet échec a pour SHA-256
+`c697ba469a246857b4cca8f2f6b777b2d5858597f5c318bed78e21975aecb2f3`.
+Aucune capture paysage n’avait encore été créée par le test défaillant ; les
+captures du second passage attestent uniquement sa réussite. Aucun APK de ce
+commit n’a été signé ou publié. Les quatre nouvelles méthodes JVM et la nouvelle
+méthode Android doivent encore réussir les passages complets du correctif.
 
 Avant de remplacer ce statut par un bilan final, consigner le commit exact,
 les liens des runs de la proposition et de `main`, les résultats JUnit contrôlés
@@ -337,10 +365,10 @@ Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcou
 | Étape | Contrôles exigés |
 | --- | --- |
 | Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 178 tests JVM du noyau, 238 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 178 tests du noyau et des 238 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Variante debug | 178 tests JVM du noyau, 242 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 178 tests du noyau et des 242 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
 | Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
-| Android 36 | Deux passages complets des 87 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
+| Android 36 | Deux passages complets des 88 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
 | Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
 
 Ces effectifs incluent les suites de la version 0.3.2 et les compléments de la
@@ -361,7 +389,7 @@ de l’étape 5 sont 50/64/73. La [sixième étape](docs/AUDIO_EXPERT_ETAPE_6.md
 ajoute 27 méthodes noyau, 28 méthodes JVM de l’application et deux scénarios
 Android ; le scénario ASS de l’étape 5 est aussi étendu aux commandes DSP.
 Les effectifs de référence de la version 0.4.0 restent **87/137/82** ; ceux
-de la candidate 0.5.0 sont **178/238/87**.
+de la candidate 0.5.0 sont **178/242/88**.
 Ces nombres sont des critères à contrôler,
 pas une preuve d’exécution :
 consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
@@ -420,7 +448,7 @@ Contrôler ensuite chaque rapport JVM contre les méthodes attendues :
 
 ```sh
 python3 tools/verify-test-results.py --reports core/build/test-results/test --expected-count 178 --sources core/src/test/kotlin --output build/verification/local-debug-core-summary.json
-python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 238 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
+python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 242 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
 ```
 
 Pour une preuve finale, fournir aussi `--not-before-ns` avec l’instant de début
