@@ -2,7 +2,7 @@
 
 [Accueil](../README.md) · [Documentation](README.md) · [Tests sur téléphone](TESTS_TELEPHONE.md) · [Notes de version](releases/0.5.0.md) · [Couverture des demandes](COUVERTURE_DEMANDES_050.md)
 
-**État : sources 0.5.0 en cours de validation et de publication.** Les résultats de l’APK effectivement distribué seront reliés dans [TESTING.md](../TESTING.md). Ce guide n’attribue aucun résultat d’un APK antérieur à cette version.
+**Version 0.5.0 publiée le 26 octobre 2026.** [Télécharger l’APK Android](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.0/SousTitresVoix-0.5.0-confort-integral.apk) · [Release et sommes de contrôle](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0). Les six suites ont réussi **1 016 exécutions de 508 méthodes distinctes** ; le fichier public, son certificat et son contenu ont été contrôlés après téléchargement. Les [résultats et limites](../TESTING.md) sont propres à ces sources. Aucun résultat d’un APK antérieur n’est réattribué à cette version.
 
 ## Objectif et vocabulaire
 
@@ -22,7 +22,7 @@ L’intégrité structurelle des occurrences et la fidélité linguistique sont 
 
 ## Installation et mise à jour
 
-La 0.5.0 garde l’identité **fr.soustitresvoix.player.translation** et doit être publiée avec le certificat durable de la 0.4.0. Android peut alors effectuer une mise à jour de cette édition. Ne pas désinstaller la 0.4.0 avant la mise à jour : une désinstallation peut retirer ses données privées. La stable 0.3.2 conserve une identité différente et peut rester installée à côté.
+La 0.5.0 garde l’identité **fr.soustitresvoix.player.translation** et le certificat durable de la 0.4.0, vérifié sur l’APK publié. Android peut alors effectuer une mise à jour de cette édition. Ne pas désinstaller la 0.4.0 avant la mise à jour : une désinstallation peut retirer ses données privées. La stable 0.3.2 conserve une identité différente et peut rester installée à côté.
 
 Le téléchargement se fait depuis la release GitHub publiée, avec le fichier **SousTitresVoix-0.5.0-confort-integral.apk**. L’archive « Source code » ne s’installe pas sur Android. Une installation initiale d’un moteur vocal ou de ses voix peut demander Internet et se fait dans ce moteur.
 
@@ -107,6 +107,8 @@ Une indication historique « traduction prête » ne suffit pas à la réouvertu
 4. Après relecture, appuyer explicitement sur **Reprendre**.
 
 La séance garde aussi un repère sans texte de sa file vocale réellement inachevée, distinct des anciennes interruptions du bilan. Au premier **Reprendre**, le lecteur vérifie la piste, sa traduction et son index, puis revient au début corrigé de la première occurrence encore à lire. Une réplique visuellement expirée ne disparaît donc pas lors d’une fermeture du processus. La vidéo reste d’abord en pause ; une nouvelle pause, un déplacement ou un changement de source invalide une demande de reprise différée. Un déplacement volontaire abandonne le repère précédent. Si l’occurrence n’est plus disponible, le lecteur explique le problème et conserve la pause.
+
+**Relire la dernière réplique avant de reprendre** conserve aussi les autres répliques encore à récupérer. Si une traduction était demandée mais reste incomplète, absente ou invalide, la séance n’utilise pas silencieusement le texte original : elle reste en pause jusqu’à une traduction disponible ou au choix explicite **Revenir à la piste originale**.
 
 Si l’accès a expiré ou que la vidéo a été déplacée, le parcours **Retrouver le fichier de cette séance** propose le sélecteur Android. Choisir la même vidéo et la même édition. Des métadonnées changées peuvent neutraliser la restauration afin d’éviter d’appliquer les minutages d’un autre montage.
 

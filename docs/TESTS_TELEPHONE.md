@@ -2,7 +2,7 @@
 
 [Documentation](README.md) · [Guide Confort intégral](CONFORT_INTEGRAL_050.md) · [Installation](../README.md) · [Fournisseurs](GUIDE_MOTEURS_TRADUCTION.md)
 
-Ce parcours concerne **0.5.0 — Confort intégral**, code **7**, identité **fr.soustitresvoix.player.translation**. La version est en cours de validation et de publication. **Les essais sur téléphone décrits ici sont à consigner séparément : ni compilation ni instrumentation sur émulateur ne les déclarent réussis.**
+Ce parcours concerne **0.5.0 — Confort intégral**, code **7**, identité **fr.soustitresvoix.player.translation**, [publiée le 26 octobre 2026](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0). Les sources ont passé la validation automatisée de `main` et l’APK public a été vérifié après téléchargement. **Les essais sur téléphone décrits ici sont à consigner séparément : ni compilation ni instrumentation sur émulateur ne les déclarent réussis.**
 
 Pour chaque ligne, relever **réussi**, **échec** ou **non testé**, l’attendu, l’observé et les étapes exactes. L’objectif principal est de vérifier la vocalisation de toutes les occurrences textuelles de la piste prise en charge, avec répétitions réelles conservées.
 
@@ -29,7 +29,7 @@ Commencer par les contenus synthétiques du dépôt, à volume confortable. Ne p
 4. Avec la 0.4.0 déjà installée, vérifier qu’Android propose sa mise à jour et conserve les réglages/données. Ne pas désinstaller pour forcer un échec de signature.
 5. Vérifier version/code dans l’application et les repères de la release.
 
-La 0.5.0 conserve l’identité de la 0.4.0 ; la 0.3.2 reste une autre application. Les empreintes, taille et résultats définitifs seront disponibles dans [TESTING.md](../TESTING.md) et les notes de la publication.
+La 0.5.0 conserve l’identité et le certificat de la 0.4.0 ; la 0.3.2 reste une autre application. Les empreintes, taille et résultats vérifiés sont disponibles dans [TESTING.md](../TESTING.md) et les notes de la publication.
 
 ## Parcourir les huit rubriques et les champs numériques
 

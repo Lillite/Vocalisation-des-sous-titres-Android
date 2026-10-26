@@ -1,22 +1,103 @@
 # Vérifications de régression
 
-## Version 0.5.0 — validation de la candidate en cours
+## Version publiée 0.5.0 — lecture intégrale et traduction progressive
 
-La candidate **0.5.0, code 7**, conserve l’identité Android
+La version **0.5.0, code 7**, conserve l’identité Android
 `fr.soustitresvoix.player.translation`. La [fiche de version](docs/releases/0.5.0.md)
 et le [guide des fonctions](docs/CONFORT_INTEGRAL_050.md) décrivent ses changements.
-**Au moment de cette rédaction, les passages complets finaux debug, release et
-Android, la validation de `main` et la publication restent à confirmer.** Les
-résultats publiés de la 0.4.0 ci-dessous ne valident pas les nouvelles sources.
+Les sources de `main` au commit
+[`3740356420fb09eadabe23da207fa554515da101`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/3740356420fb09eadabe23da207fa554515da101)
+ont réussi le [run Android 40402709269, tentative 1](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40402709269/attempts/1).
+La [PR #14](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/14)
+avait auparavant réussi les mêmes contrôles dans le
+[run 40397467976, tentative 2](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40397467976/attempts/2),
+sur sa tête `beb946f1f151d9c72e496cfe61088451d78f040a`.
+Le rapport de cette proposition consigne le commit de fusion provisoire testé
+`ce9a1be0c0cd41958ca6364a07c1bb74390bb44d` ; la validation suivante de `main`
+porte bien sur `3740356`, sans confondre ces deux sources.
+La [release 0.5.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0)
+a été publiée le **26 octobre 2026 à 21:48:52 UTC** après réussite du
+[run de publication 40407440389, tentative 1](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40407440389/attempts/1).
+**L’APK public a été téléchargé à nouveau et vérifié** : taille, SHA-256,
+certificat durable, manifeste, alignement et contenu identique à la CI hors
+signature. Le tag `v0.5.0` pointe exactement vers le commit `3740356` ; `main`
+est resté sur ce commit pendant la publication.
+Les résultats publiés de la 0.4.0 ci-dessous restent historiques.
+
+La [preuve durable de validation 0.5.0](docs/verification/0.5.0.json) conserve
+les six résumés, les inventaires complets des méthodes, les empreintes des
+entrées de preuve, les résultats lint et les faits de publication. Elle permet
+de consulter ces repères après expiration des artefacts temporaires Actions.
 
 L’inventaire des annotations `@Test` du 26 octobre 2026 contient **178 méthodes
 JVM du noyau, 242 méthodes JVM de l’application et 88 méthodes instrumentées
-Android**, soit **508 méthodes distinctes**. Le parcours complet exigé exécute
-chaque suite deux fois : debug puis release pour la JVM, deux passages de la
-même paire d’APK release pour Android. Il doit donc attester **1 016 exécutions
-JUnit**. Ces effectifs sont des critères de complétude, pas des résultats.
+Android**, soit **508 méthodes distinctes**. Les six suites du run de `main`
+ont effectivement réussi **1 016 exécutions JUnit**, sans échec, erreur, test
+ignoré, manquant, inattendu ou dupliqué. Les contrôles comparent les identités
+des méthodes exécutées à l’inventaire des sources ; une méthode seulement
+présente dans le dépôt ne compte pas comme exécutée.
 
-| Groupe de régressions 0.5.0 | Ce qui doit être vérifié |
+| Contrôle exécuté sur `3740356` | Résultat |
+| --- | --- |
+| Noyau JVM, debug | 178 réussites. |
+| Application JVM, debug | 242 réussites. |
+| Noyau JVM, release | 178 réussites. |
+| Application JVM, release | 242 réussites. |
+| Android 36, application et tests release, passage 1 | 88 réussites sur émulateur AOSP x86_64. |
+| Android 36, même paire d’APK release, passage 2 | 88 réussites. |
+| Total JUnit | **1 016 exécutions de 508 méthodes distinctes**, sans échec, erreur, méthode ignorée, manquante, inattendue ou dupliquée. |
+| Lint debug / release | **0 erreur, 69 avertissements et une indication dans chaque variante** ; rapports conservés sans suppression d’alertes. |
+| Compilation et intégrité CI | Applications et APK de tests debug/release compilés ; manifestes, permissions, signatures correspondantes, alignement et empreintes contrôlés ; la même paire release est conservée entre les deux passages Android. |
+| Outillage Python | **62 tests réussis au total** : 19 de publication et 20 de préparation d’émulateur dans le run Android ; 13 de synchronisation des releases et 10 de rangement documentaire exécutés localement. Les 62 ont aussi été relancés localement après l’actualisation documentaire. |
+
+La vérification couvre notamment les régressions ajoutées pour la file réellement
+inachevée, les sauvegardes relues sur disque après recréation, la traduction
+partielle ou indisponible, les callbacks périmés et les reconstructions imbriquées
+du plein écran. Les 88 tests instrumentés ont été exécutés sur Android ; leur
+simple compilation n’est pas présentée comme une réussite d’instrumentation.
+
+### APK publié et contrôlé après téléchargement
+
+L’APK provient de l’artefact release de la validation exacte de `main` ci-dessus.
+Il a été signé avec la clé durable hors du dépôt ; toutes ses entrées autres que
+les données de signature ont été comparées à celles de la CI. Le fichier signé
+a passé les vérifications de signature, d’alignement et de manifeste : application
+non débogable et non réservée aux tests, version/code et permissions attendus.
+Ces vérifications ont été répétées sur le téléchargement public après la
+publication, avec comparaison de son contenu à l’APK exact de la CI.
+
+| Repère | Valeur vérifiée |
+| --- | --- |
+| Fichier | [SousTitresVoix-0.5.0-confort-integral.apk](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.0/SousTitresVoix-0.5.0-confort-integral.apk) |
+| Taille | **5 242 608 octets** |
+| Identité Android | `fr.soustitresvoix.player.translation` |
+| Version / code | `0.5.0` / `7` |
+| Commit source | `3740356420fb09eadabe23da207fa554515da101` |
+| SHA-256 de l’APK signé | `dcaf9f07cdc85f5dfa007ceeef40a3e71cdba25b40c66381a3cf39998207ed7c` |
+| SHA-256 de l’APK CI avant signature durable | `4e5ae14b9bc2cb6d2190731a9b66c06f4475ea23dcda234a44bba85cbfa5bb50` |
+| SHA-256 du certificat | `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d` |
+| Publication / asset APK | `424807308` / `679580568` |
+| Somme de contrôle publique | [SHA256SUMS](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.0/SHA256SUMS), 108 octets, asset `679580596`, SHA-256 `c77ec58299dacf773e2485a668273dfeda0aa88d909358aaa1e7a193c1369ea9` ; ligne attendue vérifiée. |
+
+Le certificat est celui de l’édition Traduction 0.4.0. Aucune clé privée ni
+mot de passe n’est joint au dépôt ou aux fichiers publics. La compatibilité de
+signature n’est pas présentée comme un essai d’installation sur tous les
+téléphones ; le parcours de mise à jour reste dans les [tests sur téléphone](docs/TESTS_TELEPHONE.md).
+
+### Charge supplémentaire sur le noyau
+
+Les deux suites autonomes `CoreChecks` et `Revision03Checks` ont aussi été
+exécutées avec **20 nouvelles graines**, de 10001 à 10020 : **40 invocations et
+800 000 événements aléatoires supplémentaires**, toutes réussies sur JVM 17 avec
+un plafond de tas de 512 Mio. Le contrôle a été exécuté sur `c099440` ; les objets
+Git du noyau et de sa configuration de compilation sont identiques dans le
+commit final `3740356`. Ces graines ne sont pas de nouvelles méthodes JUnit et
+ne sont pas ajoutées aux 1 016 exécutions ci-dessus. Ce contrôle ne mesure ni
+la performance d’un téléphone ni le cycle de vie d’une activité Android.
+Les graines, la provenance et les objets du noyau comparés sont conservés dans
+la [preuve de charge supplémentaire](docs/verification/0.5.0-additional-stress.json).
+
+| Groupe de régressions 0.5.0 | Couverture des suites exécutées |
 | --- | --- |
 | Occurrences et lecture intégrale | Identités source distinctes, répétitions légitimes identiques, panneaux persistants, chevauchements, changements de style ASS, sous-titres SRT/VTT simultanés et très brefs entre deux mises à jour, déplacements et fin de vidéo après correction temporelle. |
 | File et journal de narration | États détectée, préparée, en attente, commencée, terminée, interrompue et erreur ; conservation et reprise des textes en attente en cas de surcharge ; export de métadonnées sans texte et refus des contextes divergents ; absence de reprise sur callback périmé. |
@@ -24,7 +105,7 @@ JUnit**. Ces effectifs sont des critères de complétude, pas des résultats.
 | Séances et synchronisation | Sauvegarde atomique par vidéo, choix des pistes réellement sélectionnées, restauration locale de la traduction en pause, réglages par piste, corrections à deux points ou par portions, aperçu annulable, fichier déplacé et oubli sans résurrection d’un ancien enregistrement. |
 | Conservation hors ligne | Index et segments durables, contrôle WAV et SHA-256, estimation de l’espace, reprise, suppression par type, invalidation des préparations périmées, priorité à la lecture et refus de « Prêt hors ligne » sur une source incomplète. |
 | Traduction progressive | Lots validés sauvegardés, refus des reprises facturables incertaines, plafond de consommation, correspondance entrée/sortie, seuil initial et pause au premier texte manquant, correction isolée, affichages et export SRT/VTT réimportable. |
-| Android réel | Interactions de réglages et préparation hors ligne, en plus des scénarios existants de narration, Media3, diagnostic, image, audio et traduction, sur émulateur Android 36. |
+| Android sur émulateur | Interactions de réglages et préparation hors ligne, en plus des scénarios existants de narration, Media3, diagnostic, image, audio et traduction, sur émulateur Android 36. |
 
 Les tests d’application sous `app/src/test` s’exécutent sur la JVM avec
 Robolectric et les vrais parseurs Media3. Ils ne remplacent pas les tests sous
@@ -65,12 +146,29 @@ la qualité vocale, l’autonomie ou les performances du téléphone cible. Aucu
 résultat chiffré n’est attribué à ces commandes avant lecture de leurs sorties
 sur le run effectivement exécuté.
 
+Dans le run final de `main` **40402709269**, chaque passage a produit **15
+captures mémoire**, dont **14 avec le processus et une valeur PSS exploitables**.
+Les valeurs PSS relevées vont de **46 059 à 63 148 Kio** au premier passage et de
+**47 619 à 64 827 Kio** au second (`KB` dans `dumpsys`). Ce sont des relevés des
+scénarios synthétiques mélangés de la suite, pas des maximums garantis pendant
+un film. Les captures CPU ont toutes été produites, mais les lignes du package
+ne permettent pas d’en déduire sa consommation CPU ; aucun résultat de
+performance n’en est tiré. Les rapports finaux restent dans l’artefact
+**Android-rapports-validation**, identifiant **12690416852** ; le SHA-256 de son
+archive ZIP téléchargée est
+`38063817ff6ea6dfebc3d43bfd31688f331707db19c38c1692c318ca3c1ee4c7`.
+Les horodatages, statuts, valeurs extraites et empreintes des 97 fichiers
+sources examinés sont conservés dans la
+[preuve des relevés Android](docs/verification/0.5.0-device-metrics.json).
+
 Dans les preuves du premier [run 40352075138](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40352075138), les instantanés finaux mémoire/trames des deux passages indiquaient `No process found`, bien que les commandes retournent zéro. Ils ne constituent donc pas des mesures mémoire ou de fluidité de l’application. Le recueil pendant l’instrumentation est ajouté pour observer aussi des phases où son processus est actif ; sa présence dans le script ne remplace pas la lecture des preuves du passage suivant.
 
 ### Contrôles d’outillage exécutés le 26 octobre 2026
 
-Les commandes suivantes ont réellement réussi sur l’arbre de travail de la
-candidate :
+Les commandes suivantes ont réellement réussi. Le job Android final a exécuté
+le contrôle structurel et les deux premières suites Python ci-dessous ; les
+deux autres suites ont aussi été exécutées localement pour la documentation.
+Les 62 tests ont été relancés localement après sa mise à jour :
 
 ```sh
 python3 tools/check-project.py
@@ -83,7 +181,8 @@ python3 tools/test-documentation-cleanup.py
 Le contrôle structurel a examiné **67 fichiers Kotlin de production**, les XML,
 la configuration réseau, la démonstration synthétique et l’absence de clé privée
 versionnée. Les suites comportementales ont réussi **19 + 20 + 13 + 10 = 62 tests
-Python**, dont les nouveaux contrôles de démarrage de l’émulateur. Elles utilisent des réponses contrôlées en mémoire : ce résultat ne
+Python**, dont les nouveaux contrôles de démarrage de l’émulateur, avec la
+répartition CI/local précisée ci-dessus. Elles utilisent des réponses contrôlées en mémoire : ce résultat ne
 constitue ni une publication réelle ni une validation Android.
 
 ### Échecs intermédiaires conservés
@@ -133,9 +232,10 @@ Ce passage réussi reste une étape de développement. Une revue ciblée a ensui
 reproduit deux défauts de sélection de la réplique à relire : remettre en file
 une ancienne occurrence déjà terminée pouvait la faire passer pour la dernière
 achevée ; abandonner une réplique en attente qui n’avait jamais commencé pouvait
-masquer l’interruption de celle réellement commencée. Le correctif et ses
-régressions sont en cours de vérification. Les résultats ci-dessus ne valident
-pas encore ces changements supplémentaires, `main` ni un APK distribué.
+masquer l’interruption de celle réellement commencée. Des références de dernière
+fin et de dernière interruption réellement commencée ont corrigé ces cas ; leurs
+régressions font partie de la validation finale en tête de ce document. Le run
+intermédiaire ci-dessus ne valide pas ces changements ultérieurs.
 
 La [tentative 1 du run 40374255289](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40374255289/attempts/1),
 tête `63cfd6a49699516cf421814f662cf399093cf492`, a réussi les suites JVM
@@ -162,12 +262,12 @@ valide pas les correctifs de reprise ajoutés ensuite.
 Une autre revue a confirmé une perte possible lors de **Reprendre après mort du
 processus** : une occurrence A dont la voix continuait à la frontière de B pouvait
 avoir expiré visuellement à la position sauvegardée. Restaurer seulement le
-journal et la position ne reconstruisait pas cette file. La candidate conserve
+journal et la position ne reconstruisait pas cette file. La version 0.5.0 conserve
 donc un repère de la vraie file inachevée, distinct des interruptions historiques
 après déplacement. Les tests de cette correction couvrent aussi la restauration
 de la traduction, les corrections temporelles, les sauvegardes précoces et les
-commandes utilisateur qui invalident une reprise différée. Ces nouveaux
-scénarios doivent réussir sur les sources finales avant publication.
+commandes utilisateur qui invalident une reprise différée. Ces scénarios ont
+ensuite réussi dans la validation finale en tête de ce document.
 
 La tête `c0994407f2f4c3d13c354e08b78768a09f676a2e` a passé **832 exécutions JVM**
 par tentative (178 + 238 en debug et autant en release), lint et les compilations
@@ -190,7 +290,8 @@ Un ANR reste un échec immédiat ; aucun dialogue n’est fermé et aucune suite
 réessayée dans le lanceur. **20 tests comportementaux** ont vérifié ce contrôle,
 ses délais et son refus des appareils physiques. Son analyseur a aussi accepté
 un vrai dump sain Android 36 et refusé un vrai dump ANR conservé. La validation
-réelle du nouveau lancement reste à établir par les runs finaux.
+réelle du nouveau lancement a ensuite réussi dans les runs finaux. Cela ne
+transforme pas les tentatives de démarrage en échec en tests Android exécutés.
 
 En local, les inventaires complets avant le correctif de plein écran ont passé **178 tests core, 238 tests
 app debug et 238 tests app release**, sans échec ni méthode ignorée ou manquante.
@@ -226,14 +327,24 @@ L’archive de cet échec a pour SHA-256
 Aucune capture paysage n’avait encore été créée par le test défaillant ; les
 captures du second passage attestent uniquement sa réussite. Aucun APK de ce
 commit n’a été signé ou publié. Les quatre nouvelles méthodes JVM et la nouvelle
-méthode Android doivent encore réussir les passages complets du correctif.
+méthode Android ont ensuite réussi les passages complets de la PR #14 et de
+`main`, référencés en tête de ce document.
 
-Avant de remplacer ce statut par un bilan final, consigner le commit exact,
-les liens des runs de la proposition et de `main`, les résultats JUnit contrôlés
-contre l’inventaire, les alertes lint réellement présentes, les manifestes,
-les signatures et les empreintes de la paire d’APK. L’APK distribué doit provenir
-de l’artefact exact de la CI réussie, puis être signé avec la clé durable hors
-dépôt, contrôlé et téléchargé à nouveau après publication. Les API de comptes
+La [tentative 1 de la PR #14, run 40397467976](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40397467976/attempts/1),
+sur la même tête `beb946f`, a réussi **840 exécutions JVM** mais échoué au
+démarrage Android : un ANR de `com.android.systemui`, signalé comme échec de
+démarrage, a interrompu le contrôle de fenêtre. Aucun test Android n’a été
+exécuté et aucun état prêt n’a été délivré. L’archive a pour SHA-256
+`b4ed243d79adb799c6a9e637305218249fe1fc1998d0f1370189ce00ab1bcd26`.
+La relance complète sur la même source a réussi en tentative 2 ; les 1 016
+exécutions finales de `main` constituent une vérification supplémentaire sur
+le commit de fusion réel. Aucun ANR système ni test en échec n’est masqué par
+cette relance.
+
+La validation des sources et la publication sont deux contrôles distincts.
+L’APK distribué provient de l’artefact exact de la CI réussie ; il a été signé
+avec la clé durable hors dépôt, contrôlé puis téléchargé à nouveau après
+publication. Les API de comptes
 personnels, la fidélité linguistique, les voix commerciales, TalkBack, Bluetooth
 et les performances sur le téléphone cible restent des essais séparés ; aucune
 garantie universelle d’absence de défaut n’est déduite des tests automatisés.
@@ -389,7 +500,7 @@ de l’étape 5 sont 50/64/73. La [sixième étape](docs/AUDIO_EXPERT_ETAPE_6.md
 ajoute 27 méthodes noyau, 28 méthodes JVM de l’application et deux scénarios
 Android ; le scénario ASS de l’étape 5 est aussi étendu aux commandes DSP.
 Les effectifs de référence de la version 0.4.0 restent **87/137/82** ; ceux
-de la candidate 0.5.0 sont **178/242/88**.
+de la version 0.5.0 sont **178/242/88**.
 Ces nombres sont des critères à contrôler,
 pas une preuve d’exécution :
 consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
