@@ -243,7 +243,7 @@ Tester mise en arrière-plan, verrouillage, appel, interruption audio et connexi
 
 Effectuer une séance prolongée avec le moteur habituel, puis relever synchronisation, intelligibilité, interruptions, mémoire, chauffe et consommation. Les profils de préparation ne prouvent pas l’emploi du GPU/NPU. Un émulateur ne mesure pas l’autonomie ni la qualité acoustique du téléphone.
 
-Les preuves CI peuvent contenir des instantanés de mémoire, trames, CPU, version du paquet et état thermique à la fin des suites synthétiques. Ils aident à examiner le contexte de l’émulateur ; ils ne remplacent pas ces observations pendant une séance sur le téléphone. Un service indisponible ou un processus arrêté est indiqué par la sortie de la commande et son statut, sans inventer de valeur de mesure. Voir [la portée des instantanés](../TESTING.md#instantanés-techniques-de-lémulateur).
+Les preuves CI peuvent contenir des échantillons de mémoire, trames et CPU pendant le déploiement et les tests synthétiques mixtes, puis des instantanés finaux incluant la version du paquet et l’état thermique. Le recueil vise trente secondes entre échantillons, au plus quarante échantillons, sans remise à zéro des compteurs de trames. Il aide à examiner le contexte de l’émulateur ; il ne remplace pas ces observations pendant une séance sur le téléphone. Un service indisponible ou un processus arrêté est indiqué par la sortie de la commande et son statut, sans inventer de valeur de mesure. Voir [la portée des instantanés](../TESTING.md#instantanés-techniques-de-lémulateur).
 
 ## Signaler un résultat exploitable
 

@@ -33,8 +33,35 @@ if [[ "$device" != emulator-* ]]; then
   exit 2
 fi
 
+metrics_monitor_pid=""
+start_metrics_monitor() {
+  # Isolate only the optional sampler, never Gradle or the adb server. Every
+  # command it launches stays in this group (timeout uses --foreground).
+  setsid bash tools/sample-device-metrics.sh "$device" "$evidence/live-metrics" > "$evidence/metrics-monitor-console.txt" 2>&1 &
+  metrics_monitor_pid=$!
+}
+stop_metrics_monitor() {
+  if [[ -z "$metrics_monitor_pid" ]]; then return 0; fi
+  if kill -0 "$metrics_monitor_pid" 2>/dev/null; then
+    kill -TERM -- "-$metrics_monitor_pid" 2>/dev/null || kill -TERM "$metrics_monitor_pid" 2>/dev/null || true
+    # Do not wait for the next thirty-second sample or a hung adb command.
+    for attempt in {1..20}; do
+      if ! kill -0 "$metrics_monitor_pid" 2>/dev/null; then break; fi
+      sleep 0.1
+    done
+    if kill -0 "$metrics_monitor_pid" 2>/dev/null; then
+      kill -KILL -- "-$metrics_monitor_pid" 2>/dev/null || true
+      kill -KILL "$metrics_monitor_pid" 2>/dev/null || true
+    fi
+  fi
+  wait "$metrics_monitor_pid" 2>/dev/null || true
+  metrics_monitor_pid=""
+  return 0
+}
+
 collect_diagnostics() {
   local original_status=$?
+  stop_metrics_monitor
   adb -s "$device" pull /sdcard/Download/cinema03-tests/ "$evidence/screenshots/" >/dev/null 2>&1 || true
   adb -s "$device" shell dumpsys window > "$evidence/windows-after-tests.txt" 2>&1 || true
   adb -s "$device" logcat -d -t 8000 > "$evidence/logcat-after-tests.txt" 2>&1 || true
@@ -67,6 +94,8 @@ collect_diagnostics() {
   return "$original_status"
 }
 trap collect_diagnostics EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # With -no-boot-anim, an AOSP image may never publish init.svc.bootanim.
 # Require completed boot and a responsive package service, and reject an
@@ -147,8 +176,10 @@ printf '%s\n' "$started_ns" > "$evidence/started-ns.txt"
 
 # Do not use --rerun-tasks here: it can regenerate the demo and rebuild the
 # APK. Removing only the old results ensures fresh instrumentation output.
+start_metrics_monitor
 gradle --no-daemon --stacktrace --no-build-cache "${task[@]}" > "$evidence/device-console.txt" 2>&1
 status=$?
+stop_metrics_monitor
 tail -n 180 "$evidence/device-console.txt"
 
 # Check all method identities, so missing, duplicated or skipped tests cannot

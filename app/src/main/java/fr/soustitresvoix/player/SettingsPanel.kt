@@ -1,5 +1,6 @@
 package fr.soustitresvoix.player
 
+import android.app.AlertDialog
 import android.content.Context
 import android.graphics.Color
 import android.text.Editable
@@ -35,6 +36,7 @@ internal class SettingsPanel(context: Context) : LinearLayout(context) {
     private val refreshers = mutableListOf<() -> Unit>()
     private var selected = SettingsSection.VOICE
     private var sectionSelector: Spinner? = null
+    private val actionButtons = mutableMapOf<Int, Button>()
     val search = EditText(context).apply {
         id = View.generateViewId(); hint = "Rechercher un réglage : vitesse, cache, traduction…"
         contentDescription = "Rechercher dans les huit rubriques de réglages"
@@ -53,7 +55,10 @@ internal class SettingsPanel(context: Context) : LinearLayout(context) {
             text = "Les réglages prennent effet immédiatement. Fermer les conserve. Annuler modifications restaure les réglages du début de ce panneau, sans rétablir les fichiers supprimés ni annuler un service déjà lancé."
             textSize = 17f; setTextColor(Color.WHITE)
         }
-        addView(search)
+        // Keep the header scrollable too: in landscape or with large text it
+        // must not displace the separate, full-width action area.
+        val content = LinearLayout(context).apply { orientation = VERTICAL }
+        content.addView(search)
         val sections = Spinner(context).apply {
             contentDescription = "Choisir une rubrique de réglages"
             minimumHeight = dp(56)
@@ -67,8 +72,7 @@ internal class SettingsPanel(context: Context) : LinearLayout(context) {
             }
         }
         sectionSelector = sections
-        addView(sections); addView(results)
-        val content = LinearLayout(context).apply { orientation = VERTICAL }
+        content.addView(sections); content.addView(results)
         content.addView(semantics)
         SettingsSection.values().forEach { section ->
             val group = LinearLayout(context).apply { orientation = VERTICAL }
@@ -92,6 +96,26 @@ internal class SettingsPanel(context: Context) : LinearLayout(context) {
         require(view.parent == null) { "Settings views have exactly one owner" }
         groups.getValue(section).addView(view); filter()
     }
+    /** Native AlertDialog button bars can clip a touch rectangle at large font
+     * sizes. These actions have their own vertical, full-width layout. */
+    fun installActions(close: () -> Unit, cancel: () -> Unit) {
+        check(actionButtons.isEmpty())
+        val footer = LinearLayout(context).apply { orientation = VERTICAL; setPadding(0, dp(4), 0, 0) }
+        for ((which, label, action) in listOf(
+            Triple(AlertDialog.BUTTON_POSITIVE, "Fermer", close),
+            Triple(AlertDialog.BUTTON_NEGATIVE, "Annuler modifications", cancel))) {
+            val control = Button(context).apply {
+                id = if (which == AlertDialog.BUTTON_POSITIVE) android.R.id.button1 else android.R.id.button2
+                text = label; isAllCaps = false; textSize = 18f; minHeight = dp(56)
+                setSingleLine(false); maxLines = Int.MAX_VALUE
+                setOnClickListener { action() }
+            }
+            actionButtons[which] = control
+            footer.addView(control, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        }
+        addView(footer, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+    }
+    fun actionButton(which: Int): Button? = actionButtons[which]
     fun onRefresh(action: () -> Unit) { refreshers += action }
     fun refresh() { refreshers.toList().forEach { it() }; filter() }
     fun select(section: SettingsSection) {

@@ -47,10 +47,10 @@ class SettingsAndroidTest {
             search("acceleration maximale")
             preciseAcceleration(125)
             scenario.onActivity { assertEquals(1.25f, it.session.prefs.adaptiveMax, 0f); assertFalse(it.session.player.playWhenReady) }
-            onView(withText("Fermer")).inRoot(isDialog()).perform(click())
+            onView(withText("Fermer")).inRoot(isDialog()).check(matches(isCompletelyDisplayed())).perform(click())
             open(); search("ACCELERATION maximale"); preciseAcceleration(150)
             scenario.onActivity { assertEquals(1.5f, it.session.prefs.adaptiveMax, 0f) }
-            onView(withText("Annuler modifications")).inRoot(isDialog()).perform(click())
+            onView(withText("Annuler modifications")).inRoot(isDialog()).check(matches(isCompletelyDisplayed())).perform(click())
             scenario.onActivity {
                 assertEquals(1.25f, it.session.prefs.adaptiveMax, 0f)
                 assertFalse(it.session.player.playWhenReady); assertFalse(it.session.machine.snapshot().wantsPlayback)
@@ -71,7 +71,8 @@ class SettingsAndroidTest {
                     }
                 }
                 open(); search(label)
-                onView(withText(label)).inRoot(isDialog()).perform(scrollTo(), click())
+                onView(allOf(isAssignableFrom(android.widget.Button::class.java), withText(label)))
+                    .inRoot(isDialog()).perform(scrollTo(), click())
                 scenario.onActivity { activity ->
                     val prefs = activity.session.prefs
                     assertTrue(prefs.narration); assertTrue(prefs.bool("integralReading", true)); assertEquals(mode, prefs.mode)
@@ -89,7 +90,7 @@ class SettingsAndroidTest {
                     listOf("skipSongs", "skipSpeakers", "skipNotes").forEach { assertFalse(prefs.bool(it)) }
                     assertFalse(activity.session.player.playWhenReady)
                 }
-                onView(withText("Fermer")).inRoot(isDialog()).perform(click())
+                onView(withText("Fermer")).inRoot(isDialog()).check(matches(isCompletelyDisplayed())).perform(click())
             }
         }
     }

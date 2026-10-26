@@ -33,6 +33,19 @@ Robolectric et les vrais parseurs Media3. Ils ne remplacent pas les tests sous
 
 ### Instantanés techniques de l’émulateur
 
+Pendant la commande d’instrumentation, un échantillonneur facultatif conserve
+les sorties `dumpsys meminfo` de l’application, `gfxinfo framestats` et `cpuinfo`
+dans `live-metrics/`. Il vise un départ toutes les trente secondes, avec au plus
+quarante échantillons et cinq secondes au maximum par commande. Le fichier
+`samples.tsv` associe chaque sortie à son numéro, son heure UTC et son statut.
+La période inclut le déploiement et des tests synthétiques mixtes : certains
+échantillons peuvent donc précéder le lancement du processus ou suivre sa
+fermeture entre scénarios. Les compteurs de trames ne sont pas remis à zéro.
+Le groupe de processus du moniteur est arrêté à la fin de Gradle et par le
+nettoyage de sortie, y compris pour un passage en échec, sans modifier son
+résultat. Le nettoyage attend au plus environ deux secondes avant d’envoyer
+un arrêt forcé aux seules commandes de diagnostic de ce groupe.
+
 À la sortie de chaque passage instrumenté, le script tente aussi de conserver
 les sorties Android `dumpsys meminfo` de l’application, `gfxinfo framestats`,
 `cpuinfo`, `package` et `thermalservice`, en plus des fenêtres et de logcat.
@@ -43,14 +56,16 @@ contenus synthétiques. Le recueil est aussi tenté si la préparation échoue :
 les métadonnées précisent alors le statut de sortie du script, sans prétendre
 qu’une instrumentation a eu lieu.
 
-Il s’agit d’**instantanés de diagnostic à la fin du parcours**, pas d’un benchmark
-de visionnage continu. Un processus déjà arrêté ou un service indisponible peut
+Il s’agit d’**échantillons pendant le parcours et d’instantanés à sa fin**, pas
+d’un benchmark de visionnage continu. Un processus déjà arrêté ou un service indisponible peut
 ne fournir aucune mesure exploitable ; ce cas ne fait pas échouer une suite
 réussie et ne masque jamais son statut initial. Les données ne prouvent ni un
 nombre d’images par seconde stable pendant un film, ni la latence acoustique,
 la qualité vocale, l’autonomie ou les performances du téléphone cible. Aucun
 résultat chiffré n’est attribué à ces commandes avant lecture de leurs sorties
 sur le run effectivement exécuté.
+
+Dans les preuves du premier [run 40352075138](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40352075138), les instantanés finaux mémoire/trames des deux passages indiquaient `No process found`, bien que les commandes retournent zéro. Ils ne constituent donc pas des mesures mémoire ou de fluidité de l’application. Le recueil pendant l’instrumentation est ajouté pour observer aussi des phases où son processus est actif ; sa présence dans le script ne remplace pas la lecture des preuves du passage suivant.
 
 ### Contrôles d’outillage exécutés le 26 octobre 2026
 

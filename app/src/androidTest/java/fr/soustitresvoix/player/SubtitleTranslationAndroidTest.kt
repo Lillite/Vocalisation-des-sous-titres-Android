@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.Configuration
+import android.graphics.Rect
 import android.net.Uri
 import android.os.SystemClock
 import android.text.method.PasswordTransformationMethod
@@ -12,6 +13,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inspector.WindowInspector
 import android.widget.EditText
+import android.widget.CheckBox
 import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
@@ -286,6 +288,23 @@ class SubtitleTranslationAndroidTest {
         if (view is ViewGroup) for (index in 0 until view.childCount) addAll(descendants(view.getChildAt(index)))
     }
 
+    /** Large labels can exceed the viewport: both ends must remain reachable,
+     * without requiring the entire tall view to fit at once. */
+    private fun assertReachableInForm(scroll: ScrollView, view: View) {
+        assertTrue("Control is outside the actual translation form", descendants(scroll).contains(view))
+        assertTrue("Control has no readable layout", view.width > 0 && view.height > 0 && scroll.height > 0)
+        val height = minOf(view.height, scroll.height / 2).coerceAtLeast(1)
+        for (top in listOf(0, (view.height - height).coerceAtLeast(0)).distinct()) {
+            val requested = Rect(0, top, view.width, top + height)
+            view.requestRectangleOnScreen(Rect(requested), true)
+            val location = IntArray(2); view.getLocationOnScreen(location)
+            requested.offset(location[0], location[1])
+            val viewport = Rect()
+            assertTrue("Form viewport is not visible", scroll.getGlobalVisibleRect(viewport))
+            assertTrue("Control cannot be reached by scrolling: ${if (view is TextView) view.text else view}", viewport.contains(requested))
+        }
+    }
+
     @Suppress("DEPRECATION")
     @Test fun actualTranslationPanelKeepsLabelsDescriptionsAndScrollableHelpAtDoubleFontScale() {
         val activity = AtomicReference<MainActivity>()
@@ -311,6 +330,35 @@ class SubtitleTranslationAndroidTest {
                         if (root != null && root.width > 0) panel.set(root)
                         panel.get() != null
                     }
+                    val expectedFieldLabels = listOf(
+                        "Langue originale — code explicite, par exemple en, es, de, it, sr-Latn ou sr-Cyrl",
+                        "Plafond de nouveaux caractères UTF-16 pour cette tâche — vide : aucune limite locale supplémentaire",
+                        "DeepL : contexte de l’œuvre ou de la scène, facultatif — envoyé avec chaque lot, 24 000 caractères maximum",
+                        "DeepL : identifiant d’un glossaire déjà créé dans TON compte, facultatif",
+                        "DeepL : révision du glossaire — change-la après une modification du glossaire distant",
+                        "DeepL : modèle facultatif — quality_optimized, prefer_quality_optimized ou latency_optimized",
+                        "DeepL : registre — default, more, less, prefer_more ou prefer_less",
+                        "Clé API personnelle — masquée ; laisse vide pour tenter une piste déjà en cache",
+                        "Région Azure — code de la ressource, par exemple francecentral ; vide uniquement si la clé est globale",
+                        "Adresse de base du serveur LibreTranslate — HTTPS, sans identifiant, paramètres ou fragment"
+                    )
+                    lateinit var fieldsByLabel: Map<String, EditText>
+                    scenario.onActivity {
+                        val views = descendants(panel.get())
+                        val fields = views.filterIsInstance<EditText>()
+                        val labels = fields.map { field ->
+                            views.filterIsInstance<TextView>().single { it.labelFor == field.id }.text.toString()
+                        }
+                        // Assert every old and new field, not merely a revised total.
+                        assertEquals(expectedFieldLabels, labels)
+                        fieldsByLabel = labels.zip(fields).toMap()
+                        assertEquals(1, fields.count { it.transformationMethod is PasswordTransformationMethod })
+                        assertTrue(fieldsByLabel.getValue(expectedFieldLabels[7]).transformationMethod is PasswordTransformationMethod)
+                        val progressive = views.filterIsInstance<CheckBox>().single {
+                            it.text.toString() == "Traduction progressive : autoriser la lecture avec au moins une minute de tampon validé"
+                        }
+                        assertFalse("Progressive translation must remain an explicit choice", progressive.isChecked)
+                    }
                     val providers = TranslationProvider.values()
                     for ((index, provider) in providers.withIndex()) {
                         scenario.onActivity {
@@ -320,20 +368,41 @@ class SubtitleTranslationAndroidTest {
                             descendants(panel.get()).filterIsInstance<TextView>()
                                 .any { it.text.toString() == SubtitleTranslationControls.description(provider) && it.layout != null }
                         }
+                        instrument.waitForIdleSync()
                         scenario.onActivity { current ->
                             assertEquals(2f, current.resources.configuration.fontScale, .01f)
-                            val help = descendants(panel.get()).filterIsInstance<TextView>()
+                            val views = descendants(panel.get())
+                            val help = views.filterIsInstance<TextView>()
                                 .single { it.text.toString() == SubtitleTranslationControls.description(provider) }
                             assertTrue("Provider help must span several readable lines", help.layout.lineCount > 1)
                             for (line in 0 until help.layout.lineCount) assertEquals(0, help.layout.getEllipsisCount(line))
+                            val visibleLabels = expectedFieldLabels.take(2).toSet() + expectedFieldLabels[7] + when (provider) {
+                                TranslationProvider.AZURE -> setOf(expectedFieldLabels[8])
+                                TranslationProvider.DEEPL_FREE, TranslationProvider.DEEPL_PRO -> expectedFieldLabels.subList(2, 7).toSet()
+                                TranslationProvider.LIBRE -> setOf(expectedFieldLabels[9])
+                            }
+                            val scroll = requireNotNull(panel.get().findViewById<ScrollView>(R.id.translation_controls_scroll))
+                            assertReachableInForm(scroll, help)
+                            for ((labelText, field) in fieldsByLabel) {
+                                val label = views.filterIsInstance<TextView>().single { it.labelFor == field.id }
+                                assertEquals(labelText, label.text.toString())
+                                val expectedVisibility = if (labelText in visibleLabels) View.VISIBLE else View.GONE
+                                assertEquals("Field visibility for ${provider.id}: $labelText", expectedVisibility, field.visibility)
+                                assertEquals("Label visibility for ${provider.id}: $labelText", expectedVisibility, label.visibility)
+                                if (expectedVisibility == View.VISIBLE) {
+                                    assertNotNull(label.layout)
+                                    for (line in 0 until label.layout.lineCount) assertEquals(0, label.layout.getEllipsisCount(line))
+                                    assertReachableInForm(scroll, label)
+                                    assertReachableInForm(scroll, field)
+                                }
+                            }
+                            assertReachableInForm(scroll, views.filterIsInstance<CheckBox>().single {
+                                it.text.toString() == "Traduction progressive : autoriser la lecture avec au moins une minute de tampon validé"
+                            })
                         }
                     }
                     scenario.onActivity { current ->
-                        val views = descendants(panel.get())
-                        val fields = views.filterIsInstance<EditText>()
-                        assertEquals(4, fields.size)
-                        for (field in fields) assertEquals(1, views.filterIsInstance<TextView>().count { it.labelFor == field.id })
-                        assertEquals(1, fields.count { it.transformationMethod is PasswordTransformationMethod })
+                        val fields = fieldsByLabel.values
                         // AlertDialog also owns an internal message ScrollView on
                         // Android 36. Check the actual form, identified explicitly.
                         val scroll = requireNotNull(panel.get().findViewById<ScrollView>(R.id.translation_controls_scroll))

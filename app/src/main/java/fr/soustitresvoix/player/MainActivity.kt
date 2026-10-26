@@ -679,9 +679,16 @@ class MainActivity : ComponentActivity() {
         AdvancedSettings(this, session, prefs) { seconds ->
             pendingBenchmarkSeconds = seconds; dialog.dismiss()
         }.populate(panel)
-        dialog = AlertDialog.Builder(this).setTitle("Voix et confort")
-            .setView(panel).setPositiveButton("Fermer") { _, _ -> }
-            .setNegativeButton("Annuler modifications", null).create()
+        dialog = object : AlertDialog(this) {
+            override fun getButton(whichButton: Int): Button? = panel.actionButton(whichButton) ?: super.getButton(whichButton)
+        }.apply { setTitle("Voix et confort"); setView(panel) }
+        panel.installActions(close = { dialog.dismiss() }, cancel = {
+            if (!closed) {
+                session.restoreSettings(originalSettings)
+                if (session.translation.displayMode != originalDisplayMode) session.translation.setDisplayMode(originalDisplayMode)
+            }
+            dialog.dismiss()
+        })
         dialog.setOnDismissListener {
             if (!closed) {
                 if (!session.isPreparing) session.refreshSettings()
@@ -691,16 +698,10 @@ class MainActivity : ComponentActivity() {
             }
         }
         dialog.show()
-        // Restore before dismissal/its refresh, rather than posting rollback to
-        // AlertDialog's Handler after the button click has already returned.
-        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
-            if (!closed) {
-                session.restoreSettings(originalSettings)
-                if (session.translation.displayMode != originalDisplayMode) session.translation.setDisplayMode(originalDisplayMode)
-            }
-            dialog.dismiss()
-        }
-        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, (resources.displayMetrics.heightPixels * .94f).toInt())
+        // Let the floating window honor its usable display frame and resize
+        // around the keyboard instead of imposing a height from full metrics.
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
     private fun voiceDialog() {
         session.speech.applyPreferences()

@@ -41,12 +41,24 @@ class SettingsPanelRobolectricTest {
         try {
             val panel = SettingsPanel(owner.get())
             panel.add(SettingsSection.VOICE, "Commande", Button(owner.get()).apply { text = "Commande" })
-            panel.measure(View.MeasureSpec.makeMeasureSpec(900, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(700, View.MeasureSpec.AT_MOST))
-            panel.layout(0, 0, panel.measuredWidth, panel.measuredHeight)
-            val scroll = descendants(panel).filterIsInstance<android.widget.ScrollView>().single()
-            assertTrue("The weighted scroll area collapsed in a short window", scroll.measuredHeight > 0)
-            assertTrue(panel.measuredHeight <= 700)
+            panel.installActions({}, {})
+            for ((width, height) in listOf(900 to 700, 1600 to 500)) {
+                panel.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.AT_MOST))
+                panel.layout(0, 0, panel.measuredWidth, panel.measuredHeight)
+                val scroll = descendants(panel).filterIsInstance<android.widget.ScrollView>().single()
+                assertTrue("The weighted scroll area collapsed in a short window", scroll.measuredHeight > 0)
+                assertTrue(panel.measuredHeight <= height)
+                val actions = listOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE).map { requireNotNull(panel.actionButton(it)) }
+                for (control in actions) {
+                    val touch = android.graphics.Rect()
+                    control.getDrawingRect(touch); panel.offsetDescendantRectToMyCoords(control, touch)
+                    assertTrue("A settings action is clipped horizontally: $touch", touch.left >= 0 && touch.right <= panel.width)
+                    assertTrue("A settings action is clipped vertically: $touch", touch.top >= 0 && touch.bottom <= panel.height)
+                    assertTrue(control.height >= (56 * panel.resources.displayMetrics.density).toInt())
+                }
+                assertTrue(actions.first().bottom <= actions.last().top)
+            }
         } finally { owner.pause().stop().destroy(); RuntimeEnvironment.setFontScale(previous) }
     }
     @Test fun searchFindsTheExactCommandAcrossSectionsWithoutActivatingIt() {
