@@ -75,14 +75,15 @@ candidate :
 ```sh
 python3 tools/check-project.py
 python3 tools/test-publish-verified-release.py
+python3 tools/test-emulator-readiness.py
 python3 tools/test_sync_releases.py
 python3 tools/test-documentation-cleanup.py
 ```
 
 Le contrôle structurel a examiné **67 fichiers Kotlin de production**, les XML,
 la configuration réseau, la démonstration synthétique et l’absence de clé privée
-versionnée. Les suites comportementales ont réussi **19 + 13 + 10 = 42 tests
-Python**. Elles utilisent des réponses contrôlées en mémoire : ce résultat ne
+versionnée. Les suites comportementales ont réussi **19 + 20 + 13 + 10 = 62 tests
+Python**, dont les nouveaux contrôles de démarrage de l’émulateur. Elles utilisent des réponses contrôlées en mémoire : ce résultat ne
 constitue ni une publication réelle ni une validation Android.
 
 ### Échecs intermédiaires conservés
@@ -153,6 +154,11 @@ l’absence d’ANR système. Les [ressources standard du runner public Ubuntu](
 sont documentées par GitHub ; les ressources réellement observées restent dans
 les preuves de chaque run.
 
+La [tentative 2 de ce même run 40374255289](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40374255289/attempts/2)
+a ensuite réussi les six suites de cette tête `63cfd6` : **978 exécutions**, dont
+87 tests Android réellement exécutés dans chacun des deux passages. Elle ne
+valide pas les correctifs de reprise ajoutés ensuite.
+
 Une autre revue a confirmé une perte possible lors de **Reprendre après mort du
 processus** : une occurrence A dont la voix continuait à la frontière de B pouvait
 avoir expiré visuellement à la position sauvegardée. Restaurer seulement le
@@ -162,6 +168,37 @@ après déplacement. Les tests de cette correction couvrent aussi la restauratio
 de la traduction, les corrections temporelles, les sauvegardes précoces et les
 commandes utilisateur qui invalident une reprise différée. Ces nouveaux
 scénarios doivent réussir sur les sources finales avant publication.
+
+La tête `c0994407f2f4c3d13c354e08b78768a09f676a2e` a passé **832 exécutions JVM**
+par tentative (178 + 238 en debug et autant en release), lint et les compilations
+dans les [tentatives 1 et 2 du run 40380367522](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40380367522).
+Les deux démarrages se sont arrêtés avant installation de l’application et
+avant tout test Android, sur un ANR de Launcher3 sans fenêtre focalisée. Les
+journaux montrent l’injection de la touche 82 par l’action d’émulation avant
+l’affichage de sa première fenêtre et avant notre script ; cette attribution
+causale reste une inférence appuyée par la chronologie. Les deux archives ont
+pour SHA-256 `75e852a2c3d184be54e7b9d15de1d638f71fee9a308f9fc446d60b4799c421bf`
+et `24d5f871992b3809ee2beb051901a06a39db79d7621b8100a604bfd597068bd2`.
+Les quatre cœurs n’ont donc pas suffi à éviter ce défaut de démarrage.
+
+Le lancement CI utilise désormais les outils CLI du SDK officiel, sans cette
+injection précoce. Un contrôle en lecture seule exige boot, service framework,
+animation arrêtée et fenêtre focalisée, affichée et stable sur trois observations.
+Le verrouillage éventuel est traité seulement après cette première vérification,
+puis la fenêtre de Launcher est vérifiée avant les deux suites existantes.
+Un ANR reste un échec immédiat ; aucun dialogue n’est fermé et aucune suite n’est
+réessayée dans le lanceur. **20 tests comportementaux** ont vérifié ce contrôle,
+ses délais et son refus des appareils physiques. Son analyseur a aussi accepté
+un vrai dump sain Android 36 et refusé un vrai dump ANR conservé. La validation
+réelle du nouveau lancement reste à établir par les runs finaux.
+
+En local, les inventaires complets finaux ont passé **178 tests core, 238 tests
+app debug et 238 tests app release**, sans échec ni méthode ignorée ou manquante.
+Deux assemblages ont rencontré un fichier dex temporaire disparu dans les sorties
+partagées. La reconstruction avec un répertoire de build isolé a ensuite réussi
+les APK debug et de tests, lint debug (**0 erreur, 67 avertissements**), manifestes,
+signatures correspondantes et alignement 16 Kio. Ces APK locaux restent des
+contrôles ; ils ne remplacent pas l’artefact exact de `main` destiné à la publication.
 
 Avant de remplacer ce statut par un bilan final, consigner le commit exact,
 les liens des runs de la proposition et de `main`, les résultats JUnit contrôlés

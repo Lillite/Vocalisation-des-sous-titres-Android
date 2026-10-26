@@ -44,6 +44,7 @@ jobs:
         run: |
           python3 tools/check-project.py
           python3 tools/test-publish-verified-release.py
+          python3 tools/test-emulator-readiness.py
       - name: Tests JVM, lint et compilation debug
         shell: bash
         run: |
@@ -202,21 +203,8 @@ jobs:
           fi
           df -h /
       - name: Deux passages complets des 87 tests release sur Android 36
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 36
-          # The tests use their own TTS fixture and no Google service. The AOSP
-          # image avoids GMS first-boot downloads that caused a SystemUI ANR.
-          target: default
-          arch: x86_64
-          profile: pixel_2
-          # Boot ANR showed CPU pressure before installation; use all four runner vCPUs.
-          cores: 4
-          ram-size: 2048M
-          disk-size: 2048M
-          disable-animations: true
-          emulator-options: -accel on -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
-          script: bash tools/run-release-device-tests.sh
+        shell: bash
+        run: bash tools/run-ci-emulator.sh
       - name: Verifier les artefacts apres les deux passages
         shell: bash
         run: |
