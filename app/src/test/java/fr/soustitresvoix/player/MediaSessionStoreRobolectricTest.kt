@@ -72,6 +72,29 @@ class MediaSessionStoreRobolectricTest {
         assertNull(store.get("content://fixture/absent"))
     }
 
+    @Test fun liveNarrationCheckpointRoundTripsWithoutTextAndOlderRecordsRemainCompatible() {
+        val store = MediaSessionStore(context)
+        val checkpoint = OccurrenceResume("a".repeat(64), 1000, 2000)
+        val original = snapshot().copy(narrationCheckpoint = checkpoint, narrationCheckpointTrackId = "external-subtitle")
+        store.save(original)
+        assertEquals(original, MediaSessionStore(context).get(original.uri))
+        val preroll = original.copy(narrationCheckpoint = checkpoint.copy(startMs = -1000, endMs = -1))
+        store.save(preroll)
+        assertEquals(preroll, store.get(original.uri))
+        store.save(original)
+        val record = folder.listFiles()!!.single()
+        val json = org.json.JSONObject(record.readText())
+        json.remove("narrationCheckpoint"); json.remove("narrationCheckpointUnavailable"); json.remove("narrationCheckpointTrackId")
+        record.writeText(json.toString())
+        val legacy = store.get(original.uri)!!
+        assertNull(legacy.narrationCheckpoint)
+        assertFalse(legacy.narrationCheckpointUnavailable)
+        assertNull(legacy.narrationCheckpointTrackId)
+        reject { store.save(original.copy(narrationCheckpoint = checkpoint.copy(id = "raw subtitle text"))) }
+        reject { store.save(original.copy(narrationCheckpoint = checkpoint.copy(endMs = 1000))) }
+        assertEquals(legacy, store.get(original.uri))
+    }
+
     @Test fun malformedAndUnknownSchemaRecordsFailExplicitlyWithoutTouchingMedia() {
         val store = MediaSessionStore(context)
         val value = snapshot()

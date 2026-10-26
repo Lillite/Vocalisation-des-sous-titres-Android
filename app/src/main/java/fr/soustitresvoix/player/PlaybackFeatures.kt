@@ -78,6 +78,10 @@ internal class PlaybackFeatures(
     private var sourceMetadataFingerprint = ""
     private var pending: MediaSessionSnapshot? = null
     private var restoring = false
+    private var restoredCheckpoint: OccurrenceResume? = null
+    private var restoredCheckpointUnavailable = false
+    private var restoredCheckpointTrack: String? = null
+    private var resumeCheckpointSequence = 0L
     private var journalContext = ""
     private var pendingJournal: String? = null
     private var restoredTranslation = false
@@ -93,6 +97,8 @@ internal class PlaybackFeatures(
 
     fun opening(saved: SavedMedia, restore: Boolean): SavedMedia {
         translationRestoreSequence++
+        cancelCheckpointResume()
+        restoredCheckpoint = null; restoredCheckpointUnavailable = false; restoredCheckpointTrack = null
         restoringTranslationMetadata = null; restoringTranslationUri = null; restoringTranslationTrack = null
         synchronized(writeLock) {
             if (forgottenUris.remove(saved.uri)) uriEpochs[saved.uri] = nextEpoch(uriEpochs[saved.uri] ?: 0)
@@ -115,6 +121,9 @@ internal class PlaybackFeatures(
         restoringTranslationUri = if (restoringTranslationMetadata != null) saved.uri else null
         timeline = pending?.timeline ?: SubtitleTimeline()
         val previous = pending ?: return saved
+        restoredCheckpoint = previous.narrationCheckpoint
+        restoredCheckpointUnavailable = previous.narrationCheckpointUnavailable
+        restoredCheckpointTrack = previous.narrationCheckpointTrackId
         restoring = true
         session.prefs.restoreSettings(previous.settings)
         // The order matters: setting an engine clears the old selected voice.
@@ -243,6 +252,54 @@ internal class PlaybackFeatures(
         pendingJournal = null
     }
 
+    /** Pause cancels only an asynchronous request; an explicit seek abandons its work. */
+    fun cancelCheckpointResume(abandon: Boolean = false) {
+        resumeCheckpointSequence++
+        if (abandon) {
+            restoredCheckpoint = null; restoredCheckpointUnavailable = false; restoredCheckpointTrack = null
+        }
+    }
+
+    /** Return false while the explicit Play request recovers an expired source
+     * occurrence. Merely opening/indexing a restored session never starts speech. */
+    fun recoverCheckpointBeforePlay(): Boolean {
+        if (restoredCheckpoint == null && !restoredCheckpointUnavailable) return true
+        if (pending != null || restoringTranslationMetadata != null) {
+            message("La piste et la traduction de la séance sont encore en restauration. Attends puis appuie sur Reprendre.", false)
+            return false
+        }
+        val target = restoredCheckpoint
+        val track = session.selectedTextId()
+        if (restoredCheckpointUnavailable || target == null || track == null || track != restoredCheckpointTrack) {
+            message("La file vocale mémorisée ne peut pas être retrouvée dans cette piste. La vidéo reste en pause ; vérifie la source ou choisis explicitement une nouvelle position.", true)
+            return false
+        }
+        val ticket = ++resumeCheckpointSequence
+        val epoch = session.generation
+        val mapping = timeline
+        session.ensureCompleteIndex {
+            if (ticket != resumeCheckpointSequence || epoch != session.generation || track != session.selectedTextId() || mapping != timeline) return@ensureCompleteIndex
+            val occurrence = session.ahead.selected(track).firstOrNull {
+                NarrationLedger.hashIdentity(it.identity) == target.id &&
+                    it.startUs / 1000 == target.startMs &&
+                    (it.endUs / 1000).coerceAtLeast(it.startUs / 1000 + 1) == target.endMs
+            }
+            if (occurrence == null || session.translation.textFor(occurrence) == null) {
+                message("La réplique encore en attente n’est pas disponible dans cette source ou sa traduction. La vidéo reste en pause ; vérifie la piste et sa traduction.", true)
+                return@ensureCompleteIndex
+            }
+            val interval = timeline.mapInterval(target.startMs, target.endMs, narration = true)
+            // Consume only after exact source resolution. The internal seek clears
+            // any current renderer queue, then re-arms every source at this point.
+            cancelCheckpointResume(abandon = true)
+            if (!session.resumeFromNarrationCheckpoint(interval.startMs)) {
+                restoredCheckpoint = target; restoredCheckpointTrack = track
+                session.savePosition()
+            }
+        }
+        return false
+    }
+
     fun register(items: List<CueAheadIndex.Item>) {
         updateJournalContext()
         session.machine.registerOccurrences(items.map { NarrationLedger.Occurrence(it.identity, it.startUs, it.endUs) })
@@ -272,6 +329,18 @@ internal class PlaybackFeatures(
             val end = it.endUs?.div(1000)?.coerceAtLeast(start + 1) ?: return@let null
             OccurrenceResume(it.identityHash, start, end)
         }
+        val live = session.machine.pendingOccurrences()
+        val retainsRestored = restoredCheckpoint != null || restoredCheckpointUnavailable || awaitingSelection != null
+        val checkpointUnavailable = if (retainsRestored) restoredCheckpointUnavailable
+            else live.any { it.startUs == null || it.endUs == null }
+        fun checkpointOccurrence(entry: NarrationLedger.Entry): OccurrenceResume? {
+            val start = entry.startUs?.div(1000) ?: return null
+            val end = entry.endUs?.div(1000)?.coerceAtLeast(start + 1) ?: return null
+            return OccurrenceResume(entry.identityHash, start, end)
+        }
+        val checkpoint = restoredCheckpoint ?: if (retainsRestored) awaitingSelection?.narrationCheckpoint else live.mapNotNull(::checkpointOccurrence).minByOrNull {
+            timeline.mapInterval(it.startMs, it.endMs, narration = true).startMs
+        }
         val image = session.visual
         val record = MediaSessionSnapshot(saved.uri, saved.title, saved.positionMs,
             fingerprint = if (sourceUri == saved.uri) sourceMetadataFingerprint else sourceFingerprint(saved.uri),
@@ -282,9 +351,9 @@ internal class PlaybackFeatures(
             audioLanguage = if (awaitingSelection != null) awaitingSelection.audioLanguage else audio?.language,
             textLanguage = if (awaitingSelection != null) awaitingSelection.textLanguage else text?.language,
             subtitlePath = saved.subtitlePath, subtitleMime = saved.subtitleMime,
-            translationIdentity = session.translation.selectionMetadata()
-                ?: restoringTranslationMetadata.takeIf { restoringTranslationUri == saved.uri &&
-                    (awaitingSelection != null || restoringTranslationTrack == session.selectedTextId()) },
+            translationIdentity = restoringTranslationMetadata.takeIf { restoringTranslationUri == saved.uri &&
+                (awaitingSelection != null || restoringTranslationTrack == session.selectedTextId()) }
+                ?: session.translation.checkpointSelectionMetadata(),
             translationReady = session.translation.complete,
             enginePackage = session.prefs.enginePackage, voiceName = session.prefs.voiceName,
             narrationMode = session.prefs.mode.name, settings = session.prefs.settingsSnapshot(),
@@ -293,6 +362,8 @@ internal class PlaybackFeatures(
                 "bottom" to image.margins.bottom, "bypass" to image.bypass, "detailedScaling" to image.detailedScaling) + session.imageViewport,
             timeline = timeline, lastCompleted = occurrence(snapshot.lastCompleted),
             lastInterrupted = occurrence(snapshot.lastInterrupted),
+            narrationCheckpoint = checkpoint, narrationCheckpointUnavailable = checkpointUnavailable,
+            narrationCheckpointTrackId = if (retainsRestored) restoredCheckpointTrack else session.selectedTextId(),
             timelines = timelinesByTrack.toMutableMap().apply { session.selectedTextId()?.let { put(it, timeline) } })
         val revision = journalRevisionOwner + ":" + snapshot.contextHash + ":" + snapshot.generation + ":" + snapshot.revision
         val needsJournal = synchronized(writeLock) { completedJournalRevisions[snapshot.contextHash] != revision }
@@ -435,15 +506,42 @@ internal class PlaybackFeatures(
         val snapshot = session.machine.journalSnapshot()
         val target = snapshot.lastInterrupted ?: if (fallbackLast) snapshot.lastCompleted else null
         if (target == null) { message("Aucune réplique interrompue disponible pour cette piste.", false); return }
+        val epoch = session.generation
+        val track = session.selectedTextId()
+        val ticket = ++resumeCheckpointSequence
+        val mapping = timeline
         session.ensureCompleteIndex {
-            val occurrence = session.ahead.selected(session.selectedTextId()).firstOrNull {
+            if (ticket != resumeCheckpointSequence || epoch != session.generation || track != session.selectedTextId() || mapping != timeline) return@ensureCompleteIndex
+            val occurrence = session.ahead.selected(track).firstOrNull {
                 NarrationLedger.hashIdentity(it.identity) == target.identityHash
             }
             val text = occurrence?.let { session.translation.textFor(it) }
             if (occurrence == null || text == null) { message("La réplique mémorisée n’est pas disponible dans cette source. Vérifie la piste et sa traduction.", true); return@ensureCompleteIndex }
+            val checkpoint = restoredCheckpoint
+            if (restoredCheckpointUnavailable || (checkpoint != null && track != restoredCheckpointTrack)) {
+                message("La file vocale mémorisée ne peut pas être retrouvée dans cette piste. La vidéo reste en pause.", true)
+                return@ensureCompleteIndex
+            }
+            if (checkpoint != null) {
+                val pendingOccurrence = session.ahead.selected(track).firstOrNull {
+                    NarrationLedger.hashIdentity(it.identity) == checkpoint.id &&
+                        it.startUs / 1000 == checkpoint.startMs &&
+                        (it.endUs / 1000).coerceAtLeast(it.startUs / 1000 + 1) == checkpoint.endMs
+                }
+                if (pendingOccurrence == null || session.translation.textFor(pendingOccurrence) == null) {
+                    message("La file vocale encore en attente est indisponible. Vérifie la piste et sa traduction.", true)
+                    return@ensureCompleteIndex
+                }
+                val start = timeline.mapInterval(checkpoint.startMs, checkpoint.endMs, narration = true).startMs
+                cancelCheckpointResume(abandon = true)
+                if (!session.rearmNarrationCheckpoint(start)) {
+                    restoredCheckpoint = checkpoint; restoredCheckpointTrack = track; session.savePosition()
+                    return@ensureCompleteIndex
+                }
+            }
             register(listOf(occurrence))
             session.applyNarration(session.machine.replayOccurrence(occurrence.identity, SpeechTools.filter(text, session.prefs.filters)))
-            message("Réplique relue. La vidéo reste en pause ; appuie ensuite sur Reprendre.", false)
+            message("Réplique relue. La vidéo reste en pause ; appuie ensuite sur Reprendre. Les autres répliques seront conservées depuis la position de reprise.", false)
         }
     }
     fun showResumeSession(activity: Activity) {

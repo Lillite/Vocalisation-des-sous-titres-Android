@@ -56,23 +56,27 @@ class TimelinePlaybackRobolectricTest {
         fail(message)
     }
 
-    private inner class Fixture(text: String = ordinarySubtitles()) : AutoCloseable {
+    private inner class Fixture(text: String = ordinarySubtitles(), private val sharedFile: File? = null,
+        restore: Boolean = false) : AutoCloseable {
         val components = Components()
         val messages = mutableListOf<Pair<String, Boolean>>()
         val captions = mutableListOf<String>()
         val session = PlaybackSession(context, PlayerPreferences(context), {}, { text, error -> messages += text to error },
             { captions += it }, components)
-        val file = File.createTempFile("timing-synthetic-", ".srt", context.cacheDir).apply { writeText(text) }
+        val file = sharedFile ?: File.createTempFile("timing-synthetic-", ".srt", context.cacheDir).apply { writeText(text) }
         val media = SavedMedia("android.resource://${context.packageName}/${R.raw.demonstration}", "Timing fixture",
             subtitlePath = file.path, subtitleMime = MimeTypes.APPLICATION_SUBRIP)
         init {
             components.voice.ready()
             session.player.trackSelectionParameters = session.player.trackSelectionParameters.buildUpon()
                 .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true).setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true).build()
-            session.open(media, restoreSession = false)
+            var restorationNotified = false
+            session.onSessionRestored = { restorationNotified = true }
+            session.open(media, restoreSession = restore)
             await("Synthetic subtitle track did not become ready") {
-                session.player.playbackState == Player.STATE_READY && session.selectedTextId() == "external-subtitle"
+                (session.player.playbackState == Player.STATE_READY || (restore && session.player.playbackState == Player.STATE_ENDED)) && session.selectedTextId() == "external-subtitle"
             }
+            if (restore) await("Session restoration did not finish: $messages") { restorationNotified }
             var indexed = false
             session.ensureCompleteIndex { indexed = true }
             await("Complete source index unavailable: ${messages.lastOrNull()}") { indexed }
@@ -94,7 +98,7 @@ class TimelinePlaybackRobolectricTest {
             }
         }
         fun display() = session.displayedCues.map { it.text.toString() }
-        override fun close() { session.close(); file.delete() }
+        override fun close() { components.releaseScan.countDown(); session.close(); if (sharedFile == null) file.delete() }
     }
 
     @Test fun independentSubtitleAndVoiceOffsetsKeepEverySourceOccurrenceAndRealRepeat() {
@@ -296,13 +300,226 @@ class TimelinePlaybackRobolectricTest {
         }
     }
 
+    private fun pendingSubtitles() = "1\n00:00:01,000 --> 00:00:02,000\nFirst reply.\n\n2\n00:00:02,000 --> 00:00:03,000\nSecond reply.\n"
+    private fun flushAndForgetProcessMemory(f: Fixture) {
+        f.session.savePosition()
+        val uri = f.media.uri
+        await("Live pending occurrence did not reach the durable record") {
+            MediaSessionStore(context).get(uri)?.narrationCheckpoint != null
+        }
+        f.session.close()
+        val writer = PlaybackFeatures::class.java.getDeclaredField("writer").apply { isAccessible = true }
+            .get(f.features()) as java.util.concurrent.ExecutorService
+        writer.submit { }.get(10, java.util.concurrent.TimeUnit.SECONDS)
+        // A recreated process has no Activity handoff cache: force the next owner
+        // to read the real JSON and hashed journal from disk.
+        PlaybackFeatures::class.java.getDeclaredField("COORDINATORS").apply { isAccessible = true }
+            .get(null).let { @Suppress("UNCHECKED_CAST") (it as MutableMap<String, Any>).clear() }
+    }
+    private fun pressResume(f: Fixture, button: Int = android.content.DialogInterface.BUTTON_POSITIVE) {
+        val controller = org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup()
+        try {
+            f.session.showResumeSession(controller.get())
+            val dialog = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog()
+            assertTrue(dialog.isShowing)
+            dialog.getButton(button).performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+        } finally { controller.pause().stop().destroy() }
+    }
+    private fun translate(f: Fixture) {
+        var preview: SubtitleTranslationSession.Preview? = null
+        f.session.translation.prepare("en", "checkpoint-fixture") { preview = it }
+        await("Translation source index unavailable") { preview != null }
+        f.session.translation.start(requireNotNull(preview)) { object : TranslationEngine {
+            override val id = "checkpoint-fixture"
+            override fun translate(texts: List<String>, sourceLanguage: String, targetLanguage: String,
+                cancelled: () -> Boolean) = texts.map { "FR : $it" }
+            override fun close() = Unit
+        } }
+        await("Controlled complete translation did not activate") { f.session.translation.complete && f.session.translation.ready }
+        assertTrue(f.session.translation.saveCurrentTranslation())
+    }
+
+    @Test fun simpleResumeButtonAfterProcessRecreationRecoversExpiredSpeechAndQueuedReply() {
+        val file = File.createTempFile("resume-source-", ".srt", context.cacheDir).apply { writeText(pendingSubtitles()) }
+        try {
+            val old = Fixture(sharedFile = file)
+            old.timeline(SubtitleTimeline(globalOffsetMs = 1)); old.session.play(); old.at(1001); old.at(2001)
+            assertEquals(listOf("First reply."), old.components.voice.requests.map { it.second })
+            assertTrue(old.session.machine.snapshot().waitingForSpeech)
+            val obsolete = old.session.machine.snapshot().speakingId!!
+            flushAndForgetProcessMemory(old)
+            Fixture(sharedFile = file, restore = true).use { restored ->
+                assertEquals(2001L, restored.session.player.currentPosition)
+                assertFalse(restored.session.machine.snapshot().wantsPlayback)
+                assertFalse(restored.session.player.playWhenReady)
+                assertTrue(restored.components.voice.requests.isEmpty())
+                assertEquals("external-subtitle", restored.session.savedSessionRecord()!!.narrationCheckpointTrackId)
+                pressResume(restored)
+                await("Simple Resume did not recover the expired first source occurrence") { restored.components.voice.requests.isNotEmpty() }
+                assertEquals("First reply.", restored.components.voice.requests.first().second)
+                assertEquals(1001L, restored.session.player.currentPosition)
+                old.components.voice.complete(obsolete)
+                assertEquals(0, restored.session.machine.journalSnapshot().completedCount)
+                restored.at(2001); restored.drain()
+                assertEquals(listOf("First reply.", "Second reply."), restored.components.voice.requests.map { it.second })
+                assertEquals(2, restored.session.machine.journalSnapshot().completedCount)
+            }
+        } finally { file.delete() }
+    }
+
+    @Test fun translatedCheckpointRestoresPausedAndResumesAtTheMappedNarrationTime() {
+        val file = File.createTempFile("translated-resume-", ".srt", context.cacheDir).apply { writeText(pendingSubtitles()) }
+        try {
+            val old = Fixture(sharedFile = file)
+            translate(old)
+            old.timeline(SubtitleTimeline(globalOffsetMs = 500, narrationOffsetMs = 200))
+            old.session.play(); old.at(1700); old.at(2700)
+            assertEquals(listOf("FR : First reply."), old.components.voice.requests.map { it.second })
+            flushAndForgetProcessMemory(old)
+            Fixture(sharedFile = file, restore = true).use { restored ->
+                assertTrue(restored.session.translation.ready)
+                assertFalse(restored.session.machine.snapshot().wantsPlayback)
+                assertTrue(restored.components.voice.requests.isEmpty())
+                pressResume(restored)
+                await("Translated first occurrence did not resume") { restored.components.voice.requests.isNotEmpty() }
+                assertEquals(1700L, restored.session.player.currentPosition)
+                restored.at(2700); restored.drain()
+                assertEquals(listOf("FR : First reply.", "FR : Second reply."), restored.components.voice.requests.map { it.second })
+                assertEquals(2, restored.session.machine.journalSnapshot().completedCount)
+            }
+        } finally { file.delete() }
+    }
+
+    @Test fun explicitSeekAfterRestorationDoesNotResurrectTheAbandonedOldQueue() {
+        val file = File.createTempFile("seek-resume-", ".srt", context.cacheDir).apply { writeText(pendingSubtitles()) }
+        try {
+            val old = Fixture(sharedFile = file)
+            old.timeline(SubtitleTimeline(globalOffsetMs = 1)); old.session.play(); old.at(1001); old.at(2001)
+            flushAndForgetProcessMemory(old)
+            Fixture(sharedFile = file, restore = true).use { restored ->
+                restored.session.seek(2501); restored.at(2501)
+                restored.session.savePosition()
+                assertNull(restored.session.savedSessionRecord()!!.narrationCheckpoint?.takeIf { it.startMs == 1000L })
+                pressResume(restored); restored.drain()
+                assertEquals(listOf("Second reply."), restored.components.voice.requests.map { it.second })
+                assertEquals(2501L, restored.session.player.currentPosition)
+                assertEquals(1, restored.session.machine.journalSnapshot().completedCount)
+            }
+        } finally { file.delete() }
+    }
+
+    @Test fun replayBeforeResumeConsumesTheExplicitReplyOnceAndPreservesLaterExpiredWork() {
+        val file = File.createTempFile("manual-resume-", ".srt", context.cacheDir).apply { writeText(pendingSubtitles()) }
+        try {
+            val old = Fixture(sharedFile = file)
+            old.timeline(SubtitleTimeline(globalOffsetMs = 1)); old.session.play(); old.at(1001); old.at(2001); old.at(3001)
+            flushAndForgetProcessMemory(old)
+            Fixture(sharedFile = file, restore = true).use { restored ->
+                pressResume(restored, android.content.DialogInterface.BUTTON_NEUTRAL)
+                await("Explicit interrupted replay did not start") { restored.components.voice.requests.isNotEmpty() }
+                restored.drain()
+                assertEquals(listOf("First reply."), restored.components.voice.requests.map { it.second })
+                assertFalse(restored.session.machine.snapshot().wantsPlayback)
+                pressResume(restored); restored.at(2001); restored.drain()
+                assertEquals(listOf("First reply.", "Second reply."), restored.components.voice.requests.map { it.second })
+                assertEquals(2, restored.session.machine.journalSnapshot().completedCount)
+            }
+        } finally { file.delete() }
+    }
+
+    @Test fun pauseOrSeekDuringCheckpointIndexingCannotStartAnObsoleteResumeRequest() {
+        for (action in listOf("pause", "seek")) {
+            val file = File.createTempFile("async-resume-", ".srt", context.cacheDir).apply { writeText(pendingSubtitles()) }
+            try {
+                val old = Fixture(sharedFile = file)
+                old.timeline(SubtitleTimeline(globalOffsetMs = 1)); old.session.play(); old.at(1001); old.at(2001)
+                flushAndForgetProcessMemory(old)
+                Fixture(sharedFile = file, restore = true).use { restored ->
+                    PlaybackSession::class.java.getDeclaredField("indexedSource").apply { isAccessible = true }.set(restored.session, null)
+                    restored.components.blockNextScan()
+                    pressResume(restored)
+                    await("Recovery did not enter the controlled asynchronous indexer") { restored.components.scanEntered.count == 0L }
+                    restored.session.savePosition()
+                    assertNotNull(restored.session.savedSessionRecord()!!.narrationCheckpoint)
+                    if (action == "pause") restored.session.pause() else restored.session.seek(2501)
+                    restored.components.releaseScan.countDown()
+                    await("Cancelled recovery scanner did not return") { restored.components.scanFinished.count == 0L }
+                    shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(200))
+                    assertFalse(action, restored.session.machine.snapshot().wantsPlayback)
+                    assertTrue(action, restored.components.voice.requests.isEmpty())
+                    assertEquals(if (action == "pause") 2001L else 2501L, restored.session.player.currentPosition)
+                    restored.session.savePosition()
+                    if (action == "pause") assertNotNull(restored.session.savedSessionRecord()!!.narrationCheckpoint)
+                    else assertNull(restored.session.savedSessionRecord()!!.narrationCheckpoint)
+                }
+            } finally { file.delete() }
+        }
+    }
+
+    @Test fun restoredCheckpointBeyondVideoEndFinishesEveryPendingTranslatedTimeBoundary() {
+        val file = File.createTempFile("eof-resume-", ".srt", context.cacheDir).apply { writeText(pendingSubtitles()) }
+        try {
+            val old = Fixture(sharedFile = file)
+            old.timeline(SubtitleTimeline(globalOffsetMs = 30_000)); old.session.play(); old.at(31_000); old.at(32_000)
+            flushAndForgetProcessMemory(old)
+            Fixture(sharedFile = file, restore = true).use { restored ->
+                assertFalse(restored.session.machine.snapshot().wantsPlayback)
+                assertTrue(restored.components.voice.requests.isEmpty())
+                pressResume(restored)
+                await("EOF checkpoint did not restore its pending source speech") { restored.components.voice.requests.isNotEmpty() }
+                restored.drain()
+                assertEquals(listOf("First reply.", "Second reply."), restored.components.voice.requests.map { it.second })
+                assertEquals(2, restored.session.machine.journalSnapshot().completedCount)
+                await("Finished EOF narration did not leave playback paused") { !restored.session.machine.snapshot().wantsPlayback }
+            }
+        } finally { file.delete() }
+    }
+
+    @Test fun checkpointChoosesTheEarliestMappedPendingOccurrenceInsteadOfTheEarliestSourceTime() {
+        Fixture(pendingSubtitles()).use { f ->
+            f.timeline(SubtitleTimeline(portions = listOf(SubtitleTimeline.Portion(1000, 2000, 5000))))
+            val entries = f.session.ahead.selected("external-subtitle")
+            f.session.applyNarration(f.session.machine.cues(0, entries.map { it.raw }, identities = entries.map { it.identity }))
+            f.session.savePosition()
+            val checkpoint = requireNotNull(f.session.savedSessionRecord()!!.narrationCheckpoint)
+            assertEquals(2000L, checkpoint.startMs)
+            assertEquals(fr.soustitresvoix.core.NarrationLedger.hashIdentity(entries[1].identity), checkpoint.id)
+        }
+    }
+
+    @Test fun unresolvedRestoredCheckpointStaysPausedAndIsNotSilentlyDiscarded() {
+        val file = File.createTempFile("missing-resume-", ".srt", context.cacheDir).apply { writeText(pendingSubtitles()) }
+        try {
+            val old = Fixture(sharedFile = file)
+            old.timeline(SubtitleTimeline(globalOffsetMs = 1)); old.session.play(); old.at(1001); old.at(2001)
+            flushAndForgetProcessMemory(old)
+            val store = MediaSessionStore(context)
+            val uri = old.media.uri
+            val checkpoint = OccurrenceResume("0".repeat(64), 1000, 2000)
+            store.save(requireNotNull(store.get(uri)).copy(narrationCheckpoint = checkpoint))
+            Fixture(sharedFile = file, restore = true).use { restored ->
+                pressResume(restored)
+                assertTrue(restored.components.voice.requests.isEmpty())
+                assertFalse(restored.session.machine.snapshot().wantsPlayback)
+                assertEquals(checkpoint, restored.session.savedSessionRecord()!!.narrationCheckpoint)
+                assertTrue(restored.messages.any { it.second && it.first.contains("encore en attente") })
+            }
+        } finally { file.delete() }
+    }
+
     private class Backend(private val delegate: PlaybackBackend) : PlaybackBackend by delegate {
         var positionMs = 0L
         private val listeners = mutableListOf<Player.Listener>()
         override val player: Player = object : ForwardingPlayer(delegate.player) {
             override fun getCurrentPosition(): Long = positionMs
+            override fun seekTo(position: Long) { positionMs = position; super.seekTo(position) }
+            override fun seekTo(mediaItemIndex: Int, position: Long) { positionMs = position; super.seekTo(mediaItemIndex, position) }
             override fun addListener(listener: Player.Listener) { listeners += listener; super.addListener(listener) }
             override fun removeListener(listener: Player.Listener) { listeners -= listener; super.removeListener(listener) }
+        }
+        override fun setMediaSource(source: androidx.media3.exoplayer.source.MediaSource, startPositionMs: Long) {
+            positionMs = startPositionMs; delegate.setMediaSource(source, startPositionMs)
         }
         fun deliver(text: String, timeUs: Long) {
             val group = CueGroup(listOf(Cue.Builder().setText(text).build()), timeUs)
@@ -310,6 +527,33 @@ class TimelinePlaybackRobolectricTest {
         }
     }
     private class Components : PlaybackComponents by DefaultPlaybackComponents {
+        private val shouldBlockScan = java.util.concurrent.atomic.AtomicBoolean(false)
+        @Volatile var scanEntered = java.util.concurrent.CountDownLatch(0)
+        @Volatile var releaseScan = java.util.concurrent.CountDownLatch(0)
+        @Volatile var scanFinished = java.util.concurrent.CountDownLatch(0)
+        fun blockNextScan() {
+            scanEntered = java.util.concurrent.CountDownLatch(1)
+            releaseScan = java.util.concurrent.CountDownLatch(1)
+            scanFinished = java.util.concurrent.CountDownLatch(1)
+            shouldBlockScan.set(true)
+        }
+        override fun createSubtitles(context: Context): SubtitleSource {
+            val delegate = Media3SubtitleSource(context)
+            return object : SubtitleSource by delegate {
+                override fun createIndexer(): SubtitleIndexer {
+                    val scanner = delegate.createIndexer()
+                    return object : SubtitleIndexer by scanner {
+                        override fun scan(media: SavedMedia, progress: (Int) -> Unit): CueAheadIndex {
+                            if (shouldBlockScan.getAndSet(false)) {
+                                scanEntered.countDown()
+                                check(releaseScan.await(15, java.util.concurrent.TimeUnit.SECONDS)) { "Controlled checkpoint scan was not released" }
+                            }
+                            return try { scanner.scan(media, progress) } finally { scanFinished.countDown() }
+                        }
+                    }
+                }
+            }
+        }
         lateinit var backend: Backend
         lateinit var voice: Voice
         override fun createPlayback(context: Context, preferences: PlayerPreferences, movieAudio: MovieAudio,

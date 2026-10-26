@@ -90,6 +90,8 @@ Les séances conservent la position, les pistes audio/textuelles, le fichier ext
 
 La restauration commence en pause et propose **Reprendre** ou **Relire la dernière réplique avant de reprendre**. La relecture laisse ensuite la vidéo en pause. Si le fichier n’est plus accessible, un parcours guidé permet de le sélectionner de nouveau, de réessayer ou d’oublier seulement la séance. Choisir la même édition ; des métadonnées compatibles ne prouvent pas que deux fichiers sont identiques.
 
+Si la file vocale était encore inachevée à la fermeture, **Reprendre** retrouve son premier événement dans la piste exacte et revient au début corrigé de cette occurrence avant de lire. Cela préserve une réplique dont l’affichage avait déjà expiré pendant que la vidéo attendait la voix. Un déplacement volontaire annule ce repère ; une piste ou une traduction indisponible maintient la pause avec un message.
+
 Dans **Synchronisation**, ouvrir **Décalage, dérive et calibration des sous-titres** :
 
 - **Décalage global**, en millisecondes : positif pour retarder les sous-titres.

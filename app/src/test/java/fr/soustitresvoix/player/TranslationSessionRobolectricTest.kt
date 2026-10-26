@@ -566,6 +566,7 @@ class TranslationSessionRobolectricTest {
             fixture.session.translation.prepareWithOptions("en", "progressive", progressive = true) { prepared = it }
             await("Progressive source not indexed") { prepared != null }
             var calls = 0
+            var partialMetadata: String? = null
             fixture.session.translation.start(prepared!!) {
                 Engine(id = "progressive") { texts ->
                     calls++
@@ -576,6 +577,14 @@ class TranslationSessionRobolectricTest {
             try {
                 await("First prefix not activated") { enteredSecond.count == 0L && fixture.session.translation.ready }
                 assertFalse(fixture.session.translation.complete)
+                assertNull(fixture.session.translation.selectionMetadata())
+                val resumableSelection = requireNotNull(fixture.session.translation.checkpointSelectionMetadata())
+                partialMetadata = resumableSelection
+                val selectionJson = org.json.JSONObject(resumableSelection)
+                assertEquals("progressive", selectionJson.getString("provider"))
+                assertFalse(selectionJson.has("resultFingerprint"))
+                fixture.session.savePosition()
+                assertEquals(resumableSelection, fixture.session.savedSessionRecord()!!.translationIdentity)
                 assertTrue(fixture.session.translation.allowPlayback())
                 assertFalse(fixture.session.machine.snapshot().wantsPlayback)
                 assertTrue(fixture.components.speech.requests.isEmpty())
@@ -590,6 +599,26 @@ class TranslationSessionRobolectricTest {
             } finally { release.countDown() }
             await("Progressive translation not completed") { fixture.session.translation.complete }
             assertEquals(43, fixture.session.translation.editableCues().size)
+            assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+            fixture.session.translation.useOriginal()
+            File(context.cacheDir, "translated-subtitles-v1").deleteRecursively()
+            File(context.filesDir, "translations-retained-v1").deleteRecursively()
+            val callbacks = mutableListOf<Boolean>()
+            assertTrue(fixture.session.translation.restoreSelection(requireNotNull(partialMetadata)) { callbacks += it })
+            await("Incomplete saved translation requirement was not restored") { callbacks.isNotEmpty() }
+            assertEquals(listOf(false), callbacks)
+            val stillRequiredMetadata = requireNotNull(fixture.session.translation.checkpointSelectionMetadata())
+            fixture.session.savePosition()
+            assertEquals(stillRequiredMetadata, fixture.session.savedSessionRecord()!!.translationIdentity)
+            fixture.session.translation.useOriginal()
+            val secondRestore = mutableListOf<Boolean>()
+            assertTrue(fixture.session.translation.restoreSelection(stillRequiredMetadata) { secondRestore += it })
+            await("A second reopen silently lost the incomplete translation requirement") { secondRestore.isNotEmpty() }
+            assertEquals(listOf(false), secondRestore)
+            assertNotNull(fixture.session.translation.checkpointSelectionMetadata())
+            assertTrue(fixture.session.translation.required)
+            assertFalse(fixture.session.translation.ready)
+            assertFalse(fixture.session.translation.allowPlayback())
             assertFalse(fixture.session.machine.snapshot().wantsPlayback)
         }
     }
@@ -626,6 +655,39 @@ class TranslationSessionRobolectricTest {
             assertEquals(listOf(false), callbacks)
             assertFalse(fixture.session.machine.snapshot().wantsPlayback)
             assertTrue(fixture.components.speech.requests.isEmpty())
+        }
+    }
+
+    @Test fun invalidSavedTranslationNeverFallsBackToOriginalEvenAfterAnotherSaveAndRestore() {
+        for (metadata in listOf("not-json", "{\"version\":999}")) {
+            Fixture().use { fixture ->
+                var indexed = false
+                fixture.session.ensureCompleteIndex { indexed = true }
+                await("Synthetic source not indexed for invalid-selection regression") { indexed }
+                val source = fixture.session.ahead.selected("external-subtitle").first()
+                var calls = 0
+                assertFalse(fixture.session.translation.restoreSelection(metadata) { success -> assertFalse(success); calls++ })
+                assertEquals(1, calls)
+                assertTrue(fixture.session.translation.required)
+                assertNull(fixture.session.translation.textFor(source))
+                assertFalse(fixture.session.translation.allowPlayback())
+                assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+                fixture.session.savePosition()
+                val unavailable = requireNotNull(fixture.session.savedSessionRecord()!!.translationIdentity)
+                assertEquals(true, org.json.JSONObject(unavailable).getBoolean("unavailable"))
+                fixture.session.translation.useOriginal()
+                assertFalse(fixture.session.translation.required)
+                assertFalse(fixture.session.translation.restoreSelection(unavailable) { success -> assertFalse(success); calls++ })
+                assertEquals(2, calls)
+                assertTrue(fixture.session.translation.required)
+                assertNull(fixture.session.translation.textFor(source))
+                assertFalse(fixture.session.translation.allowPlayback())
+                fixture.session.savePosition()
+                assertEquals(unavailable, fixture.session.savedSessionRecord()!!.translationIdentity)
+                assertTrue(fixture.components.speech.requests.isEmpty())
+                fixture.session.translation.useOriginal()
+                assertEquals(source.raw, fixture.session.translation.textFor(source))
+            }
         }
     }
 

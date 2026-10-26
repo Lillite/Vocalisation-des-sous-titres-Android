@@ -356,6 +356,7 @@ class PlaybackSession(
     }
     fun play() {
         if (media == null) { onMessage("Ouvre d’abord une vidéo, ou lance l’essai intégré.", false); return }
+        if (!features.recoverCheckpointBeforePlay()) return
         if (player.playbackState == Player.STATE_ENDED && (!endDrainComplete || machine.snapshot().pendingCount > 0 || machine.snapshot().recoverableCount > 0)) {
             if (!translation.allowNarrationVoice()) return
             if (!requestFocus()) return
@@ -376,6 +377,31 @@ class PlaybackSession(
         apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
         apply(machine.play())
     }
+    internal fun rearmNarrationCheckpoint(positionMs: Long): Boolean {
+        val track = selectedTextId() ?: return false
+        seek(positionMs)
+        ensureTimedSchedule(track)
+        // A seek may still expose the old renderer cues until its next callback.
+        // Re-arm from the verified source index instead of speaking those old cues.
+        if (!dispatchTimedAt(positionMs, track)) return false
+        timedCursorMs = positionMs
+        val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 }
+        if (duration != null && positionMs >= duration) {
+            endDrainCursorMs = positionMs
+            endDrainComplete = false
+        }
+        return true
+    }
+    internal fun resumeFromNarrationCheckpoint(positionMs: Long): Boolean {
+        if (!rearmNarrationCheckpoint(positionMs)) return false
+        if (!endDrainComplete) {
+            // The picture stays at EOF while a positive correction finishes speech.
+            if (!translation.allowNarrationVoice() || !requestFocus()) return false
+            apply(machine.setMediaReady(true)); apply(machine.play())
+            drainNarrationAfterVideoEnd()
+        } else play()
+        return true
+    }
     private fun requestFocus(): Boolean {
         if (focusHeld) return true
         if (audioManager.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
@@ -384,6 +410,10 @@ class PlaybackSession(
         focusHeld = true; return true
     }
     fun pause() {
+        features.cancelCheckpointResume()
+        pauseForIndexing()
+    }
+    private fun pauseForIndexing() {
         completionSequence++
         finishPlaybackBenchmark("Pause demandée ou application quittée")
         interruptPreparation("Préparation arrêtée : lecture mise en pause. Le cache existant est conservé.")
@@ -393,6 +423,7 @@ class PlaybackSession(
         savePosition()
     }
     fun seek(positionMs: Long) {
+        features.cancelCheckpointResume(abandon = true)
         completionSequence++; phraseEndByUtterance.clear(); timedCursorMs = null
         endDrainCursorMs = null; endDrainComplete = true
         seekSequence++
@@ -760,7 +791,8 @@ class PlaybackSession(
         return if (all.size >= matched.size) all else matched
     }
     fun selectTrack(type: Int, group: Tracks.Group?, index: Int = 0, disabled: Boolean = false) {
-        savePosition(); completionSequence++; phraseEndByUtterance.clear(); timedCursorMs = null
+        savePosition(); features.cancelCheckpointResume(abandon = type == C.TRACK_TYPE_TEXT)
+        completionSequence++; phraseEndByUtterance.clear(); timedCursorMs = null
         if (type == C.TRACK_TYPE_TEXT) { translation.trackChanged(); selectExternalWhenAvailable = false; cancelIndexing() }
         pause(); apply(machine.reset(false)); lastCue = null; onCaption(""); trackReset = true
         val ticket = ++trackSelectionSequence
@@ -932,7 +964,7 @@ class PlaybackSession(
         val origin = IndexSource(source.uri, source.subtitlePath, source.subtitleMime)
         if (indexedSource == origin && !ahead.truncated) { ready(); return }
         if (translation.sourceCues.isNotEmpty() && !ahead.truncated && ahead.selected(selected).size == translation.sourceCues.size) { ready(); return }
-        pause(); cancelIndexing()
+        pauseForIndexing(); cancelIndexing()
         val epoch = mediaEpoch
         val task = subtitleSource.createIndexer(); indexer = task
         indexingStatus = "Indexation complète de la piste choisie en cours"

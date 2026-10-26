@@ -12,6 +12,7 @@ Ce journal présente les étapes principales vérifiables dans l’historique du
 - Profil Lecture intégrale, Confort/Adaptatif et compréhension confortable préservent les phrases ; le mode Continu demande une confirmation distincte permettant les coupures.
 - Journal par occurrence avec identifiants hachés, temps, états et compteurs ; aucune phrase dans le journal ordinaire, bilan distinct des répétitions manuelles et relecture d’une interruption en pause.
 - Séances par vidéo conservant position, pistes, fichier externe, moteur/voix/mode, paramètres, image, synchronisation et métadonnées de traduction ; réouverture en pause et réparation guidée des accès.
+- Repère distinct pour la file vocale réellement inachevée : une reprise après fermeture du processus récupère les répliques expirées à l’écran, sans restaurer les files volontairement abandonnées par déplacement.
 - Décalages séparés des sous-titres et de la narration, correction à deux points et interpolation continue ; portions explicites avec début/fin source et décalage signé pour les scènes ajoutées/supprimées, aperçu transactionnel et conservation des identités et des répliques traversant une limite.
 - Conservation vocale durable par œuvre, estimation d’espace, fichiers validés, préparation reprenable et suppression séparée des voix/textes/index ; disponibilité hors ligne conditionnée à une source complète.
 - Segmentation tenant compte de la langue et réutilisation des durées audio déjà mesurées pour améliorer l’anticipation.

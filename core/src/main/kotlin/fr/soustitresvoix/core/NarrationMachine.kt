@@ -63,6 +63,14 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
     fun registerOccurrences(occurrences: List<NarrationLedger.Occurrence>) { occurrences.forEach(ledger::register) }
     fun markPrepared(identities: List<String>) { identities.forEach(ledger::prepared) }
     fun markFiltered(identities: List<String>) { identities.forEach(ledger::filtered) }
+    /** Actual live work, not historical INTERRUPTED entries left by a seek.
+     * Only hashed metadata crosses this boundary; source text stays in Jobs. */
+    fun pendingOccurrences(): List<NarrationLedger.Entry> = buildList {
+        current?.job?.occurrenceId?.let(::add)
+        replayQueue.mapNotNullTo(this) { it.occurrenceId }
+        queue.mapNotNullTo(this) { it.occurrenceId }
+        recoverable.mapNotNullTo(this) { it.occurrenceId }
+    }.distinct().mapNotNull(ledger::entry)
     fun journalSnapshot() = ledger.snapshot()
     fun exportJournalMetadata() = ledger.exportMetadata()
     fun restoreJournalMetadata(encoded: String) = ledger.restoreMetadata(encoded)
@@ -88,6 +96,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
         if (segments.isEmpty()) return@event
         val group = ++groupSequence
         ledger.register(NarrationLedger.Occurrence(identity)); ledger.queued(identity)
+        seenOccurrenceIds.add(identity)
         val jobs = segments.map { Job(it, group = group, original = text, occurrenceId = identity) }
         // Recovery is paused video with explicit voice playback, like Repeat last.
         // Keep the group as a preview queue so long occurrences remain engine-safe.
@@ -132,7 +141,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
             effects += Effect.Message("Appuie sur Reprendre la voix pour reprendre la phrase et la vidéo.")
             return@event
         }
-        if (current?.preview == true) interrupt(keep = false)
+        if (current?.preview == true) interrupt(keep = current?.job?.occurrenceId != null)
         if (enabled && !speechReady) {
             wantsPlayback = false
             effects += Effect.Message("La voix n’est pas prête. Choisis une voix installée ou désactive la vocalisation.", true)
@@ -146,7 +155,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
         // segment back at the head. Its group must have actually started: a new
         // queued replica must not inherit the previous one's resume policy.
         val interrupted = when {
-            running?.preview == true -> null
+            running?.preview == true && running.job.occurrenceId == null -> null
             running != null -> running.job
             else -> queue.peekFirst()?.takeIf { it.group == lastSpokenGroup }
         }
@@ -157,7 +166,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
             SpeechTools.segments(interrupted.original, languageTag).asReversed().forEach {
                 queue.addFirst(Job(it, interrupted.expired, interrupted.group, interrupted.original, interrupted.deadlineMs, interrupted.occurrenceId))
             }
-        } else interrupt(keep = current?.preview != true)
+        } else interrupt(keep = current?.preview != true || current?.job?.occurrenceId != null)
         if (interrupted != null && resumePolicy == ResumePolicy.EXPLICIT) voiceSuspended = true
     }
     /** Call before seek, media replacement or subtitle track change. */
@@ -342,8 +351,15 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
         val running = current ?: return
         current = null
         running.job.occurrenceId?.let(ledger::interrupted)
+        val sourceReplay = running.preview && running.job.occurrenceId != null
+        val remainingReplay = if (keep && sourceReplay) replayQueue.toList() else emptyList()
         replayQueue.clear()
-        if (keep && !running.preview) queue.addFirst(running.job)
+        if (keep && (!running.preview || sourceReplay)) {
+            // A source replay is real unfinished narration. Keep every remaining
+            // segment ahead of later source occurrences; free voice previews end.
+            remainingReplay.asReversed().forEach(queue::addFirst)
+            queue.addFirst(running.job)
+        }
         effects += Effect.StopSpeech
     }
     private fun abandonQueue() {

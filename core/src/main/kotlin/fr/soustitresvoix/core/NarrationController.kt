@@ -11,6 +11,7 @@ interface NarrationController {
     fun registerOccurrences(occurrences: List<NarrationLedger.Occurrence>) = Unit
     fun markPrepared(identities: List<String>) = Unit
     fun markFiltered(identities: List<String>) = Unit
+    fun pendingOccurrences(): List<NarrationLedger.Entry> = emptyList()
     fun journalSnapshot(): NarrationLedger.Snapshot = NarrationLedger().snapshot()
     fun exportJournalMetadata(): String = ""
     fun restoreJournalMetadata(encoded: String): Boolean = false
@@ -47,6 +48,7 @@ class ExistingNarrationController(
     override fun registerOccurrences(occurrences: List<NarrationLedger.Occurrence>) = machine.registerOccurrences(occurrences)
     override fun markPrepared(identities: List<String>) = machine.markPrepared(identities)
     override fun markFiltered(identities: List<String>) = machine.markFiltered(identities)
+    override fun pendingOccurrences() = machine.pendingOccurrences()
     override fun journalSnapshot() = machine.journalSnapshot()
     override fun exportJournalMetadata() = machine.exportJournalMetadata()
     override fun restoreJournalMetadata(encoded: String) = machine.restoreJournalMetadata(encoded)

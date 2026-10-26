@@ -9,11 +9,11 @@ et le [guide des fonctions](docs/CONFORT_INTEGRAL_050.md) décrivent ses changem
 Android, la validation de `main` et la publication restent à confirmer.** Les
 résultats publiés de la 0.4.0 ci-dessous ne valident pas les nouvelles sources.
 
-L’inventaire des annotations `@Test` du 26 octobre 2026 contient **174 méthodes
-JVM du noyau, 228 méthodes JVM de l’application et 87 méthodes instrumentées
-Android**, soit **489 méthodes distinctes**. Le parcours complet exigé exécute
+L’inventaire des annotations `@Test` du 26 octobre 2026 contient **178 méthodes
+JVM du noyau, 238 méthodes JVM de l’application et 87 méthodes instrumentées
+Android**, soit **503 méthodes distinctes**. Le parcours complet exigé exécute
 chaque suite deux fois : debug puis release pour la JVM, deux passages de la
-même paire d’APK release pour Android. Il doit donc attester **978 exécutions
+même paire d’APK release pour Android. Il doit donc attester **1 006 exécutions
 JUnit**. Ces effectifs sont des critères de complétude, pas des résultats.
 
 | Groupe de régressions 0.5.0 | Ce qui doit être vérifié |
@@ -135,6 +135,33 @@ achevée ; abandonner une réplique en attente qui n’avait jamais commencé po
 masquer l’interruption de celle réellement commencée. Le correctif et ses
 régressions sont en cours de vérification. Les résultats ci-dessus ne valident
 pas encore ces changements supplémentaires, `main` ni un APK distribué.
+
+La [tentative 1 du run 40374255289](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40374255289/attempts/1),
+tête `63cfd6a49699516cf421814f662cf399093cf492`, a réussi les suites JVM
+174/228 en debug et en release ainsi que les compilations et contrôles d’APK,
+puis s’est arrêtée **avant toute instrumentation Android**. Le garde-fou a
+détecté un ANR de `com.android.systemui` au démarrage ; les diagnostics package
+confirment que notre application n’était pas encore installée et les sorties
+mémoire indiquent `No process found`. Aucun test Android de cette tentative ne
+compte comme exécuté. L’archive de rapports conservée a pour SHA-256
+`1d921c3fce99a22192a4920053639f15f993c9327f0d6ee4b466fead9682b8f6`.
+Le job complet a été relancé sur un nouvel environnement sans fermer le dialogue,
+retirer le garde-fou ni filtrer une suite. Les logs montrent une forte pression
+CPU au démarrage et aucune saturation mémoire détectée ; cela motive un essai
+avec quatre cœurs d’émulateur, sans prétendre établir la cause ni garantir
+l’absence d’ANR système. Les [ressources standard du runner public Ubuntu](https://docs.github.com/actions/using-jobs/choosing-the-runner-for-a-job)
+sont documentées par GitHub ; les ressources réellement observées restent dans
+les preuves de chaque run.
+
+Une autre revue a confirmé une perte possible lors de **Reprendre après mort du
+processus** : une occurrence A dont la voix continuait à la frontière de B pouvait
+avoir expiré visuellement à la position sauvegardée. Restaurer seulement le
+journal et la position ne reconstruisait pas cette file. La candidate conserve
+donc un repère de la vraie file inachevée, distinct des interruptions historiques
+après déplacement. Les tests de cette correction couvrent aussi la restauration
+de la traduction, les corrections temporelles, les sauvegardes précoces et les
+commandes utilisateur qui invalident une reprise différée. Ces nouveaux
+scénarios doivent réussir sur les sources finales avant publication.
 
 Avant de remplacer ce statut par un bilan final, consigner le commit exact,
 les liens des runs de la proposition et de `main`, les résultats JUnit contrôlés
@@ -273,8 +300,8 @@ Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcou
 | Étape | Contrôles exigés |
 | --- | --- |
 | Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 174 tests JVM du noyau, 228 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 174 tests du noyau et des 228 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Variante debug | 178 tests JVM du noyau, 238 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 178 tests du noyau et des 238 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
 | Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
 | Android 36 | Deux passages complets des 87 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
 | Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
@@ -297,7 +324,7 @@ de l’étape 5 sont 50/64/73. La [sixième étape](docs/AUDIO_EXPERT_ETAPE_6.md
 ajoute 27 méthodes noyau, 28 méthodes JVM de l’application et deux scénarios
 Android ; le scénario ASS de l’étape 5 est aussi étendu aux commandes DSP.
 Les effectifs de référence de la version 0.4.0 restent **87/137/82** ; ceux
-de la candidate 0.5.0 sont **174/228/87**.
+de la candidate 0.5.0 sont **178/238/87**.
 Ces nombres sont des critères à contrôler,
 pas une preuve d’exécution :
 consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
@@ -355,8 +382,8 @@ python3 tools/test-documentation-cleanup.py
 Contrôler ensuite chaque rapport JVM contre les méthodes attendues :
 
 ```sh
-python3 tools/verify-test-results.py --reports core/build/test-results/test --expected-count 174 --sources core/src/test/kotlin --output build/verification/local-debug-core-summary.json
-python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 228 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
+python3 tools/verify-test-results.py --reports core/build/test-results/test --expected-count 178 --sources core/src/test/kotlin --output build/verification/local-debug-core-summary.json
+python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 238 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
 ```
 
 Pour une preuve finale, fournir aussi `--not-before-ns` avec l’instant de début

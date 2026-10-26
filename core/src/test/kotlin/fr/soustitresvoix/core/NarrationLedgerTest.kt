@@ -443,6 +443,82 @@ class NarrationLedgerTest {
         assertEquals(1, machine.entry("new").completions)
     }
 
+    @Test fun pendingCheckpointUsesOnlyActualCurrentQueuedAndRecoverableWork() {
+        val machine = NarrationMachine(maxPendingChars = 30).apply {
+            setSpeechReady(true); setMediaReady(true); play()
+            registerOccurrences(listOf(NarrationLedger.Occurrence("a", 0, 1000),
+                NarrationLedger.Occurrence("b", 1000, 2000), NarrationLedger.Occurrence("c", 2000, 3000)))
+        }
+        machine.cues(0, listOf("Première réplique.", "Deuxième réplique.", "Troisième réplique."),
+            identities = listOf("a", "b", "c"))
+        assertEquals(setOf("a", "b", "c").map(NarrationLedger::hashIdentity).toSet(),
+            machine.pendingOccurrences().map { it.identityHash }.toSet())
+        assertTrue(machine.snapshot().recoverableCount > 0)
+        assertTrue(machine.pendingOccurrences().all { it.startUs != null && it.endUs != null })
+        machine.pause()
+        assertEquals(3, machine.pendingOccurrences().size)
+        machine.reset(false)
+        assertTrue(machine.pendingOccurrences().isEmpty())
+        assertEquals(3, machine.journalSnapshot().interruptedCount)
+    }
+
+    @Test fun voicePreviewWithoutSourceDoesNotBecomeACheckpointButRealReplayDoes() {
+        val machine = ready()
+        machine.preview("Essai libre sans sous-titre.")
+        assertTrue(machine.pendingOccurrences().isEmpty())
+        machine.registerOccurrences(listOf(NarrationLedger.Occurrence("source", 1, 2)))
+        val first = machine.replayOccurrence("source", "Phrase une. Phrase deux.").spoken()
+        assertEquals(listOf(NarrationLedger.hashIdentity("source")), machine.pendingOccurrences().map { it.identityHash })
+        val next = machine.speechFinished(first.id).spoken()
+        assertEquals(1, machine.pendingOccurrences().size)
+        machine.speechFinished(next.id)
+        assertTrue(machine.pendingOccurrences().isEmpty())
+    }
+
+    @Test fun controllerCheckpointDelegatesMetadataWithoutTextAndResetsAfterSeek() {
+        val controller = ExistingNarrationController()
+        controller.registerOccurrences(listOf(NarrationLedger.Occurrence("private source identity", 10, 20)))
+        controller.setSpeechReady(true)
+        controller.replayOccurrence("private source identity", "Texte privé.")
+        val checkpoint = controller.pendingOccurrences().single()
+        assertEquals(10L, checkpoint.startUs)
+        assertFalse(checkpoint.toString().contains("private source"))
+        assertFalse(checkpoint.toString().contains("Texte privé"))
+        controller.reset(false)
+        assertTrue(controller.pendingOccurrences().isEmpty())
+    }
+
+    @Test fun pausingOrLosingVoiceDuringRealReplayKeepsItsUnfinishedSegmentsBeforeLaterReplies() {
+        for (policy in NarrationMachine.ResumePolicy.entries) for (signal in listOf("pause", "voice")) {
+            val machine = ready()
+            machine.setResumePolicy(policy)
+            machine.registerOccurrences(listOf(NarrationLedger.Occurrence("a", 1000, 2000),
+                NarrationLedger.Occurrence("b", 2000, 3000)))
+            machine.cues(0, listOf("Premier morceau. Deuxième morceau.", "Ensuite."), identities = listOf("a", "b"))
+            machine.pause()
+            val first = machine.replayOccurrence("a", "Premier morceau. Deuxième morceau.").spoken()
+            val interrupted = machine.speechFinished(first.id).spoken()
+            if (signal == "pause") machine.pause() else machine.setSpeechReady(false)
+            assertEquals(listOf("a", "b").map(NarrationLedger::hashIdentity), machine.pendingOccurrences().map { it.identityHash })
+            assertEquals(State.INTERRUPTED, machine.entry("a").state)
+            machine.speechFinished(interrupted.id); machine.speechFailed(interrupted.id, "obsolete replay callback")
+            assertEquals(0, machine.journalSnapshot().completedCount)
+            if (signal == "voice") machine.setSpeechReady(true)
+            val resumed = if (signal == "pause" && policy == NarrationMachine.ResumePolicy.EXPLICIT) {
+                assertTrue(machine.play().none { it is Effect.Speak })
+                assertTrue(machine.snapshot().voiceSuspended)
+                machine.resumeVoice()
+            } else machine.play()
+            val expected = if (signal == "pause" && policy == NarrationMachine.ResumePolicy.REPLICA)
+                listOf("Premier morceau.", "Deuxième morceau.", "Ensuite.") else listOf("Deuxième morceau.", "Ensuite.")
+            assertEquals("$policy/$signal", expected, drain(machine, resumed))
+            assertEquals(2, machine.journalSnapshot().completedCount)
+            assertTrue(machine.pendingOccurrences().isEmpty())
+            assertTrue(machine.cues(1, listOf("Premier morceau. Deuxième morceau."), identities = listOf("a"))
+                .none { it is Effect.Speak })
+        }
+    }
+
     private fun legacyMetadata(encoded: String): String = encoded.lineSequence().mapIndexed { index, line ->
         when (index) {
             0 -> "NARRATION-LEDGER-1"

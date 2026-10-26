@@ -435,6 +435,15 @@ class SubtitleTranslationSession(
         return JSONObject().put("version", 1).put("source", plan.sourceLanguage).put("target", plan.targetLanguage)
             .put("provider", plan.providerId).put("sourceFingerprint", plan.fingerprint).put("resultFingerprint", active?.fingerprint).toString()
     }
+    /** Resume must remember that French was requested even while a progressive
+     * plan is incomplete. No text, credentials or automatic provider call. */
+    fun checkpointSelectionMetadata(): String? {
+        selectionMetadata()?.let { return it }
+        if (!required) return null
+        val plan = activePlan ?: return JSONObject().put("version", 0).put("unavailable", true).toString()
+        return JSONObject().put("version", 1).put("source", plan.sourceLanguage).put("target", plan.targetLanguage)
+            .put("provider", plan.providerId).put("sourceFingerprint", plan.fingerprint).toString()
+    }
     /** Re-indexes asynchronously, restores only an exact existing local complete result, never contacts a provider. */
     fun restoreSelection(metadata: String, onDone: (Boolean) -> Unit = {}): Boolean = try {
         require(!closed && owner.media != null && owner.selectedTextId() != null)
@@ -447,6 +456,7 @@ class SubtitleTranslationSession(
         prepareWithOptions(json.getString("source"), json.getString("provider"), json.getString("target")) { value ->
             if (value.plan.fingerprint != expected) { status = "La piste a changé ; traduction conservée non réutilisée."; changed(); finishRestore(false) }
             else {
+                activePlan = value.plan // Preserve the requested language even when only a partial checkpoint exists.
                 val current = Job(); job = current
                 worker.execute {
                     val restored = runner.readExisting(value.plan, expectedResult)
@@ -463,6 +473,16 @@ class SubtitleTranslationSession(
         }
         restoreCompletion = sequence to onDone
         true
-    } catch (_: Exception) { message("Sélection de traduction invalide ; aucun appel réseau.", true); onDone(false); false }
+    } catch (_: Exception) {
+        if (!closed) {
+            owner.pause(); finishRestore(false); invalidateRetentions(); cancelJob(); sequence++
+            preview = null; active = null; activePlan = null; complete = false; required = true
+            requestedTrack = owner.selectedTextId()
+            status = "Sélection de traduction indisponible. Choisis sa réparation ou Revenir à la piste originale."
+            changed()
+        }
+        message("Sélection de traduction invalide ; la lecture reste en pause, sans substitution par l’original ni appel réseau.", true)
+        onDone(false); false
+    }
     fun close() { if (!closed) { reset(); closed = true; worker.shutdownNow() } }
 }

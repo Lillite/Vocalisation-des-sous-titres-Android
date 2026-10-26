@@ -106,6 +106,8 @@ Une indication historique « traduction prête » ne suffit pas à la réouvertu
 3. Choisir **Reprendre** ou **Relire la dernière réplique avant de reprendre**.
 4. Après relecture, appuyer explicitement sur **Reprendre**.
 
+La séance garde aussi un repère sans texte de sa file vocale réellement inachevée, distinct des anciennes interruptions du bilan. Au premier **Reprendre**, le lecteur vérifie la piste, sa traduction et son index, puis revient au début corrigé de la première occurrence encore à lire. Une réplique visuellement expirée ne disparaît donc pas lors d’une fermeture du processus. La vidéo reste d’abord en pause ; une nouvelle pause, un déplacement ou un changement de source invalide une demande de reprise différée. Un déplacement volontaire abandonne le repère précédent. Si l’occurrence n’est plus disponible, le lecteur explique le problème et conserve la pause.
+
 Si l’accès a expiré ou que la vidéo a été déplacée, le parcours **Retrouver le fichier de cette séance** propose le sélecteur Android. Choisir la même vidéo et la même édition. Des métadonnées changées peuvent neutraliser la restauration afin d’éviter d’appliquer les minutages d’un autre montage.
 
 **Oublier uniquement cette séance mémorisée** retire sa position et ses choix ; ce n’est pas une suppression du fichier vidéo ou des préparations conservées.
