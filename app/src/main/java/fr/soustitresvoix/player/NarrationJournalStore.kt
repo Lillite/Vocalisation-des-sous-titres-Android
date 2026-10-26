@@ -91,13 +91,18 @@ class NarrationJournalStore(context: Context) {
             require(contextId.matches(HASH))
             require(encoded.length <= MAX_BYTES)
             val lines = encoded.lineSequence().iterator()
-            require(lines.hasNext() && lines.next() == "NARRATION-LEDGER-1")
+            require(lines.hasNext())
+            val version = lines.next()
+            require(version in setOf("NARRATION-LEDGER-1", "NARRATION-LEDGER-2"))
             require(lines.hasNext() && lines.next() == contextId)
             require(lines.hasNext())
             val header = lines.next().split('\t')
-            require(header.size == 2)
+            require(header.size == if (version == "NARRATION-LEDGER-2") 4 else 2)
             val generation = header[0].toLong().also { require(it >= 0) }
             require(header[1] in setOf("0", "1"))
+            val pointers = if (header.size == 4) header.drop(2).map { value ->
+                value.takeUnless { it == "-" }?.also { require(it.matches(HASH)) }
+            } else emptyList()
             var count = 0
             val identities = HashSet<String>()
             while (lines.hasNext()) {
@@ -113,6 +118,7 @@ class NarrationJournalStore(context: Context) {
                 for (index in 4..7) require(fields[index].toInt() >= 0)
                 require(fields[8].toLong() in 0..generation && fields[9].toLong() >= 0)
             }
+            pointers.filterNotNull().forEach { require(it in identities) }
             require(encoded.toByteArray(Charsets.UTF_8).size <= MAX_BYTES)
         }
     }

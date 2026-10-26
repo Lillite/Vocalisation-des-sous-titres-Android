@@ -223,6 +223,33 @@ class SessionSourceIdentityRobolectricTest {
         } finally { recreated.close() }
     }
 
+    @Test fun sessionRecordsPersistCompletionAndSpokenInterruptionInsteadOfLatestQueueMutation() {
+        val uri = "content://$AUTHORITY/replay-targets"
+        val source = fr.soustitresvoix.core.NarrationLedger().apply {
+            setContext("synthetic-resume-targets")
+            register(fr.soustitresvoix.core.NarrationLedger.Occurrence("earlier", 1_000_000, 2_000_000))
+            register(fr.soustitresvoix.core.NarrationLedger.Occurrence("later", 3_000_000, 4_000_000))
+            register(fr.soustitresvoix.core.NarrationLedger.Occurrence("spoken", 5_000_000, 6_000_000))
+            register(fr.soustitresvoix.core.NarrationLedger.Occurrence("queued", 7_000_000, 8_000_000))
+            started("earlier"); completed("earlier"); started("later"); completed("later")
+            queued("earlier"); started("spoken"); interrupted("spoken"); queued("queued"); interrupted("queued")
+        }
+        val session = PlaybackSession(context, PlayerPreferences(context), {}, { _, _ -> }, {})
+        try {
+            session.machine.setJournalContext("synthetic-resume-targets")
+            assertTrue(session.machine.restoreJournalMetadata(source.exportMetadata()))
+            val features = PlaybackSession::class.java.getDeclaredField("features")
+                .apply { isAccessible = true }.get(session) as PlaybackFeatures
+            features.save(SavedMedia(uri, "Synthetic replay target"))
+            val writer = PlaybackFeatures::class.java.getDeclaredField("writer")
+                .apply { isAccessible = true }.get(features) as ExecutorService
+            writer.submit { }.get(10, TimeUnit.SECONDS)
+            val record = MediaSessionStore(context).get(uri)!!
+            assertEquals(OccurrenceResume(fr.soustitresvoix.core.NarrationLedger.hashIdentity("later"), 3000, 4000), record.lastCompleted)
+            assertEquals(OccurrenceResume(fr.soustitresvoix.core.NarrationLedger.hashIdentity("spoken"), 5000, 6000), record.lastInterrupted)
+        } finally { session.close() }
+    }
+
     private class HeldExecutor : AbstractExecutorService() {
         val tasks = mutableListOf<Runnable>()
         private var closed = false

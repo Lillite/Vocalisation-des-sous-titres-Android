@@ -196,7 +196,7 @@ class NarrationLedgerTest {
         assertEquals(2, target.snapshot().interruptedCount)
         assertNull(target.snapshot().current)
         val before = target.snapshot()
-        assertFalse(target.restoreMetadata(encoded.replace("NARRATION-LEDGER-1", "unknown")))
+        assertFalse(target.restoreMetadata(encoded.replace("NARRATION-LEDGER-2", "unknown")))
         assertEquals(before, target.snapshot())
         val other = NarrationLedger().apply { setContext("another") }
         assertFalse(other.restoreMetadata(encoded))
@@ -443,6 +443,143 @@ class NarrationLedgerTest {
         assertEquals(1, machine.entry("new").completions)
     }
 
+    private fun legacyMetadata(encoded: String): String = encoded.lineSequence().mapIndexed { index, line ->
+        when (index) {
+            0 -> "NARRATION-LEDGER-1"
+            2 -> line.split('\t').take(2).joinToString("\t")
+            else -> line
+        }
+    }.joinToString("\n")
+
+    @Test fun requeueingAnEarlierCompletedOccurrenceCannotChangeTheLastCompletion() {
+        val ledger = NarrationLedger(clockMillis = { 42L }).apply {
+            register(NarrationLedger.Occurrence("earlier", 0, 10))
+            register(NarrationLedger.Occurrence("later", 20, 30))
+            started("earlier"); completed("earlier")
+            started("later"); completed("later")
+            queued("earlier")
+        }
+        val last = NarrationLedger.hashIdentity("later")
+        assertEquals(last, ledger.snapshot().lastCompleted!!.identityHash)
+        assertEquals(State.QUEUED, ledger.entry("earlier")!!.state)
+        val restored = NarrationLedger()
+        assertTrue(restored.restoreMetadata(ledger.exportMetadata()))
+        assertEquals(last, restored.snapshot().lastCompleted!!.identityHash)
+        assertNull("A queue-only retry has never started", restored.snapshot().lastInterrupted)
+        assertEquals(2, restored.snapshot().completedCount)
+    }
+
+    @Test fun finishingAnEarlierSourceAfterSeekingBackIsTheLatestCompletion() {
+        val machine = ready()
+        drain(machine, machine.cues(0, listOf("Avant."), identities = listOf("earlier")))
+        drain(machine, machine.cues(20, listOf("Après."), identities = listOf("later")))
+        machine.reset(true); machine.setMediaReady(true)
+        drain(machine, machine.cues(0, listOf("Avant."), identities = listOf("earlier")))
+        val last = NarrationLedger.hashIdentity("earlier")
+        assertEquals(last, machine.journalSnapshot().lastCompleted!!.identityHash)
+        val restored = NarrationLedger().apply { setContext("synthetic-media:track-fr") }
+        assertTrue(restored.restoreMetadata(machine.exportJournalMetadata()))
+        assertEquals(last, restored.snapshot().lastCompleted!!.identityHash)
+        assertEquals(2, restored.snapshot().completedCount)
+    }
+
+    @Test fun abandoningLaterUnstartedQueueEntriesKeepsTheActuallySpokenInterruption() {
+        val machine = ready()
+        val first = machine.cues(0, listOf("Déjà commencée.", "Encore en attente."),
+            identities = listOf("spoken", "queued")).spoken()
+        machine.pause(); machine.reset(false)
+        machine.speechFinished(first.id); machine.speechFailed(first.id, "obsolete")
+        val expected = NarrationLedger.hashIdentity("spoken")
+        assertEquals(expected, machine.journalSnapshot().lastInterrupted!!.identityHash)
+        assertEquals(0, machine.entry("queued").attempts)
+        assertEquals(State.INTERRUPTED, machine.entry("queued").state)
+        assertEquals(2, machine.journalSnapshot().interruptedCount)
+        val restored = NarrationLedger().apply { setContext("synthetic-media:track-fr") }
+        assertTrue(restored.restoreMetadata(machine.exportJournalMetadata()))
+        assertEquals(expected, restored.snapshot().lastInterrupted!!.identityHash)
+        assertFalse(machine.snapshot().wantsPlayback)
+    }
+
+    @Test fun queueOnlyFailuresDoNotInventASpokenInterruptionEvenAfterAnOlderCompletion() {
+        val ledger = NarrationLedger().apply {
+            started("old"); completed("old"); queued("old"); interrupted("old")
+            queued("new"); error("new")
+        }
+        assertNull(ledger.snapshot().lastInterrupted)
+        assertEquals(1, ledger.snapshot().interruptedCount)
+        assertEquals(1, ledger.snapshot().errorCount)
+        assertEquals(NarrationLedger.hashIdentity("old"), ledger.snapshot().lastCompleted!!.identityHash)
+        val restored = NarrationLedger()
+        assertTrue(restored.restoreMetadata(ledger.exportMetadata()))
+        assertNull(restored.snapshot().lastInterrupted)
+    }
+
+    @Test fun processDeathSelectsRunningSpeechBeforeLaterQueuedEntriesAndOlderInterruptions() {
+        val ledger = NarrationLedger().apply {
+            started("previous"); interrupted("previous")
+            started("running"); queued("not-started")
+        }
+        val restored = NarrationLedger()
+        assertTrue(restored.restoreMetadata(ledger.exportMetadata()))
+        assertEquals(NarrationLedger.hashIdentity("running"), restored.snapshot().lastInterrupted!!.identityHash)
+        assertEquals(State.INTERRUPTED, restored.snapshot().lastInterrupted!!.state)
+        assertEquals(0, restored.entry("not-started")!!.attempts)
+        assertEquals(3, restored.snapshot().interruptedCount)
+    }
+
+    @Test fun completingTheInterruptedReplayAndChangingContextClearItsResumeTarget() {
+        val machine = ready()
+        machine.cues(0, listOf("Interrompue."), identities = listOf("one"))
+        machine.pause()
+        assertNotNull(machine.journalSnapshot().lastInterrupted)
+        drain(machine, machine.replayOccurrence("one", "Interrompue."))
+        assertNull(machine.journalSnapshot().lastInterrupted)
+        assertEquals(NarrationLedger.hashIdentity("one"), machine.journalSnapshot().lastCompleted!!.identityHash)
+        machine.setJournalContext("another-video-or-track")
+        assertNull(machine.journalSnapshot().lastCompleted)
+        assertNull(machine.journalSnapshot().lastInterrupted)
+        assertEquals(0, machine.journalSnapshot().detectedCount)
+    }
+
+    @Test fun legacyMetadataPreservesCountsButDoesNotGuessAmbiguousReplayProvenance() {
+        val source = NarrationLedger().apply {
+            started("earlier"); completed("earlier")
+            started("later"); completed("later")
+            queued("earlier"); interrupted("earlier")
+        }
+        val restored = NarrationLedger()
+        assertTrue(restored.restoreMetadata(legacyMetadata(source.exportMetadata())))
+        assertEquals(2, restored.snapshot().completedCount)
+        assertEquals(1, restored.snapshot().interruptedCount)
+        assertNull("v1 cannot prove which completion happened last after requeue", restored.snapshot().lastCompleted)
+        assertNull("v1 cannot prove whether this interruption abandoned queued or started speech", restored.snapshot().lastInterrupted)
+        source.started("running"); source.queued("unstarted")
+        assertTrue(restored.restoreMetadata(legacyMetadata(source.exportMetadata())))
+        assertEquals(NarrationLedger.hashIdentity("running"), restored.snapshot().lastInterrupted!!.identityHash)
+        val unambiguous = NarrationLedger().apply { completed("one"); completed("two") }
+        assertTrue(restored.restoreMetadata(legacyMetadata(unambiguous.exportMetadata())))
+        assertEquals(NarrationLedger.hashIdentity("two"), restored.snapshot().lastCompleted!!.identityHash)
+    }
+
+    @Test fun malformedReplayPointersCannotPartiallyReplaceTheJournal() {
+        val ledger = NarrationLedger().apply { started("kept"); interrupted("kept") }
+        val before = ledger.snapshot()
+        val lines = ledger.exportMetadata().lines().toMutableList()
+        val header = lines[2].split('\t').toMutableList()
+        header[2] = "0".repeat(64)
+        lines[2] = header.joinToString("\t")
+        assertFalse(ledger.restoreMetadata(lines.joinToString("\n")))
+        assertEquals(before, ledger.snapshot())
+        header[2] = NarrationLedger.hashIdentity("kept") // This occurrence never completed.
+        lines[2] = header.joinToString("\t")
+        assertFalse(ledger.restoreMetadata(lines.joinToString("\n")))
+        assertEquals(before, ledger.snapshot())
+        header[2] = "-"; header[3] = "not-a-hash"
+        lines[2] = header.joinToString("\t")
+        assertFalse(ledger.restoreMetadata(lines.joinToString("\n")))
+        assertEquals(before, ledger.snapshot())
+    }
+
     @Test fun controllerExposesLedgerAndRecoveryWithoutChangingPauseContract() {
         val controller = ExistingNarrationController()
         controller.setJournalContext("context"); controller.setNarrationLanguage("fr")
@@ -452,6 +589,6 @@ class NarrationLedgerTest {
         controller.speechFinished(recovered.id)
         assertEquals(1, controller.journalSnapshot().completedCount)
         assertFalse(controller.snapshot().wantsPlayback)
-        assertTrue(controller.exportJournalMetadata().startsWith("NARRATION-LEDGER-1"))
+        assertTrue(controller.exportJournalMetadata().startsWith("NARRATION-LEDGER-2"))
     }
 }

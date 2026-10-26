@@ -9,11 +9,11 @@ et le [guide des fonctions](docs/CONFORT_INTEGRAL_050.md) décrivent ses changem
 Android, la validation de `main` et la publication restent à confirmer.** Les
 résultats publiés de la 0.4.0 ci-dessous ne valident pas les nouvelles sources.
 
-L’inventaire des annotations `@Test` du 26 octobre 2026 contient **166 méthodes
-JVM du noyau, 226 méthodes JVM de l’application et 87 méthodes instrumentées
-Android**, soit **479 méthodes distinctes**. Le parcours complet exigé exécute
+L’inventaire des annotations `@Test` du 26 octobre 2026 contient **174 méthodes
+JVM du noyau, 228 méthodes JVM de l’application et 87 méthodes instrumentées
+Android**, soit **489 méthodes distinctes**. Le parcours complet exigé exécute
 chaque suite deux fois : debug puis release pour la JVM, deux passages de la
-même paire d’APK release pour Android. Il doit donc attester **958 exécutions
+même paire d’APK release pour Android. Il doit donc attester **978 exécutions
 JUnit**. Ces effectifs sont des critères de complétude, pas des résultats.
 
 | Groupe de régressions 0.5.0 | Ce qui doit être vérifié |
@@ -94,6 +94,47 @@ seuls les groupes de rendu étaient utilisés. Des corrections et des régressio
 spécifiques sont ajoutées. Leur présence ne vaut pas réussite du passage final.
 Une exécution interrompue, un rapport incomplet ou un XML d’un passage précédent
 ne doit pas être compté comme un succès.
+
+Le [run 40352075138](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40352075138)
+a exécuté les 87 méthodes instrumentées deux fois : **81 réussites et 6 échecs
+à chaque passage**. Les erreurs concernaient les boutons de fermeture des
+réglages rognés en grande police et deux attentes de tests devenues inexactes
+après l’ajout des nouvelles commandes. Les actions des réglages ont été placées
+dans une zone séparée du contenu défilant ; les tests exigent toujours des
+boutons entièrement visibles et vérifient les dix champs réels du formulaire
+de traduction.
+
+Le [run 40358043991](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40358043991)
+a ensuite exécuté les mêmes 87 méthodes deux fois : **86 réussites et un échec
+à chaque passage**. Le dernier échec provenait du contrôle de défilement du
+formulaire, qui mélangeait les coordonnées de l’écran et celles de la fenêtre
+du dialogue. La correction emploie le même repère pour le champ et sa zone
+visible, sans relâcher les exigences de visibilité ni supprimer de test.
+
+Le [run 40365760856](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40365760856)
+de la [PR #13](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/13),
+dont la tête était `c14e85fa906610f5ddaafd0ac5c95b75f5edbfe1`, a réellement réussi
+les six suites : **166 + 226** méthodes JVM en debug, **166 + 226** en release,
+puis **87 + 87** méthodes instrumentées sur la même paire d’APK release. Ses
+rapports établissent **958 exécutions réussies**, sans échec, erreur ni test
+ignoré, manquant, inattendu ou dupliqué. Le commit effectivement extrait par
+Actions était le commit de fusion provisoire de la proposition
+`2abca37882dd768259e658a3f790f5fc894e1b1c`, consigné dans
+`build/verification/source-commit.txt` ; il ne faut pas le confondre avec la
+tête de branche ni avec une fusion publiée dans `main`. Le rapport lint release
+contient **0 erreur, 69 avertissements et une indication** : recommandations
+KTX, internationalisation, versions de dépendances, constructeurs de vues,
+règles de sauvegarde et détection statique d’un clic déjà transmis à
+`performClick()` par le détecteur de gestes. Aucun de ces avertissements n’a
+été masqué pour obtenir ce résultat.
+
+Ce passage réussi reste une étape de développement. Une revue ciblée a ensuite
+reproduit deux défauts de sélection de la réplique à relire : remettre en file
+une ancienne occurrence déjà terminée pouvait la faire passer pour la dernière
+achevée ; abandonner une réplique en attente qui n’avait jamais commencé pouvait
+masquer l’interruption de celle réellement commencée. Le correctif et ses
+régressions sont en cours de vérification. Les résultats ci-dessus ne valident
+pas encore ces changements supplémentaires, `main` ni un APK distribué.
 
 Avant de remplacer ce statut par un bilan final, consigner le commit exact,
 les liens des runs de la proposition et de `main`, les résultats JUnit contrôlés
@@ -232,8 +273,8 @@ Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcou
 | Étape | Contrôles exigés |
 | --- | --- |
 | Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 166 tests JVM du noyau, 226 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 166 tests du noyau et des 226 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Variante debug | 174 tests JVM du noyau, 228 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 174 tests du noyau et des 228 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
 | Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
 | Android 36 | Deux passages complets des 87 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
 | Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
@@ -256,7 +297,7 @@ de l’étape 5 sont 50/64/73. La [sixième étape](docs/AUDIO_EXPERT_ETAPE_6.md
 ajoute 27 méthodes noyau, 28 méthodes JVM de l’application et deux scénarios
 Android ; le scénario ASS de l’étape 5 est aussi étendu aux commandes DSP.
 Les effectifs de référence de la version 0.4.0 restent **87/137/82** ; ceux
-de la candidate 0.5.0 sont **166/226/87**.
+de la candidate 0.5.0 sont **174/228/87**.
 Ces nombres sont des critères à contrôler,
 pas une preuve d’exécution :
 consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
@@ -314,8 +355,8 @@ python3 tools/test-documentation-cleanup.py
 Contrôler ensuite chaque rapport JVM contre les méthodes attendues :
 
 ```sh
-python3 tools/verify-test-results.py --reports core/build/test-results/test --expected-count 166 --sources core/src/test/kotlin --output build/verification/local-debug-core-summary.json
-python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 226 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
+python3 tools/verify-test-results.py --reports core/build/test-results/test --expected-count 174 --sources core/src/test/kotlin --output build/verification/local-debug-core-summary.json
+python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 228 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
 ```
 
 Pour une preuve finale, fournir aussi `--not-before-ns` avec l’instant de début

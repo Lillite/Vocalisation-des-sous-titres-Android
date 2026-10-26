@@ -92,6 +92,42 @@ class NarrationJournalStoreRobolectricTest {
         assertEquals(encoded, store.read(source.currentContextHash))
     }
 
+    @Test fun explicitReplayTargetsSurviveDurableStorageAndLegacyMetadataRemainsReadable() {
+        val source = ledger().apply {
+            completed("private subtitle source identity")
+            started("last-complete"); completed("last-complete")
+            queued("private subtitle source identity")
+            started("spoken-interruption"); interrupted("spoken-interruption")
+            queued("never-spoken"); interrupted("never-spoken")
+        }
+        val store = NarrationJournalStore(context)
+        store.save(source.currentContextHash, source.exportMetadata())
+        val restored = NarrationLedger().apply { setContext("synthetic-media|track-fr") }
+        assertTrue(restored.restoreMetadata(NarrationJournalStore(context).read(source.currentContextHash)!!))
+        assertEquals(NarrationLedger.hashIdentity("last-complete"), restored.snapshot().lastCompleted!!.identityHash)
+        assertEquals(NarrationLedger.hashIdentity("spoken-interruption"), restored.snapshot().lastInterrupted!!.identityHash)
+        val legacy = source.exportMetadata().lineSequence().mapIndexed { index, line ->
+            when (index) {
+                0 -> "NARRATION-LEDGER-1"
+                2 -> line.split('\t').take(2).joinToString("\t")
+                else -> line
+            }
+        }.joinToString("\n")
+        store.save(source.currentContextHash, legacy)
+        assertEquals(legacy, NarrationJournalStore(context).read(source.currentContextHash))
+        assertTrue(restored.restoreMetadata(legacy))
+        assertEquals(2, restored.snapshot().completedCount)
+        assertNull(restored.snapshot().lastCompleted)
+        assertNull(restored.snapshot().lastInterrupted)
+        val invalid = source.exportMetadata().lines().toMutableList().apply {
+            val header = this[2].split('\t').toMutableList()
+            header[3] = "0".repeat(64)
+            this[2] = header.joinToString("\t")
+        }.joinToString("\n")
+        reject { store.save(source.currentContextHash, invalid) }
+        assertEquals(legacy, store.read(source.currentContextHash))
+    }
+
     @Test fun deletionIsScopedToTheChosenMediaAndTrackContext() {
         val first = ledger()
         val second = ledger("synthetic-media|track-en")

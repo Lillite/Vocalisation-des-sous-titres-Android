@@ -291,7 +291,7 @@ internal class PlaybackFeatures(
             image = mapOf("contrast" to image.contrast, "brightness" to image.brightness,
                 "left" to image.margins.left, "right" to image.margins.right, "top" to image.margins.top,
                 "bottom" to image.margins.bottom, "bypass" to image.bypass, "detailedScaling" to image.detailedScaling) + session.imageViewport,
-            timeline = timeline, lastCompleted = occurrence(snapshot.entries.lastOrNull { it.completions > 0 }),
+            timeline = timeline, lastCompleted = occurrence(snapshot.lastCompleted),
             lastInterrupted = occurrence(snapshot.lastInterrupted),
             timelines = timelinesByTrack.toMutableMap().apply { session.selectedTextId()?.let { put(it, timeline) } })
         val revision = journalRevisionOwner + ":" + snapshot.contextHash + ":" + snapshot.generation + ":" + snapshot.revision
@@ -433,7 +433,7 @@ internal class PlaybackFeatures(
     private fun replayInterrupted(fallbackLast: Boolean = false) {
         session.pause()
         val snapshot = session.machine.journalSnapshot()
-        val target = snapshot.lastInterrupted ?: if (fallbackLast) snapshot.entries.lastOrNull { it.completions > 0 } else null
+        val target = snapshot.lastInterrupted ?: if (fallbackLast) snapshot.lastCompleted else null
         if (target == null) { message("Aucune réplique interrompue disponible pour cette piste.", false); return }
         session.ensureCompleteIndex {
             val occurrence = session.ahead.selected(session.selectedTextId()).firstOrNull {

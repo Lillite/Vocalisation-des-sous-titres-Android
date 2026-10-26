@@ -22,7 +22,8 @@ class NarrationLedger(
     data class Snapshot(
         val contextHash: String, val generation: Long, val entries: List<Entry>,
         val transitions: List<Transition>, val capacityExceeded: Boolean,
-        val revision: Long = 0
+        val revision: Long = 0,
+        val lastCompletedHash: String? = null, val lastInterruptedHash: String? = null
     ) {
         val detectedCount get() = entries.size
         val completedCount get() = entries.count { it.completions > 0 }
@@ -30,7 +31,8 @@ class NarrationLedger(
         val errorCount get() = entries.count { it.state == State.ERROR }
         val pendingCount get() = entries.count { it.state in setOf(State.QUEUED, State.STARTED) }
         val filteredCount get() = entries.count { it.state == State.FILTERED }
-        val lastInterrupted get() = entries.lastOrNull { it.state in setOf(State.INTERRUPTED, State.ERROR) }
+        val lastCompleted get() = entries.firstOrNull { it.identityHash == lastCompletedHash }
+        val lastInterrupted get() = entries.firstOrNull { it.identityHash == lastInterruptedHash }
         val current get() = entries.lastOrNull { it.state == State.STARTED }
     }
 
@@ -38,6 +40,8 @@ class NarrationLedger(
     private var generation = 0L
     private var revision = 0L
     private var capacityExceeded = false
+    private var lastCompletedHash: String? = null
+    private var lastInterruptedHash: String? = null
     private val entries = LinkedHashMap<String, Entry>()
     private val transitions = ArrayDeque<Transition>()
     init { require(capacity in 1..100_000) }
@@ -48,11 +52,12 @@ class NarrationLedger(
         val hash = hashIdentity(identity)
         if (hash == contextHash) return
         contextHash = hash; generation = 0; capacityExceeded = false
-        entries.clear(); transitions.clear()
+        entries.clear(); transitions.clear(); lastCompletedHash = null; lastInterruptedHash = null
         advanceRevision()
     }
     fun nextGeneration() { if (generation < Long.MAX_VALUE) generation++; advanceRevision() }
-    fun snapshot() = Snapshot(contextHash, generation, entries.values.toList(), transitions.toList(), capacityExceeded, revision)
+    fun snapshot() = Snapshot(contextHash, generation, entries.values.toList(), transitions.toList(), capacityExceeded, revision,
+        lastCompletedHash, lastInterruptedHash)
     fun entry(identity: String): Entry? = entries[hashIdentity(identity)]
     fun register(occurrence: Occurrence): Boolean {
         require(occurrence.identity.isNotBlank())
@@ -90,7 +95,15 @@ class NarrationLedger(
         if (onlyBeforeQueue && previous.state !in setOf(State.DETECTED, State.PREPARED)) return
         if (previous.state == state) return
         val now = clockMillis().coerceAtLeast(0)
-        // Refresh insertion order so current/lastInterrupted reflects the latest event.
+        // Keep event order for diagnostics; replay targets have their own chronology.
+        if (state == State.COMPLETED) {
+            lastCompletedHash = key
+            if (lastInterruptedHash == key) lastInterruptedHash = null
+        } else if (state in setOf(State.INTERRUPTED, State.ERROR) && previous.state == State.STARTED) {
+            // Dropping an unstarted queued occurrence is visible in the ledger,
+            // but must never replace the phrase that was actually speaking.
+            lastInterruptedHash = key
+        }
         entries.remove(key)
         entries[key] = previous.copy(state = state,
             attempts = increment(previous.attempts, state == State.STARTED),
@@ -110,8 +123,10 @@ class NarrationLedger(
 
     /** Versioned metadata only: source IDs and source/translated text never leave this ledger. */
     fun exportMetadata(): String = buildString {
-        append("NARRATION-LEDGER-1\n").append(contextHash).append('\n')
-        append(generation).append('\t').append(if (capacityExceeded) 1 else 0).append('\n')
+        append("NARRATION-LEDGER-2\n").append(contextHash).append('\n')
+        append(generation).append('\t').append(if (capacityExceeded) 1 else 0)
+            .append('\t').append(lastCompletedHash ?: "-")
+            .append('\t').append(lastInterruptedHash ?: "-").append('\n')
         for (entry in entries.values) with(entry) {
             append(identityHash).append('\t').append(startUs?.toString() ?: "-")
                 .append('\t').append(endUs?.toString() ?: "-")
@@ -126,13 +141,22 @@ class NarrationLedger(
         if (encoded.length > 24_000_000) return false
         return try {
             val lines = encoded.lineSequence().iterator()
-            require(lines.hasNext() && lines.next() == "NARRATION-LEDGER-1")
+            require(lines.hasNext())
+            val version = lines.next()
+            require(version in setOf("NARRATION-LEDGER-1", "NARRATION-LEDGER-2"))
             require(lines.hasNext() && lines.next() == contextHash)
             val header = lines.next().split('\t')
-            require(header.size == 2)
+            require(header.size == if (version == "NARRATION-LEDGER-2") 4 else 2)
             val restoredGeneration = header[0].toLong().also { require(it >= 0) }
             val exceeded = header[1].toInt().also { require(it in 0..1) } == 1
+            fun pointer(index: Int) = header[index].takeUnless { it == "-" }?.also {
+                require(it.matches(Regex("[0-9a-f]{64}")))
+            }
+            var completedPointer = if (header.size == 4) pointer(2) else null
+            var interruptedPointer = if (header.size == 4) pointer(3) else null
             val restored = LinkedHashMap<String, Entry>()
+            var runningPointer: String? = null
+            var legacyCompletionAmbiguous = false
             while (lines.hasNext()) {
                 val line = lines.next()
                 if (line.isEmpty()) continue
@@ -146,12 +170,31 @@ class NarrationLedger(
                 val state = State.valueOf(fields[3])
                 val entryGeneration = fields[8].toLong().also { require(it in 0..restoredGeneration) }
                 val updated = fields[9].toLong().also { require(it >= 0) }
+                if (state == State.STARTED) runningPointer = key
+                val completions = count(5)
+                if (header.size == 2 && completions > 0) {
+                    if (state != State.COMPLETED) legacyCompletionAmbiguous = true
+                    else completedPointer = key
+                }
                 val pending = state in setOf(State.QUEUED, State.STARTED)
                 val interruptions = count(6)
                 restored[key] = Entry(key, start, end, if (pending) State.INTERRUPTED else state,
-                    count(4), count(5), increment(interruptions, pending), count(7), entryGeneration, updated)
+                    count(4), completions, increment(interruptions, pending), count(7), entryGeneration, updated)
             }
+            if (header.size == 4) {
+                completedPointer?.let { require((restored[it]?.completions ?: 0) > 0) }
+                interruptedPointer?.let {
+                    val entry = requireNotNull(restored[it])
+                    require(entry.attempts > 0 && (entry.interruptions > 0 || entry.errors > 0))
+                    require(entry.state != State.COMPLETED)
+                }
+            } else if (legacyCompletionAmbiguous) completedPointer = null
+            // v1 did not distinguish queue abandonment from spoken interruption.
+            // Preserve its counts but do not invent a replay target. A STARTED
+            // record, in either version, is explicit evidence of process death.
+            if (runningPointer != null) interruptedPointer = runningPointer
             entries.clear(); entries.putAll(restored); transitions.clear()
+            lastCompletedHash = completedPointer; lastInterruptedHash = interruptedPointer
             generation = restoredGeneration; capacityExceeded = exceeded
             advanceRevision()
             true

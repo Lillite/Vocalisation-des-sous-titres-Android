@@ -35,7 +35,7 @@ La lecture dépend des codecs disponibles et d’une voix Android réellement pr
 
 ## Trouver et modifier un réglage
 
-Les commandes sont réparties entre **Voix, Synchronisation, Traduction, Sous-titres, Image, Son, Stockage et Diagnostic**. Le sélecteur de rubrique et la recherche restent accessibles au-dessus du contenu défilant.
+Les commandes sont réparties entre **Voix, Synchronisation, Traduction, Sous-titres, Image, Son, Stockage et Diagnostic**. Le sélecteur de rubrique et la recherche se trouvent au début du panneau défilant ; les boutons Fermer et Annuler modifications gardent leur zone dédiée, même en grande police.
 
 La recherche filtre les commandes réelles dans toutes les rubriques, sans tenir compte des accents : **vitesse**, **voix**, **bandes noires** ou **traduction** donnent accès aux contrôles correspondants. Effacer la recherche ou choisir une rubrique revient à sa liste de commandes.
 
