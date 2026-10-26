@@ -71,6 +71,9 @@ internal class PlaybackFeatures(
         get() = coordinator.writerRunning
         set(value) { coordinator.writerRunning = value }
     private var closed = false
+    // Ledger revisions are monotone within one player, but a recreated player
+    // may reach the same counter with different interrupted/completed entries.
+    private val journalRevisionOwner = java.util.UUID.randomUUID().toString()
     private var sourceUri = ""
     private var sourceMetadataFingerprint = ""
     private var pending: MediaSessionSnapshot? = null
@@ -291,7 +294,7 @@ internal class PlaybackFeatures(
             timeline = timeline, lastCompleted = occurrence(snapshot.entries.lastOrNull { it.completions > 0 }),
             lastInterrupted = occurrence(snapshot.lastInterrupted),
             timelines = timelinesByTrack.toMutableMap().apply { session.selectedTextId()?.let { put(it, timeline) } })
-        val revision = snapshot.contextHash + ":" + snapshot.generation + ":" + snapshot.revision
+        val revision = journalRevisionOwner + ":" + snapshot.contextHash + ":" + snapshot.generation + ":" + snapshot.revision
         val needsJournal = synchronized(writeLock) { completedJournalRevisions[snapshot.contextHash] != revision }
         val journal = if (needsJournal) session.machine.exportJournalMetadata().takeIf { it.isNotEmpty() } else null
         val write = PendingWrite(record, snapshot.contextHash, journal, revision, epoch)

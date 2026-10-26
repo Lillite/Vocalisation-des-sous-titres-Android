@@ -182,6 +182,47 @@ class SessionSourceIdentityRobolectricTest {
         }
     }
 
+    @Test fun recreatedPlayersWithEqualLocalRevisionCountersStillPersistDifferentJournalStates() {
+        val uri = "content://$AUTHORITY/revision-collision"
+        val identity = "synthetic-occurrence"
+        var firstRevision = -1L
+        var firstGeneration = -1L
+        var journalHash = ""
+        fun features(session: PlaybackSession) = PlaybackSession::class.java.getDeclaredField("features")
+            .apply { isAccessible = true }.get(session) as PlaybackFeatures
+        fun flush(features: PlaybackFeatures) {
+            val writer = PlaybackFeatures::class.java.getDeclaredField("writer")
+                .apply { isAccessible = true }.get(features) as ExecutorService
+            writer.submit { }.get(10, TimeUnit.SECONDS)
+        }
+        val first = PlaybackSession(context, PlayerPreferences(context), {}, { _, _ -> }, {})
+        try {
+            first.machine.setJournalContext("synthetic-shared-revision")
+            first.machine.registerOccurrences(listOf(fr.soustitresvoix.core.NarrationLedger.Occurrence(identity, 1000, 2000)))
+            first.machine.markPrepared(listOf(identity))
+            val snapshot = first.machine.journalSnapshot()
+            firstRevision = snapshot.revision; firstGeneration = snapshot.generation; journalHash = snapshot.contextHash
+            features(first).save(SavedMedia(uri, "Revision fixture"))
+            flush(features(first))
+            assertTrue(requireNotNull(NarrationJournalStore(context).read(journalHash)).contains("\tPREPARED\t"))
+        } finally { first.close() }
+
+        val recreated = PlaybackSession(context, PlayerPreferences(context), {}, { _, _ -> }, {})
+        try {
+            recreated.machine.setJournalContext("synthetic-shared-revision")
+            recreated.machine.registerOccurrences(listOf(fr.soustitresvoix.core.NarrationLedger.Occurrence(identity, 1000, 2000)))
+            recreated.machine.markFiltered(listOf(identity))
+            assertEquals(firstRevision, recreated.machine.journalSnapshot().revision)
+            assertEquals(firstGeneration, recreated.machine.journalSnapshot().generation)
+            assertEquals(journalHash, recreated.machine.journalSnapshot().contextHash)
+            features(recreated).save(SavedMedia(uri, "Revision fixture"))
+            flush(features(recreated))
+            val restored = fr.soustitresvoix.core.NarrationLedger().apply { setContext("synthetic-shared-revision") }
+            assertTrue(restored.restoreMetadata(requireNotNull(NarrationJournalStore(context).read(journalHash))))
+            assertEquals(fr.soustitresvoix.core.NarrationLedger.State.FILTERED, restored.entry(identity)?.state)
+        } finally { recreated.close() }
+    }
+
     private class HeldExecutor : AbstractExecutorService() {
         val tasks = mutableListOf<Runnable>()
         private var closed = false

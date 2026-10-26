@@ -10,10 +10,10 @@ Android, la validation de `main` et la publication restent à confirmer.** Les
 résultats publiés de la 0.4.0 ci-dessous ne valident pas les nouvelles sources.
 
 L’inventaire des annotations `@Test` du 26 octobre 2026 contient **166 méthodes
-JVM du noyau, 225 méthodes JVM de l’application et 87 méthodes instrumentées
-Android**, soit **478 méthodes distinctes**. Le parcours complet exigé exécute
+JVM du noyau, 226 méthodes JVM de l’application et 87 méthodes instrumentées
+Android**, soit **479 méthodes distinctes**. Le parcours complet exigé exécute
 chaque suite deux fois : debug puis release pour la JVM, deux passages de la
-même paire d’APK release pour Android. Il doit donc attester **956 exécutions
+même paire d’APK release pour Android. Il doit donc attester **958 exécutions
 JUnit**. Ces effectifs sont des critères de complétude, pas des résultats.
 
 | Groupe de régressions 0.5.0 | Ce qui doit être vérifié |
@@ -217,8 +217,8 @@ Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcou
 | Étape | Contrôles exigés |
 | --- | --- |
 | Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 166 tests JVM du noyau, 225 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 166 tests du noyau et des 225 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
+| Variante debug | 166 tests JVM du noyau, 226 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
+| Variante release | Nouvelle exécution des 166 tests du noyau et des 226 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
 | Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
 | Android 36 | Deux passages complets des 87 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
 | Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
@@ -241,7 +241,7 @@ de l’étape 5 sont 50/64/73. La [sixième étape](docs/AUDIO_EXPERT_ETAPE_6.md
 ajoute 27 méthodes noyau, 28 méthodes JVM de l’application et deux scénarios
 Android ; le scénario ASS de l’étape 5 est aussi étendu aux commandes DSP.
 Les effectifs de référence de la version 0.4.0 restent **87/137/82** ; ceux
-de la candidate 0.5.0 sont **166/225/87**.
+de la candidate 0.5.0 sont **166/226/87**.
 Ces nombres sont des critères à contrôler,
 pas une preuve d’exécution :
 consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
@@ -300,7 +300,7 @@ Contrôler ensuite chaque rapport JVM contre les méthodes attendues :
 
 ```sh
 python3 tools/verify-test-results.py --reports core/build/test-results/test --expected-count 166 --sources core/src/test/kotlin --output build/verification/local-debug-core-summary.json
-python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 225 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
+python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 226 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
 ```
 
 Pour une preuve finale, fournir aussi `--not-before-ns` avec l’instant de début
