@@ -62,6 +62,9 @@ class MainActivity : ComponentActivity() {
     private var closed = false
     private var fullscreen = false
     private var cinema: CinemaView? = null
+    private var buildingUi = false
+    private var uiRebuildPending = false
+    private val rebuildUiAfterCurrentPass = Runnable { buildUi() }
     private var savedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     private var scrubbing = false
     private var message = "Ouvre une vidéo ou lance l’essai intégré. La traduction en ligne envoie seulement le texte, après confirmation."
@@ -69,6 +72,7 @@ class MainActivity : ComponentActivity() {
     private var lastSaveMs = 0L
     private var pendingRepairUri: String? = null
     private var repairDialog: AlertDialog? = null
+    private var resumeDialog: AlertDialog? = null
     private var pendingResumeOffer = false
     private var resumeOfferUri: String? = null
     private var pendingSubtitleExport: String? = null
@@ -172,7 +176,8 @@ class MainActivity : ComponentActivity() {
         super.onPause()
     }
     override fun onDestroy() {
-        closed = true; requestToken++; cinema?.close(); repairDialog?.dismiss()
+        closed = true; uiRebuildPending = false; requestToken++
+        cinema?.close(); repairDialog?.dismiss(); resumeDialog?.dismiss(); resumeDialog = null
         if (::translationControls.isInitialized) translationControls.close()
         main.removeCallbacksAndMessages(null); io.shutdownNow()
         if (::playerView.isInitialized) playerView.player = null
@@ -190,7 +195,8 @@ class MainActivity : ComponentActivity() {
     private fun offerSessionResume() {
         if (!pendingResumeOffer || closed || stopped || isFinishing || isDestroyed) return
         pendingResumeOffer = false
-        session.showResumeSession(this)
+        resumeDialog?.dismiss()
+        resumeDialog = session.showResumeSession(this)
     }
     private fun handleBack() {
         if (cinema?.back() == true) return
@@ -198,7 +204,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onWindowFocusChanged(hasFocus: Boolean) { super.onWindowFocusChanged(hasFocus); if (hasFocus) applyWindowMode() }
     internal fun setFullscreen(value: Boolean) {
-        if (fullscreen == value) return
+        if (closed || fullscreen == value) return
         if (value) savedOrientation = requestedOrientation
         fullscreen = value
         requestedOrientation = if (!value) savedOrientation else when (prefs.int("orientation", 1, 0, 2)) {
@@ -242,6 +248,28 @@ class MainActivity : ComponentActivity() {
         setPadding(dp(8), dp(8), dp(8), dp(8)); setOnClickListener { action() }
     }
     private fun buildUi() {
+        if (closed) return
+        if (buildingUi) {
+            // Detaching a SurfaceView or applying window/configuration changes
+            // may synchronously request another layout. Never let that nested
+            // pass adopt the shared PlayerView while this pass still owns it.
+            uiRebuildPending = true
+            return
+        }
+        main.removeCallbacks(rebuildUiAfterCurrentPass)
+        uiRebuildPending = false
+        buildingUi = true
+        try {
+            buildUiContent()
+        } finally {
+            buildingUi = false
+            if (uiRebuildPending && !closed) {
+                uiRebuildPending = false
+                main.post(rebuildUiAfterCurrentPass)
+            }
+        }
+    }
+    private fun buildUiContent() {
         session.finishPlaybackBenchmark("Disposition de l’écran modifiée : essai interrompu")
         cinema?.close(); cinema = null
         if (::playerView.isInitialized) (playerView.parent as? ViewGroup)?.removeView(playerView)

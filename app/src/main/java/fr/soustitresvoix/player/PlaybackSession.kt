@@ -938,7 +938,7 @@ class PlaybackSession(
         refreshSettings(); applyMixImmediately(); updateCaptionOverride()
     }
     fun showNarrationReport(activity: android.app.Activity) = features.showNarrationReport(activity)
-    fun showResumeSession(activity: android.app.Activity) = features.showResumeSession(activity)
+    fun showResumeSession(activity: android.app.Activity): android.app.AlertDialog = features.showResumeSession(activity)
     fun showOfflineStorage(activity: android.app.Activity) = features.showOfflineStorage(activity)
     fun showSynchronization(activity: android.app.Activity) = features.showSynchronization(activity)
     internal fun setTimeline(value: fr.soustitresvoix.core.SubtitleTimeline) = features.applyTimeline(value)

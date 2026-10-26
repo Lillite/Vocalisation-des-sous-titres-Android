@@ -544,9 +544,9 @@ internal class PlaybackFeatures(
             message("Réplique relue. La vidéo reste en pause ; appuie ensuite sur Reprendre. Les autres répliques seront conservées depuis la position de reprise.", false)
         }
     }
-    fun showResumeSession(activity: Activity) {
+    fun showResumeSession(activity: Activity): AlertDialog {
         session.pause()
-        AlertDialog.Builder(activity).setTitle("Reprendre la séance")
+        return AlertDialog.Builder(activity).setTitle("Reprendre la séance")
             .setMessage("La vidéo est en pause à la position mémorisée.\n\n${report()}")
             .setPositiveButton("Reprendre") { _, _ -> session.play() }
             .setNeutralButton("Relire la dernière réplique avant de reprendre") { _, _ -> replayInterrupted(true) }
