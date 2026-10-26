@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.Rect
+import android.graphics.Point
 import android.net.Uri
 import android.os.SystemClock
 import android.text.method.PasswordTransformationMethod
@@ -294,14 +295,39 @@ class SubtitleTranslationAndroidTest {
         assertTrue("Control is outside the actual translation form", descendants(scroll).contains(view))
         assertTrue("Control has no readable layout", view.width > 0 && view.height > 0 && scroll.height > 0)
         val height = minOf(view.height, scroll.height / 2).coerceAtLeast(1)
-        for (top in listOf(0, (view.height - height).coerceAtLeast(0)).distinct()) {
-            val requested = Rect(0, top, view.width, top + height)
-            view.requestRectangleOnScreen(Rect(requested), true)
-            val location = IntArray(2); view.getLocationOnScreen(location)
-            requested.offset(location[0], location[1])
-            val viewport = Rect()
-            assertTrue("Form viewport is not visible", scroll.getGlobalVisibleRect(viewport))
-            assertTrue("Control cannot be reached by scrolling: ${if (view is TextView) view.text else view}", viewport.contains(requested))
+        try {
+            for (top in listOf(0, (view.height - height).coerceAtLeast(0)).distinct()) {
+                val requested = Rect(0, top, view.width, top + height)
+                view.requestRectangleOnScreen(Rect(requested), true)
+                // Both visible rectangles use the root view's coordinates. The
+                // dialog's device-screen origin is nonzero; getLocationOnScreen
+                // cannot be mixed with getGlobalVisibleRect.
+                val visible = Rect()
+                val globalOffset = Point()
+                val controlVisible = view.getGlobalVisibleRect(visible, globalOffset)
+                requested.offset(globalOffset.x, globalOffset.y)
+                val viewport = Rect()
+                val formVisible = scroll.getGlobalVisibleRect(viewport)
+                val rootOnScreen = IntArray(2); view.rootView.getLocationOnScreen(rootOnScreen)
+                val details = "requestedRoot=$requested; controlVisibleRoot=$visible; formVisibleRoot=$viewport; " +
+                    "viewToRoot=$globalOffset; rootOnScreen=(${rootOnScreen[0]},${rootOnScreen[1]}); " +
+                    "scrollY=${scroll.scrollY}; endpointTop=$top; control=${if (view is TextView) view.text else view}"
+                assertTrue("Form viewport is not visible: $details", formVisible)
+                assertTrue("Control is not visible: $details", controlVisible)
+                assertTrue("Requested control rectangle is clipped: $details", visible.contains(requested))
+                assertTrue("Control cannot be reached by scrolling: $details", viewport.contains(requested))
+            }
+        } catch (failure: AssertionError) {
+            // Best-effort evidence for this disposable synthetic-test emulator;
+            // a capture failure never replaces or suppresses the assertion.
+            runCatching {
+                for (command in listOf("mkdir -p /sdcard/Download/cinema03-tests",
+                    "screencap -p /sdcard/Download/cinema03-tests/translation-form-scroll-failure.png")) {
+                    android.os.ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand(command))
+                        .use { it.readBytes() }
+                }
+            }.exceptionOrNull()?.let(failure::addSuppressed)
+            throw failure
         }
     }
 
