@@ -4,13 +4,13 @@
 
 **Priorité : vocaliser toutes les occurrences textuelles distinctes extraites de la piste choisie.** Dialogues, panneaux, indications, chevauchements et répétitions légitimes conservent leur identité. En Lecture intégrale, la vidéo attend la voix si nécessaire ; aucune suppression de mots ni substitution silencieuse d’une traduction absente ne sert au rattrapage. Les exclusions sont des choix visibles, accessibles après désactivation explicite de Lecture intégrale. Le mode Continu exige une confirmation et peut interrompre une phrase.
 
-**État de cette matrice : couverture du code, validation finale de la livraison en attente.** Les classes de tests ci-dessous indiquent les vérifications prévues et les régressions couvertes ; leur présence ne signifie pas qu’elles ont toutes réussi. Seuls les rapports et exécutions rattachés au commit distribué dans [TESTING.md](../TESTING.md) établissent les résultats. Aucun résultat d’une ancienne version n’est réattribué à la 0.5.0.
+**Les 47 demandes sont reliées au code et à leurs régressions.** Les suites automatisées ont réussi sur `main`, commit [`3740356`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/3740356420fb09eadabe23da207fa554515da101), dans le [run 40402709269](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40402709269) : **1 016 exécutions de 508 méthodes distinctes**, sans échec, erreur ni test ignoré, manquant, inattendu ou dupliqué. [TESTING.md](../TESTING.md) conserve les résultats et les échecs intermédiaires. La [0.5.0 est publiée](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0) depuis le 26 octobre 2026 et son APK public a été vérifié après téléchargement. Les essais acoustiques, TalkBack et téléphone restent distincts des tests automatisés. Aucun résultat d’une ancienne version n’est réattribué à la 0.5.0.
 
 Les chemins de code sont relatifs à la racine du dépôt. Les tests `*RobolectricTest` et `*Test` de l’application se trouvent dans `app/src/test`, les tests du moteur dans `core/src/test`, et les tests `*AndroidTest` dans `app/src/androidTest`.
 
 ## 1. Paramètres organisés et modifications compréhensibles
 
-| Demande acceptée | Réalisation | Tests ciblés — résultat final en attente |
+| Demande acceptée | Réalisation | Tests automatisés exécutés |
 | --- | --- | --- |
 | Huit rubriques : Voix, Synchronisation, Traduction, Sous-titres, Image, Son, Stockage, Diagnostic | [SettingsPanel.kt](../app/src/main/java/fr/soustitresvoix/player/SettingsPanel.kt), registre des commandes dans [MainActivity.kt](../app/src/main/java/fr/soustitresvoix/player/MainActivity.kt) et [AdvancedSettings.kt](../app/src/main/java/fr/soustitresvoix/player/AdvancedSettings.kt). | `SettingsPanelRobolectricTest`, `SettingsAndroidTest` : rubriques réelles, fenêtre courte et grands caractères. |
 | Recherche conduisant au bon réglage, notamment vitesse, voix, bandes noires, traduction | Recherche normalisée sans accents, libellés et synonymes dans `SettingsPanel.filter` ; filtrage des contrôles de toutes les rubriques, sans les activer. | `SettingsSearchTest`, `SettingsPanelRobolectricTest` : recherche entre rubriques, accents et absence de mutation. |
@@ -20,7 +20,7 @@ Les chemins de code sont relatifs à la racine du dépôt. Les tests `*Robolectr
 
 ## 2. Lecture intégrale, suivi et reprise d’une réplique
 
-| Demande acceptée | Réalisation | Tests ciblés — résultat final en attente |
+| Demande acceptée | Réalisation | Tests automatisés exécutés |
 | --- | --- | --- |
 | Profil explicite Lecture intégrale préservant dialogues, panneaux et indications | Préréglage dans `MainActivity.settingsDialog` ; filtres neutralisés par [PlayerPreferences.kt](../app/src/main/java/fr/soustitresvoix/player/PlayerPreferences.kt). Les quatre exclusions sont désactivées et expliquées tant que l’option intégrale est active. | `SettingsPanelRobolectricTest` : profils sans exclusions, activation explicite des filtres après sortie de Lecture intégrale. |
 | Suivre détectée, préparée, en attente, commencée, terminée, interrompue, en erreur | [NarrationLedger.kt](../core/src/main/kotlin/fr/soustitresvoix/core/NarrationLedger.kt), intégré à [NarrationMachine.kt](../core/src/main/kotlin/fr/soustitresvoix/core/NarrationMachine.kt) ; état supplémentaire pour une exclusion explicite. | `NarrationLedgerTest` : transitions, générations, erreurs, répétitions, export/import et limites. |
@@ -33,20 +33,20 @@ Les chemins de code sont relatifs à la racine du dépôt. Les tests `*Robolectr
 
 ## 3. Séances par vidéo et réparation d’accès
 
-| Demande acceptée | Réalisation | Tests ciblés — résultat final en attente |
+| Demande acceptée | Réalisation | Tests automatisés exécutés |
 | --- | --- | --- |
 | Pistes audio et sous-titres choisies, fichier externe associé | [MediaSessionStore.kt](../app/src/main/java/fr/soustitresvoix/player/MediaSessionStore.kt), `MediaSessionSnapshot`, `PlaybackFeatures.save/tracksAvailable` ; restauration après sélection effective, y compris pistes explicitement désactivées. Les copies de sous-titres référencées par d’autres séances sont conservées. | `MediaSessionStoreRobolectricTest`, `SessionTranslationRestoreRobolectricTest`, `SubtitleSidecarRetentionRobolectricTest`. |
-| Traduction choisie et disponibilité | Métadonnées sans clé ni texte ; restauration locale asynchrone du résultat exact après vérification de la piste et des empreintes. Une disponibilité historique ne remplace pas la vérification actuelle. | `SessionTranslationRestoreRobolectricTest` : piste bilingue réelle, sauvegarde pendant restauration ; `TranslationSessionRobolectricTest`. |
+| Traduction choisie et disponibilité | Métadonnées sans clé ni texte ; restauration locale asynchrone du résultat exact après vérification de la piste et des empreintes. Une disponibilité historique ne remplace pas la vérification actuelle. Une traduction demandée mais partielle ou indisponible reste exigée après réouverture ; aucun retour silencieux à l’original. | `SessionTranslationRestoreRobolectricTest` : piste bilingue réelle, sauvegarde pendant restauration ; `TranslationSessionRobolectricTest` : exigence maintenue après deux restaurations, y compris métadonnées invalides. |
 | Moteur, voix, mode d’écoute ; corrections temporelles ; image par vidéo | `MediaSessionSnapshot`, `PlaybackFeatures.opening/restoreImage`, préférences autorisées ; cartes temporelles par piste et cadrage dans `CinemaView`. | `MediaSessionStoreRobolectricTest`, `SessionSourceIdentityRobolectricTest`, tests d’image et de chronologie. |
 | Dernière occurrence terminée et éventuelle interruption | Résumé d’occurrence dans la séance et journal de narration persistant séparé ; texte retrouvé dans la source, sans l’enregistrer dans le journal. | `NarrationLedgerTest`, `MediaSessionStoreRobolectricTest`. |
-| Réouverture en pause ; Reprendre ou Relire la dernière réplique avant de reprendre | `PlaybackFeatures.showResumeSession` et `MainActivity.offerSessionResume`. Repère sans texte de la vraie file inachevée ; reprise au début corrigé de sa première occurrence, même expirée à l’écran. Relecture manuelle en pause ; déplacements explicites prioritaires. | `SessionTranslationRestoreRobolectricTest`, tests de restauration et d’interruption du moteur. |
+| Réouverture en pause ; Reprendre ou Relire la dernière réplique avant de reprendre | `PlaybackFeatures.showResumeSession` et `MainActivity.offerSessionResume`. Repère sans texte de la vraie file inachevée ; reprise au début corrigé de sa première occurrence, même expirée à l’écran. Relecture manuelle en pause ; déplacements explicites prioritaires. | `TimelinePlaybackRobolectricTest` : réouverture depuis les fichiers disque, boutons réels, répliques expirées, traduction, portions et callbacks invalidés ; `SessionTranslationRestoreRobolectricTest`, tests de restauration et d’interruption du moteur. |
 | Réparation guidée d’un fichier déplacé ou d’un accès expiré | [SessionRepairControls.kt](../app/src/main/java/fr/soustitresvoix/player/SessionRepairControls.kt), sélection Android, `PlaybackFeatures.relocate` ; confirmation de la même édition et vérification de métadonnées. Aucune suppression de l’original. | `SessionSourceIdentityRobolectricTest`, `MediaSessionStoreRobolectricTest` ; parcours réel du fournisseur de documents dans [TESTS_TELEPHONE.md](TESTS_TELEPHONE.md). |
 
 L’identité issue de taille/date/type est une vérification partielle, pas une preuve d’égalité des octets de deux vidéos. Une modification connue neutralise les anciens réglages de séance plutôt que d’appliquer les minutages d’un autre montage.
 
 ## 4. Conservation hors ligne et gestion par œuvre
 
-| Demande acceptée | Réalisation | Tests ciblés — résultat final en attente |
+| Demande acceptée | Réalisation | Tests automatisés exécutés |
 | --- | --- | --- |
 | Commande réunissant traduction et voix nécessaires | `PlaybackFeatures.showOfflineStorage/configureOffline` ; conservation de la traduction complète avant la préparation ; [AndroidSpeech.kt](../app/src/main/java/fr/soustitresvoix/player/AndroidSpeech.kt), [OfflineSpeechLibrary.kt](../core/src/main/kotlin/fr/soustitresvoix/core/OfflineSpeechLibrary.kt). | `OfflineSpeechLibraryTest`, `OfflineSpeechAndroidTest`, `TranslationSessionRobolectricTest`. |
 | Estimation préalable et vérification de l’espace libre | `estimateOffline` sans synthèse ni persistance du texte ; estimation des données restantes et réserve de 64 Mio contrôlées avant préparation. | `OfflineSpeechLibraryTest` : espace, données déjà disponibles et fichiers invalides. |
@@ -60,7 +60,7 @@ La vidéo doit rester accessible : la commande conserve la narration, pas une co
 
 ## 5. Compréhension, anticipation et calcul des durées
 
-| Demande acceptée | Réalisation | Tests ciblés — résultat final en attente |
+| Demande acceptée | Réalisation | Tests automatisés exécutés |
 | --- | --- | --- |
 | Segmentation adaptée à la langue, abréviations et ponctuation | `SpeechTools.segments` et segmentation linguistique dans [AdaptiveTools.kt](../core/src/main/kotlin/fr/soustitresvoix/core/AdaptiveTools.kt), avec limites du moteur et conservation des mots. | `LanguageSegmentationTest`, tests de segmentation et de frontières Unicode. |
 | Trois profils : faible accélération avec pauses, équilibre, lecture plus continue | `MainActivity` : confortable 100/140 % + 350 ms, équilibré 100/180 %, pauses rares 100/220 %. Tous utilisent Adaptatif et Lecture intégrale. | `SettingsPanelRobolectricTest` : valeurs visibles, absence de filtres et maintien en pause. |
@@ -72,7 +72,7 @@ Une estimation conserve une incertitude lorsque l’audio n’existe pas encore.
 
 ## 6. Synchronisation par vidéo et piste
 
-| Demande acceptée | Réalisation | Tests ciblés — résultat final en attente |
+| Demande acceptée | Réalisation | Tests automatisés exécutés |
 | --- | --- | --- |
 | Décalage global par petits pas et saisie numérique | [SyncControls.kt](../app/src/main/java/fr/soustitresvoix/player/SyncControls.kt) : champs en millisecondes, ±50 ms et présélections ; `SubtitleTimeline.globalOffsetMs`. | `SyncControlsRobolectricTest`, `SubtitleTimelineTest`. |
 | Ajustement propre à la narration | `SubtitleTimeline.narrationOffsetMs`, distinct du texte visible, borné à ±60 000 ms. | `SubtitleTimelineTest`, `TimelinePlaybackRobolectricTest`. |
@@ -86,7 +86,7 @@ Une scène absente de la vidéo ne justifie pas de supprimer ses sous-titres : l
 
 ## 7. Traductions durables, affichage et fichiers réutilisables
 
-| Demande acceptée | Réalisation | Tests ciblés — résultat final en attente |
+| Demande acceptée | Réalisation | Tests automatisés exécutés |
 | --- | --- | --- |
 | Sauvegarder chaque lot validé et reprendre sans tout recommencer | [TranslationRunner.kt](../app/src/main/java/fr/soustitresvoix/player/TranslationRunner.kt), [TranslationCheckpointStore.kt](../app/src/main/java/fr/soustitresvoix/player/TranslationCheckpointStore.kt) : journal atomique, préfixe validé et requête en cours explicite. | `TranslationResumeRobolectricTest` : interruption, journal corrompu, sauvegarde de secours et absence de nouvel appel pour les résultats valides. |
 | Conservation durable des traductions | Résultat complet conservé hors du cache évictable, empreintes du plan et du résultat, restauration locale sans réseau. | `TranslationResumeRobolectricTest`, `TranslationSessionRobolectricTest`, `TranslationWorkRetentionRobolectricTest`. |
@@ -97,7 +97,7 @@ Le format SRT/VTT conserve textes et minutages, pas l’ensemble des styles ASS.
 
 ## 8. Qualité des traductions, consommation et démarrage progressif
 
-| Demande acceptée | Réalisation | Tests ciblés — résultat final en attente |
+| Demande acceptée | Réalisation | Tests automatisés exécutés |
 | --- | --- | --- |
 | Fournir du contexte lorsque l’API le permet, avec correspondance vérifiable | [TranslationProviderOptions.kt](../app/src/main/java/fr/soustitresvoix/player/TranslationProviderOptions.kt), [TranslationProviders.kt](../app/src/main/java/fr/soustitresvoix/player/TranslationProviders.kt) : options DeepL de contexte, glossaire, modèle et registre ; identité du cache incluant les options ; `TranslationPlan.complete` valide nombre, ordre, identités et temps. | `TranslationProviderOptionsRobolectricTest`, `SubtitleTranslationTest`, `TranslationProvidersRobolectricTest`. |
 | Corriger une réplique et régénérer uniquement sa voix | `SubtitleTranslationSession.editCueAndPrepareVoice`, action dans [SubtitleTranslationControls.kt](../app/src/main/java/fr/soustitresvoix/player/SubtitleTranslationControls.kt) ; préparation limitée aux segments corrigés, clé vocale dépendant du texte, autres audios réutilisables et vidéo en pause. | `TranslationSessionRobolectricTest` : préparation exacte d’une seule réplique et refus si voix/cache/texte indisponible. |
@@ -109,4 +109,6 @@ Le format SRT/VTT conserve textes et minutages, pas l’ensemble des styles ASS.
 
 Les alertes et propositions de langue sont des heuristiques, pas une mesure de fidélité linguistique ni une reconnaissance certaine des noms propres. Le plafond local ne limite pas les autres usages du compte et ne donne aucun montant en euros. La consultation du quota n’en réserve aucune partie. Les comparaisons peuvent être facturées et nécessitent un jugement humain.
 
-La demande de tests complets et de publication est traitée par la chaîne de validation décrite dans [TESTING.md](../TESTING.md) et [CONTRIBUTING.md](../CONTRIBUTING.md) : tests moteur, JVM Android, lint, APK debug et release, tests instrumentés réels, vérification de l’APK et de sa signature, contrôles de publication, fusion dans `main` et vérification de ses contrôles avant diffusion. Cette liste n’est pas une garantie universelle de fonctionnement sur tous les appareils. Les essais réels de voix, TalkBack, codecs, autonomie et fournisseurs personnels restent identifiés dans [TESTS_TELEPHONE.md](TESTS_TELEPHONE.md).
+La reconstruction du plein écran possède aussi ses régressions `MainActivityUiRebuildRobolectricTest` et `UiRebuildInstrumentationTest` : configuration imbriquée, même lecteur et surface, unicité de l’affichage, pause et fermeture du dialogue de reprise.
+
+La demande de tests complets et de publication est traitée par la chaîne de validation décrite dans [TESTING.md](../TESTING.md) et [CONTRIBUTING.md](../CONTRIBUTING.md) : tests moteur, JVM Android, lint, APK debug et release, tests instrumentés réels, vérification de l’APK et de sa signature, contrôles de publication, fusion dans `main` et vérification de ses contrôles avant diffusion. Les validations des sources ont réussi ; l’APK a ensuite été publié et contrôlé après téléchargement. Cette liste n’est pas une garantie universelle de fonctionnement sur tous les appareils. Les essais réels de voix, TalkBack, codecs, autonomie et fournisseurs personnels restent identifiés dans [TESTS_TELEPHONE.md](TESTS_TELEPHONE.md).

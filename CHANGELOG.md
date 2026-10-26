@@ -4,7 +4,7 @@ Ce journal présente les étapes principales vérifiables dans l’historique du
 
 ## 0.5.0 — Confort intégral, séances et traduction progressive
 
-**Validation et publication en cours.** [Guide complet](docs/CONFORT_INTEGRAL_050.md) · [Notes de version](docs/releases/0.5.0.md). Les résultats du commit effectivement distribué seront attachés dans [TESTING.md](TESTING.md).
+**Publiée le 26 octobre 2026.** [Télécharger la version](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0) · [Guide complet](docs/CONFORT_INTEGRAL_050.md) · [Notes de version](docs/releases/0.5.0.md) · [Résultats exécutés](TESTING.md). Le commit [`3740356`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/3740356420fb09eadabe23da207fa554515da101) a réussi le [run Android 40402709269](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40402709269) : **1 016 exécutions de 508 méthodes distinctes** et lint sans erreur. L’outillage totalise **62 tests Python réussis**, dont 39 dans ce run et 23 autres vérifiés localement.
 
 - Réglages répartis entre huit rubriques et recherche sans accents vers les commandes réelles ; champs numériques précis, pas et présélections partagent la validation.
 - Effet immédiat explicite : Fermer conserve les réglages ; Annuler modifications restaure ceux de l’ouverture sans prétendre annuler suppressions, exports ou appels déjà confirmés.
@@ -20,7 +20,10 @@ Ce journal présente les étapes principales vérifiables dans l’historique du
 - Traduction progressive facultative avec tampon initial d’une minute et arrêt avant une occurrence indisponible ; aucune reprise automatique et aucune substitution par l’original.
 - Options DeepL pour contexte, glossaire distant/révision, modèle et registre ; interrogation réelle du quota et comparaison d’échantillon explicitement confirmée.
 - Proposition locale de langue à confirmer, alertes linguistiques heuristiques, correction d’une occurrence, affichage original/français/bilingue/masqué et exports SRT/VTT réimportables.
-- Identité Android conservée depuis la 0.4.0 ; même certificat durable exigé pour la mise à jour. Aucun OCR, runtime local de traduction, nouveau moteur vocal intégré ou service de lecture durable en arrière-plan n’est annoncé.
+- Reconstruction du plein écran sérialisée lors de changements de configuration imbriqués, avec conservation du lecteur, de sa surface et de la pause ; dialogue de reprise fermé avec son activité.
+- Identité Android conservée depuis la 0.4.0 ; même certificat durable vérifié pour la mise à jour. Aucun OCR, runtime local de traduction, nouveau moteur vocal intégré ou service de lecture durable en arrière-plan n’est annoncé.
+
+Le [run de publication 40407440389](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40407440389) a réussi. L’APK public a été téléchargé à nouveau : **5 242 608 octets**, SHA-256 `dcaf9f07cdc85f5dfa007ceeef40a3e71cdba25b40c66381a3cf39998207ed7c`, avec le certificat durable de la 0.4.0 et le contenu de l’artefact CI vérifié hors signature.
 
 La 0.5.0 conserve les fonctions des étapes précédentes. Les preuves de la 0.4.0 ci-dessous restent historiques et ne valident pas ces nouvelles sources. Le détail des limites figure dans le guide et les résultats réellement exécutés dans TESTING.md.
 

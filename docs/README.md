@@ -2,7 +2,7 @@
 
 [Accueil du projet](../README.md) · [Guide Confort intégral 0.5.0](CONFORT_INTEGRAL_050.md) · [Validation](../TESTING.md)
 
-Les sources **0.5.0 — Confort intégral** sont en cours de validation et de publication. Le dernier APK publié reste la [0.4.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0) tant que la publication 0.5.0 n’est pas confirmée. Les guides distinguent le fonctionnement actuel des sources, les résultats exécutés et l’historique des étapes.
+La **[0.5.0 — lecture intégrale et traduction progressive](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0)** est publiée depuis le **26 octobre 2026**. [Télécharger l’APK](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.0/SousTitresVoix-0.5.0-confort-integral.apk). Les sources ont passé la validation de `main` : **1 016 exécutions JUnit de 508 méthodes** et lint sans erreur ; le téléchargement public a ensuite été vérifié. L’outillage a réussi 62 tests Python, dont 39 en CI Android et 23 autres vérifiés localement. Les guides distinguent les fonctions, les [résultats réellement exécutés](../TESTING.md) et l’historique des étapes.
 
 ## Utiliser la version 0.5.0 sur téléphone
 
@@ -20,7 +20,7 @@ Les sources **0.5.0 — Confort intégral** sont en cours de validation et de pu
 | Vérifier les parcours sur un téléphone réel | [Tests sur téléphone](TESTS_TELEPHONE.md) |
 | Lire tous les changements de la version | [Notes 0.5.0](releases/0.5.0.md), [journal des changements](../CHANGELOG.md) |
 
-La 0.5.0 garde l’identité de l’édition Traduction 0.4.0 et doit être signée avec son certificat durable pour la mettre à jour. La stable 0.3.2 reste une application distincte. Les originaux vidéo ne sont pas modifiés. L’affichage propose original, français, bilingue ou masqué ; la narration utilise la piste choisie indépendamment.
+La 0.5.0 garde l’identité de l’édition Traduction 0.4.0 et son certificat durable, vérifié sur l’APK public, pour permettre sa mise à jour. La stable 0.3.2 reste une application distincte. Les originaux vidéo ne sont pas modifiés. L’affichage propose original, français, bilingue ou masqué ; la narration utilise la piste choisie indépendamment.
 
 ## Références des fonctions conservées
 
@@ -43,6 +43,8 @@ Le guide 0.5.0 prévaut pour le mode progressif, la reprise des lots, la conserv
 | --- | --- |
 | Vérifier la couverture de toutes les demandes 0.5.0 et les tests associés | [Matrice de couverture 0.5.0](COUVERTURE_DEMANDES_050.md) |
 | Résultats attachés au commit distribué, compilation et contrôle APK | [TESTING.md](../TESTING.md) |
+| Inventaires JUnit, empreintes et faits de publication conservés | [Preuve durable 0.5.0](verification/0.5.0.json) |
+| Graines des essais supplémentaires et relevés de l’émulateur | [Charge du noyau](verification/0.5.0-additional-stress.json), [relevés Android](verification/0.5.0-device-metrics.json) |
 | Architecture et invariants de lecture | [Architecture](ARCHITECTURE.md) |
 | Interfaces et composition des composants | [Modularisation — étape 1](MODULARISATION_ETAPE_1.md) |
 | Capacités déclarées, demandes, configuration et observations | [Capacités — étape 2](CAPACITES_ETAPE_2.md) |
@@ -51,12 +53,13 @@ Le guide 0.5.0 prévaut pour le mode progressif, la reprise des lots, la conserv
 | Archives, commits, branches et sources des APK précédents | [Historique](HISTORIQUE_BRANCHES.md) |
 | Démonstration anglaise de cinq occurrences | [SRT synthétique](../examples/essai-traduction-en.srt) |
 
-La validation de la 0.5.0 reste à terminer. Les chiffres de la 0.4.0 et de ses maintenances ne sont pas des résultats de ces nouvelles sources. Un test sur émulateur ne déclare pas réussis TalkBack réel, l’écoute d’une voix commerciale, un compte API personnel, la fidélité linguistique, l’autonomie ou les performances du OnePlus 15.
+La validation des sources et la publication vérifiée de la 0.5.0 figurent dans [TESTING.md](../TESTING.md). Les chiffres de la 0.4.0 et de ses maintenances ne sont pas réattribués à ces nouvelles sources. Un test sur émulateur ne déclare pas réussis TalkBack réel, l’écoute d’une voix commerciale, un compte API personnel, la fidélité linguistique, l’autonomie ou les performances du OnePlus 15.
 
-## Versions et développement antérieurs
+## Versions et repères de développement
 
 | Version ou document | Repère |
 | --- | --- |
+| [0.5.0 — Confort intégral](releases/0.5.0.md) | Version actuelle, publiée le 26 octobre 2026 ; même identité et certificat que la 0.4.0 |
 | [0.4.0 — Traduction](releases/0.4.0.md) | Version publiée le 24 octobre 2026 ; sept étapes consolidées |
 | [0.3.2 — ancienne stable](releases/0.3.2.md) | Identité et signature distinctes |
 | [0.3.1 — préversion Cinéma](releases/0.3.1-cinema-test.md) | Cadrage et corrections de cette série |

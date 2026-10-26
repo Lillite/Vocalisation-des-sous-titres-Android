@@ -4,11 +4,17 @@
 
 ## Branche de référence
 
-**`main` rassemble le travail terminé et vérifié.** La version **0.4.0 — édition Traduction**, publiée le **24 octobre 2026**, réunit les étapes 1 à 6 et la traduction de l’étape 7. Le tag `v0.4.0` désigne exactement [`32864ba732d834e71d87b887ae63f0d7bc09eb8c`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/32864ba732d834e71d87b887ae63f0d7bc09eb8c), source de l’APK. Une mise à jour documentaire ultérieure de `main` ne déplace pas ce tag.
+**`main` rassemble le travail terminé et vérifié.** La version **0.5.0 — lecture intégrale et traduction progressive**, publiée le **26 octobre 2026**, est issue du commit [`3740356420fb09eadabe23da207fa554515da101`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/3740356420fb09eadabe23da207fa554515da101). Le tag [`v0.5.0`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0) désigne exactement ce commit, validé dans `main` avant la publication. L’APK public a été téléchargé et vérifié à nouveau ; une mise à jour documentaire ultérieure ne déplace pas ce tag.
+
+La version **0.4.0 — édition Traduction**, publiée le **24 octobre 2026**, est conservée comme version antérieure. Elle réunit les étapes 1 à 6 et la traduction de l’étape 7. Son tag `v0.4.0` désigne exactement [`32864ba732d834e71d87b887ae63f0d7bc09eb8c`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/32864ba732d834e71d87b887ae63f0d7bc09eb8c), source de cet APK. La 0.5.0 conserve son identité d’application et son certificat durable ; les fichiers des versions antérieures ne sont pas remplacés.
+
+La [PR #13](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/13) a intégré les nouvelles fonctions ; la [PR #14](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/14) a corrigé la reconstruction réentrante du plein écran et le cycle de vie du dialogue de reprise. Le [run final 40402709269](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40402709269) a réussi **1 016 exécutions JUnit de 508 méthodes distinctes** sur le commit `3740356`. Les échecs intermédiaires et leurs corrections restent dans [TESTING.md](../TESTING.md).
+
+Le [run de publication 40407440389](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40407440389) a ensuite créé la release stable `424807308` et son asset APK `679580568`. La publication et le tag sont liés aux sources `3740356`, tandis que le commit d’envoi `589e0605ff5e217a8d821bf7602ac5a300406e57` contient uniquement les trois fichiers de livraison autorisés.
 
 Les demandes de fusion [#3 à #8](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pulls?q=is%3Apr+is%3Amerged) des étapes précédentes ont été intégrées avec la consolidation de la traduction, [#9](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/9). Le correctif du transport de publication et les outils de synchronisation ont ensuite été intégrés par [#10](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/10). Les historiques ont été conservés par fusion, sans recopier aveuglément des implémentations anciennes incompatibles.
 
-La [validation complète du commit distribué](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40053284969) a réussi avant la [publication vérifiée](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40054994161). Les résultats, corrections intermédiaires et limites figurent dans [TESTING.md](../TESTING.md).
+Pour la 0.4.0, la [validation complète du commit distribué](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40053284969) a réussi avant la [publication vérifiée](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40054994161). Les résultats, corrections intermédiaires et limites figurent dans [TESTING.md](../TESTING.md).
 
 ## Consolidation de la 0.3.2 — historique du 22 octobre
 
@@ -79,7 +85,7 @@ Après vérification de l’APK publié, le workflow a vérifié l’ascendance 
 
 ## Publications et sources exactes
 
-Les quatre anciens APK sont conservés, sans recompilation ni modification de leur contenu. La 0.4.0 ajoute une nouvelle édition signée, avec son identité d’installation séparée. Les tags canoniques désignent les commits des sources correspondant aux APK.
+Les APK antérieurs sont conservés, sans recompilation ni modification de leur contenu. La 0.4.0 avait ajouté une édition signée avec son identité d’installation séparée ; la 0.5.0 en conserve l’identité et le certificat. Les tags canoniques désignent les commits des sources correspondant aux APK.
 
 | Version interne de l’APK | Tag canonique | Ancien tag | Commit source | Statut |
 | --- | --- | --- | --- | --- |
@@ -87,7 +93,8 @@ Les quatre anciens APK sont conservés, sans recompilation ni modification de le
 | `0.2.0-cinema-test` | [`v0.2.0-cinema-test`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.2.0-cinema-test) | `Test2` | `32ac63d` | Préversion historique |
 | `0.3.1-cinema-test` | [`v0.3.1-cinema-test`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.3.1-cinema-test) | `Teste3` | `b0f32d3` | Préversion historique |
 | `0.3.2` | [`v0.3.2`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.3.2) | `Test4` | `311d990` | Ancienne stable, conservée |
-| `0.4.0` | [`v0.4.0`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0) | Aucun | `32864ba` | Édition Traduction publiée, version actuelle |
+| `0.4.0` | [`v0.4.0`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0) | Aucun | `32864ba` | Ancienne édition Traduction, conservée |
+| `0.5.0` | [`v0.5.0`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0) | Aucun | `3740356` | Lecture intégrale et traduction progressive, version actuelle |
 
 Auparavant, les quatre anciens tags pointaient tous vers `8028f5d`. Les archives automatiques de sources des publications 0.2, 0.3.1 et 0.3.2 étaient donc incorrectes. La réorganisation crée les nouveaux tags sur les commits vérifiés, rattache les publications existantes à ces tags, puis retire les anciens tags après vérification. Les identifiants des publications et de leurs APK sont conservés.
 
@@ -95,6 +102,7 @@ Les liens contenant les anciens noms de tags doivent être remplacés par les li
 
 ### Notes de version
 
+- [0.5.0 — lecture intégrale et traduction progressive](releases/0.5.0.md)
 - [0.4.0 — édition Traduction](releases/0.4.0.md)
 - [0.3.2 — Version stable](releases/0.3.2.md)
 - [0.3.1 — Cinéma et cadrage](releases/0.3.1-cinema-test.md)
@@ -103,7 +111,7 @@ Les liens contenant les anciens noms de tags doivent être remplacés par les li
 
 ## Maintenir une présentation cohérente
 
-Les métadonnées des cinq publications sont définies dans [`.github/release-history.json`](../.github/release-history.json), avec leurs notes dans `docs/releases/`. Le [workflow de synchronisation](../.github/workflows/releases.yml) vérifie les fichiers et les références avant d’actualiser les publications existantes. Il ne compile pas d’APK et ne remplace pas la procédure de livraison d’une nouvelle version.
+Les métadonnées des six publications sont définies dans [`.github/release-history.json`](../.github/release-history.json), avec leurs notes dans `docs/releases/`. Le [workflow de synchronisation](../.github/workflows/releases.yml) vérifie les fichiers et les références avant d’actualiser les publications existantes. Il ne compile pas d’APK et ne remplace pas la procédure de livraison d’une nouvelle version.
 
 La synchronisation est limitée à ce dépôt et aux publications décrites. Elle contrôle les empreintes téléchargées, les versions déclarées dans les sources et les tags attendus. Un tag canonique pointant vers un autre commit entraîne un arrêt : le script ne force pas sa réécriture.
 

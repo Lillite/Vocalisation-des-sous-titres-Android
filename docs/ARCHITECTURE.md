@@ -2,11 +2,21 @@
 
 [Index de la documentation](README.md) · [Compilation et validation](../TESTING.md)
 
-Cette vue décrit les comportements de l’édition **Traduction 0.4.0**, qui rassemble les six premières étapes
-et le nouveau module de traduction. Le projet sépare la logique de
+Cette vue décrit l’édition **Confort intégral 0.5.0**, qui conserve les six premières étapes
+et le module de traduction de la 0.4.0. Le projet sépare la logique de
 narration indépendante d’Android, les adaptateurs du lecteur et l’interface. Les
 invariants ci-dessous sont des exigences à préserver lors des modifications ; les
 résultats de vérification restent attachés au commit réellement testé.
+
+La 0.5.0 ajoute `NarrationLedger` pour le suivi sans texte, `PlaybackFeatures`
+pour les séances et leurs repères de file inachevée, `SubtitleTimeline` et
+`SubtitleBoundarySchedule` pour parcourir toutes les occurrences corrigées,
+ainsi qu’une bibliothèque vocale durable distincte du cache évictable.
+La traduction complète reste le choix initial ; un mode progressif explicite
+expose seulement les préfixes validés et arrête avant la première occurrence
+manquante. Une restauration, un lot terminé ou un callback ancien ne lance pas
+la vidéo. Le [guide 0.5.0](CONFORT_INTEGRAL_050.md) et la
+[matrice des demandes](COUVERTURE_DEMANDES_050.md) détaillent ces parcours.
 
 ## Composition des composants
 

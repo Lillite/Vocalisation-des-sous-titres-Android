@@ -1,0 +1,833 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "3740356420fb09eadabe23da207fa554515da101",
+  "runId": 40402709269,
+  "runAttempt": 1,
+  "application": "fr.soustitresvoix.player.translation",
+  "unit": "KiB as reported by Android dumpsys meminfo (KB)",
+  "passes": [
+    {
+      "pass": 1,
+      "captures": [
+        {
+          "sample": 1,
+          "file": "build/verification/android-release-pass-1/live-metrics/001-memory.txt",
+          "capturedUtc": "2026-10-26T21:24:40Z",
+          "commandExitStatus": 0,
+          "processPresent": false,
+          "pid": null,
+          "validPssMeasurement": false,
+          "totalPssKiB": null
+        },
+        {
+          "sample": 1,
+          "file": "build/verification/android-release-pass-1/live-metrics/001-frames.txt",
+          "capturedUtc": "2026-10-26T21:24:40Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 1,
+          "file": "build/verification/android-release-pass-1/live-metrics/001-cpu.txt",
+          "capturedUtc": "2026-10-26T21:24:40Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 2,
+          "file": "build/verification/android-release-pass-1/live-metrics/002-memory.txt",
+          "capturedUtc": "2026-10-26T21:25:10Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 2905,
+          "validPssMeasurement": true,
+          "totalPssKiB": 57232
+        },
+        {
+          "sample": 2,
+          "file": "build/verification/android-release-pass-1/live-metrics/002-frames.txt",
+          "capturedUtc": "2026-10-26T21:25:10Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 2,
+          "file": "build/verification/android-release-pass-1/live-metrics/002-cpu.txt",
+          "capturedUtc": "2026-10-26T21:25:10Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 3,
+          "file": "build/verification/android-release-pass-1/live-metrics/003-memory.txt",
+          "capturedUtc": "2026-10-26T21:25:40Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 2905,
+          "validPssMeasurement": true,
+          "totalPssKiB": 53849
+        },
+        {
+          "sample": 3,
+          "file": "build/verification/android-release-pass-1/live-metrics/003-frames.txt",
+          "capturedUtc": "2026-10-26T21:25:40Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 3,
+          "file": "build/verification/android-release-pass-1/live-metrics/003-cpu.txt",
+          "capturedUtc": "2026-10-26T21:25:40Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 4,
+          "file": "build/verification/android-release-pass-1/live-metrics/004-memory.txt",
+          "capturedUtc": "2026-10-26T21:26:10Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 2905,
+          "validPssMeasurement": true,
+          "totalPssKiB": 46059
+        },
+        {
+          "sample": 4,
+          "file": "build/verification/android-release-pass-1/live-metrics/004-frames.txt",
+          "capturedUtc": "2026-10-26T21:26:10Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 4,
+          "file": "build/verification/android-release-pass-1/live-metrics/004-cpu.txt",
+          "capturedUtc": "2026-10-26T21:26:11Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 5,
+          "file": "build/verification/android-release-pass-1/live-metrics/005-memory.txt",
+          "capturedUtc": "2026-10-26T21:26:40Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 2905,
+          "validPssMeasurement": true,
+          "totalPssKiB": 59121
+        },
+        {
+          "sample": 5,
+          "file": "build/verification/android-release-pass-1/live-metrics/005-frames.txt",
+          "capturedUtc": "2026-10-26T21:26:40Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 5,
+          "file": "build/verification/android-release-pass-1/live-metrics/005-cpu.txt",
+          "capturedUtc": "2026-10-26T21:26:40Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 6,
+          "file": "build/verification/android-release-pass-1/live-metrics/006-memory.txt",
+          "capturedUtc": "2026-10-26T21:27:10Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 2905,
+          "validPssMeasurement": true,
+          "totalPssKiB": 62750
+        },
+        {
+          "sample": 6,
+          "file": "build/verification/android-release-pass-1/live-metrics/006-frames.txt",
+          "capturedUtc": "2026-10-26T21:27:11Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 6,
+          "file": "build/verification/android-release-pass-1/live-metrics/006-cpu.txt",
+          "capturedUtc": "2026-10-26T21:27:11Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 7,
+          "file": "build/verification/android-release-pass-1/live-metrics/007-memory.txt",
+          "capturedUtc": "2026-10-26T21:27:40Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 2905,
+          "validPssMeasurement": true,
+          "totalPssKiB": 50856
+        },
+        {
+          "sample": 7,
+          "file": "build/verification/android-release-pass-1/live-metrics/007-frames.txt",
+          "capturedUtc": "2026-10-26T21:27:41Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 7,
+          "file": "build/verification/android-release-pass-1/live-metrics/007-cpu.txt",
+          "capturedUtc": "2026-10-26T21:27:41Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 8,
+          "file": "build/verification/android-release-pass-1/live-metrics/008-memory.txt",
+          "capturedUtc": "2026-10-26T21:28:10Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 2905,
+          "validPssMeasurement": true,
+          "totalPssKiB": 61701
+        },
+        {
+          "sample": 8,
+          "file": "build/verification/android-release-pass-1/live-metrics/008-frames.txt",
+          "capturedUtc": "2026-10-26T21:28:10Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 8,
+          "file": "build/verification/android-release-pass-1/live-metrics/008-cpu.txt",
+          "capturedUtc": "2026-10-26T21:28:10Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 9,
+          "file": "build/verification/android-release-pass-1/live-metrics/009-memory.txt",
+          "capturedUtc": "2026-10-26T21:28:40Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 2905,
+          "validPssMeasurement": true,
+          "totalPssKiB": 55062
+        },
+        {
+          "sample": 9,
+          "file": "build/verification/android-release-pass-1/live-metrics/009-frames.txt",
+          "capturedUtc": "2026-10-26T21:28:40Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 9,
+          "file": "build/verification/android-release-pass-1/live-metrics/009-cpu.txt",
+          "capturedUtc": "2026-10-26T21:28:40Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 10,
+          "file": "build/verification/android-release-pass-1/live-metrics/010-memory.txt",
+          "capturedUtc": "2026-10-26T21:29:10Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 2905,
+          "validPssMeasurement": true,
+          "totalPssKiB": 60502
+        },
+        {
+          "sample": 10,
+          "file": "build/verification/android-release-pass-1/live-metrics/010-frames.txt",
+          "capturedUtc": "2026-10-26T21:29:11Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 10,
+          "file": "build/verification/android-release-pass-1/live-metrics/010-cpu.txt",
+          "capturedUtc": "2026-10-26T21:29:12Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 11,
+          "file": "build/verification/android-release-pass-1/live-metrics/011-memory.txt",
+          "capturedUtc": "2026-10-26T21:29:40Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 2905,
+          "validPssMeasurement": true,
+          "totalPssKiB": 58980
+        },
+        {
+          "sample": 11,
+          "file": "build/verification/android-release-pass-1/live-metrics/011-frames.txt",
+          "capturedUtc": "2026-10-26T21:29:40Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 11,
+          "file": "build/verification/android-release-pass-1/live-metrics/011-cpu.txt",
+          "capturedUtc": "2026-10-26T21:29:41Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 12,
+          "file": "build/verification/android-release-pass-1/live-metrics/012-memory.txt",
+          "capturedUtc": "2026-10-26T21:30:10Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 2905,
+          "validPssMeasurement": true,
+          "totalPssKiB": 60562
+        },
+        {
+          "sample": 12,
+          "file": "build/verification/android-release-pass-1/live-metrics/012-frames.txt",
+          "capturedUtc": "2026-10-26T21:30:10Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 12,
+          "file": "build/verification/android-release-pass-1/live-metrics/012-cpu.txt",
+          "capturedUtc": "2026-10-26T21:30:10Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 13,
+          "file": "build/verification/android-release-pass-1/live-metrics/013-memory.txt",
+          "capturedUtc": "2026-10-26T21:30:40Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 2905,
+          "validPssMeasurement": true,
+          "totalPssKiB": 62158
+        },
+        {
+          "sample": 13,
+          "file": "build/verification/android-release-pass-1/live-metrics/013-frames.txt",
+          "capturedUtc": "2026-10-26T21:30:40Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 13,
+          "file": "build/verification/android-release-pass-1/live-metrics/013-cpu.txt",
+          "capturedUtc": "2026-10-26T21:30:40Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 14,
+          "file": "build/verification/android-release-pass-1/live-metrics/014-memory.txt",
+          "capturedUtc": "2026-10-26T21:31:10Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 2905,
+          "validPssMeasurement": true,
+          "totalPssKiB": 63148
+        },
+        {
+          "sample": 14,
+          "file": "build/verification/android-release-pass-1/live-metrics/014-frames.txt",
+          "capturedUtc": "2026-10-26T21:31:10Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 14,
+          "file": "build/verification/android-release-pass-1/live-metrics/014-cpu.txt",
+          "capturedUtc": "2026-10-26T21:31:11Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 15,
+          "file": "build/verification/android-release-pass-1/live-metrics/015-memory.txt",
+          "capturedUtc": "2026-10-26T21:31:40Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 2905,
+          "validPssMeasurement": true,
+          "totalPssKiB": 61183
+        },
+        {
+          "sample": 15,
+          "file": "build/verification/android-release-pass-1/live-metrics/015-frames.txt",
+          "capturedUtc": "2026-10-26T21:31:40Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 15,
+          "file": "build/verification/android-release-pass-1/live-metrics/015-cpu.txt",
+          "capturedUtc": "2026-10-26T21:31:40Z",
+          "commandExitStatus": 0
+        }
+      ],
+      "memoryCaptures": 15,
+      "memoryCapturesWithProcessPresent": 14,
+      "validPssMeasurements": 14,
+      "pssValuesKiB": [
+        57232,
+        53849,
+        46059,
+        59121,
+        62750,
+        50856,
+        61701,
+        55062,
+        60502,
+        58980,
+        60562,
+        62158,
+        63148,
+        61183
+      ],
+      "minimumPssKiB": 46059,
+      "maximumPssKiB": 63148,
+      "unlistedCaptureFiles": []
+    },
+    {
+      "pass": 2,
+      "captures": [
+        {
+          "sample": 1,
+          "file": "build/verification/android-release-pass-2/live-metrics/001-memory.txt",
+          "capturedUtc": "2026-10-26T21:31:56Z",
+          "commandExitStatus": 0,
+          "processPresent": false,
+          "pid": null,
+          "validPssMeasurement": false,
+          "totalPssKiB": null
+        },
+        {
+          "sample": 1,
+          "file": "build/verification/android-release-pass-2/live-metrics/001-frames.txt",
+          "capturedUtc": "2026-10-26T21:31:56Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 1,
+          "file": "build/verification/android-release-pass-2/live-metrics/001-cpu.txt",
+          "capturedUtc": "2026-10-26T21:31:56Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 2,
+          "file": "build/verification/android-release-pass-2/live-metrics/002-memory.txt",
+          "capturedUtc": "2026-10-26T21:32:26Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 5041,
+          "validPssMeasurement": true,
+          "totalPssKiB": 59858
+        },
+        {
+          "sample": 2,
+          "file": "build/verification/android-release-pass-2/live-metrics/002-frames.txt",
+          "capturedUtc": "2026-10-26T21:32:26Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 2,
+          "file": "build/verification/android-release-pass-2/live-metrics/002-cpu.txt",
+          "capturedUtc": "2026-10-26T21:32:26Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 3,
+          "file": "build/verification/android-release-pass-2/live-metrics/003-memory.txt",
+          "capturedUtc": "2026-10-26T21:32:56Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 5041,
+          "validPssMeasurement": true,
+          "totalPssKiB": 47619
+        },
+        {
+          "sample": 3,
+          "file": "build/verification/android-release-pass-2/live-metrics/003-frames.txt",
+          "capturedUtc": "2026-10-26T21:32:56Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 3,
+          "file": "build/verification/android-release-pass-2/live-metrics/003-cpu.txt",
+          "capturedUtc": "2026-10-26T21:32:56Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 4,
+          "file": "build/verification/android-release-pass-2/live-metrics/004-memory.txt",
+          "capturedUtc": "2026-10-26T21:33:26Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 5041,
+          "validPssMeasurement": true,
+          "totalPssKiB": 53195
+        },
+        {
+          "sample": 4,
+          "file": "build/verification/android-release-pass-2/live-metrics/004-frames.txt",
+          "capturedUtc": "2026-10-26T21:33:27Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 4,
+          "file": "build/verification/android-release-pass-2/live-metrics/004-cpu.txt",
+          "capturedUtc": "2026-10-26T21:33:27Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 5,
+          "file": "build/verification/android-release-pass-2/live-metrics/005-memory.txt",
+          "capturedUtc": "2026-10-26T21:33:56Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 5041,
+          "validPssMeasurement": true,
+          "totalPssKiB": 62473
+        },
+        {
+          "sample": 5,
+          "file": "build/verification/android-release-pass-2/live-metrics/005-frames.txt",
+          "capturedUtc": "2026-10-26T21:33:56Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 5,
+          "file": "build/verification/android-release-pass-2/live-metrics/005-cpu.txt",
+          "capturedUtc": "2026-10-26T21:33:56Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 6,
+          "file": "build/verification/android-release-pass-2/live-metrics/006-memory.txt",
+          "capturedUtc": "2026-10-26T21:34:26Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 5041,
+          "validPssMeasurement": true,
+          "totalPssKiB": 56437
+        },
+        {
+          "sample": 6,
+          "file": "build/verification/android-release-pass-2/live-metrics/006-frames.txt",
+          "capturedUtc": "2026-10-26T21:34:26Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 6,
+          "file": "build/verification/android-release-pass-2/live-metrics/006-cpu.txt",
+          "capturedUtc": "2026-10-26T21:34:27Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 7,
+          "file": "build/verification/android-release-pass-2/live-metrics/007-memory.txt",
+          "capturedUtc": "2026-10-26T21:34:56Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 5041,
+          "validPssMeasurement": true,
+          "totalPssKiB": 57967
+        },
+        {
+          "sample": 7,
+          "file": "build/verification/android-release-pass-2/live-metrics/007-frames.txt",
+          "capturedUtc": "2026-10-26T21:34:56Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 7,
+          "file": "build/verification/android-release-pass-2/live-metrics/007-cpu.txt",
+          "capturedUtc": "2026-10-26T21:34:56Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 8,
+          "file": "build/verification/android-release-pass-2/live-metrics/008-memory.txt",
+          "capturedUtc": "2026-10-26T21:35:26Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 5041,
+          "validPssMeasurement": true,
+          "totalPssKiB": 63324
+        },
+        {
+          "sample": 8,
+          "file": "build/verification/android-release-pass-2/live-metrics/008-frames.txt",
+          "capturedUtc": "2026-10-26T21:35:27Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 8,
+          "file": "build/verification/android-release-pass-2/live-metrics/008-cpu.txt",
+          "capturedUtc": "2026-10-26T21:35:27Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 9,
+          "file": "build/verification/android-release-pass-2/live-metrics/009-memory.txt",
+          "capturedUtc": "2026-10-26T21:35:56Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 5041,
+          "validPssMeasurement": true,
+          "totalPssKiB": 63403
+        },
+        {
+          "sample": 9,
+          "file": "build/verification/android-release-pass-2/live-metrics/009-frames.txt",
+          "capturedUtc": "2026-10-26T21:35:56Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 9,
+          "file": "build/verification/android-release-pass-2/live-metrics/009-cpu.txt",
+          "capturedUtc": "2026-10-26T21:35:57Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 10,
+          "file": "build/verification/android-release-pass-2/live-metrics/010-memory.txt",
+          "capturedUtc": "2026-10-26T21:36:26Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 5041,
+          "validPssMeasurement": true,
+          "totalPssKiB": 59658
+        },
+        {
+          "sample": 10,
+          "file": "build/verification/android-release-pass-2/live-metrics/010-frames.txt",
+          "capturedUtc": "2026-10-26T21:36:27Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 10,
+          "file": "build/verification/android-release-pass-2/live-metrics/010-cpu.txt",
+          "capturedUtc": "2026-10-26T21:36:27Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 11,
+          "file": "build/verification/android-release-pass-2/live-metrics/011-memory.txt",
+          "capturedUtc": "2026-10-26T21:36:56Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 5041,
+          "validPssMeasurement": true,
+          "totalPssKiB": 50780
+        },
+        {
+          "sample": 11,
+          "file": "build/verification/android-release-pass-2/live-metrics/011-frames.txt",
+          "capturedUtc": "2026-10-26T21:36:56Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 11,
+          "file": "build/verification/android-release-pass-2/live-metrics/011-cpu.txt",
+          "capturedUtc": "2026-10-26T21:36:56Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 12,
+          "file": "build/verification/android-release-pass-2/live-metrics/012-memory.txt",
+          "capturedUtc": "2026-10-26T21:37:26Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 5041,
+          "validPssMeasurement": true,
+          "totalPssKiB": 59575
+        },
+        {
+          "sample": 12,
+          "file": "build/verification/android-release-pass-2/live-metrics/012-frames.txt",
+          "capturedUtc": "2026-10-26T21:37:26Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 12,
+          "file": "build/verification/android-release-pass-2/live-metrics/012-cpu.txt",
+          "capturedUtc": "2026-10-26T21:37:26Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 13,
+          "file": "build/verification/android-release-pass-2/live-metrics/013-memory.txt",
+          "capturedUtc": "2026-10-26T21:37:56Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 5041,
+          "validPssMeasurement": true,
+          "totalPssKiB": 64536
+        },
+        {
+          "sample": 13,
+          "file": "build/verification/android-release-pass-2/live-metrics/013-frames.txt",
+          "capturedUtc": "2026-10-26T21:37:57Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 13,
+          "file": "build/verification/android-release-pass-2/live-metrics/013-cpu.txt",
+          "capturedUtc": "2026-10-26T21:37:57Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 14,
+          "file": "build/verification/android-release-pass-2/live-metrics/014-memory.txt",
+          "capturedUtc": "2026-10-26T21:38:26Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 5041,
+          "validPssMeasurement": true,
+          "totalPssKiB": 64827
+        },
+        {
+          "sample": 14,
+          "file": "build/verification/android-release-pass-2/live-metrics/014-frames.txt",
+          "capturedUtc": "2026-10-26T21:38:26Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 14,
+          "file": "build/verification/android-release-pass-2/live-metrics/014-cpu.txt",
+          "capturedUtc": "2026-10-26T21:38:26Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 15,
+          "file": "build/verification/android-release-pass-2/live-metrics/015-memory.txt",
+          "capturedUtc": "2026-10-26T21:38:56Z",
+          "commandExitStatus": 0,
+          "processPresent": true,
+          "pid": 5041,
+          "validPssMeasurement": true,
+          "totalPssKiB": 60185
+        },
+        {
+          "sample": 15,
+          "file": "build/verification/android-release-pass-2/live-metrics/015-frames.txt",
+          "capturedUtc": "2026-10-26T21:38:57Z",
+          "commandExitStatus": 0
+        },
+        {
+          "sample": 15,
+          "file": "build/verification/android-release-pass-2/live-metrics/015-cpu.txt",
+          "capturedUtc": "2026-10-26T21:38:57Z",
+          "commandExitStatus": 0
+        }
+      ],
+      "memoryCaptures": 15,
+      "memoryCapturesWithProcessPresent": 14,
+      "validPssMeasurements": 14,
+      "pssValuesKiB": [
+        59858,
+        47619,
+        53195,
+        62473,
+        56437,
+        57967,
+        63324,
+        63403,
+        59658,
+        50780,
+        59575,
+        64536,
+        64827,
+        60185
+      ],
+      "minimumPssKiB": 47619,
+      "maximumPssKiB": 64827,
+      "unlistedCaptureFiles": []
+    }
+  ],
+  "inputSha256": {
+    "build/verification/android-release-pass-1/live-metrics/001-cpu.txt": "2441baadb6fbc862bc2c7290c5a7de21fdd0204a35bc95391c5a9b7ed2ff7f3a",
+    "build/verification/android-release-pass-1/live-metrics/001-frames.txt": "e4ef457ce54ae397dd06e40c3a1d1ad5aab211f5ce12d55a1da3d9445f285f56",
+    "build/verification/android-release-pass-1/live-metrics/001-memory.txt": "e4ef457ce54ae397dd06e40c3a1d1ad5aab211f5ce12d55a1da3d9445f285f56",
+    "build/verification/android-release-pass-1/live-metrics/002-cpu.txt": "c0fe8905665745165d7c67dd9901c52074e3511713a6d2835d31d4bae1cf45aa",
+    "build/verification/android-release-pass-1/live-metrics/002-frames.txt": "2e84b8b41eb5e9bcdb712a545ecf2ba799ef4f2fa1f0772d4566ea613cbe1467",
+    "build/verification/android-release-pass-1/live-metrics/002-memory.txt": "3bb0bab64c4fa31a7be2fdff4e4e83f30acd5925d3372b96c066baa661712467",
+    "build/verification/android-release-pass-1/live-metrics/003-cpu.txt": "98a8b4d6740abb1969b0a54b7221f1b0fe3f6de4bccf1c1e72b2591df87a892f",
+    "build/verification/android-release-pass-1/live-metrics/003-frames.txt": "447829407bbb6095bf214d39ba88c00f5018e3fe7cc6dea655e064efe53ee051",
+    "build/verification/android-release-pass-1/live-metrics/003-memory.txt": "4623696d30444a27e45cbc1c53ce58bcb4fd7293f2744a8726d630366294e189",
+    "build/verification/android-release-pass-1/live-metrics/004-cpu.txt": "ddcf9f49a3897e2c99bbe1da6520181c7fa3a00b16cbe47983dc49124eb77716",
+    "build/verification/android-release-pass-1/live-metrics/004-frames.txt": "92a9193633962fe131f2d2eb8ca36d8156fe8db4dbbfa6556aa630a8a43411fd",
+    "build/verification/android-release-pass-1/live-metrics/004-memory.txt": "debb615c664b739a77e2953dc6eeaccb16a8a9f9be4f0b6c9767345c11a4a706",
+    "build/verification/android-release-pass-1/live-metrics/005-cpu.txt": "a734fc3a92d2ab2f0f8094b8f392ad20a83951e8d502f9d41f42550ce5bfdcd7",
+    "build/verification/android-release-pass-1/live-metrics/005-frames.txt": "3d11392d2c8f26a3057fc6bf4c2261164cd5db01a2748cec2a54949c2db76de6",
+    "build/verification/android-release-pass-1/live-metrics/005-memory.txt": "341c79240c84c6706698c9cc0d3383bd1337080f1626d722bc88dc5496d11e6a",
+    "build/verification/android-release-pass-1/live-metrics/006-cpu.txt": "5ad54f7c6841f02ea3a6df7b01117c731edf899cecc4babf3daa26a650ab3128",
+    "build/verification/android-release-pass-1/live-metrics/006-frames.txt": "184ca0aa944e39a8d600942d974cecda6ebf55fcc47aafd59f8c97a303d1896d",
+    "build/verification/android-release-pass-1/live-metrics/006-memory.txt": "438bd25ba7fdad74f6dbd7960a086146ef7b80e28f20b1e9ce070ccf8584de9c",
+    "build/verification/android-release-pass-1/live-metrics/007-cpu.txt": "111de090e1392f13d82ab9f5067863b6ef573e5713118e28bc979c355cf4c1db",
+    "build/verification/android-release-pass-1/live-metrics/007-frames.txt": "3d84d84112ea41f60439a74043194df285f64279e21b1d7f412dc44718bc5d56",
+    "build/verification/android-release-pass-1/live-metrics/007-memory.txt": "0cfb9f7105c48b206ee3fae66cf20938a55c16ab8d38e8562a5890dd1e644202",
+    "build/verification/android-release-pass-1/live-metrics/008-cpu.txt": "f6836885aff16e06020d90700feebf27b768bcb4211be2d3dbacced4338558c9",
+    "build/verification/android-release-pass-1/live-metrics/008-frames.txt": "163e24d1df7a86492e5b87fdfc979339863bcfe45581255b12645d6e91d3e109",
+    "build/verification/android-release-pass-1/live-metrics/008-memory.txt": "1e2db09e691ddd47aeae881bdda62e015f06c276ec300b51ed64f17815191545",
+    "build/verification/android-release-pass-1/live-metrics/009-cpu.txt": "0a198fd55904049134e330228138c944910b40579be821c5f2336c43a02487df",
+    "build/verification/android-release-pass-1/live-metrics/009-frames.txt": "7450779eafb90f1d7e694398e9103f48da77c4751b19665d8fa8727fc4973a25",
+    "build/verification/android-release-pass-1/live-metrics/009-memory.txt": "9de4ba81872507a00551c2e6acd1c508b90d1d42561e74432a4ef3dc2d937190",
+    "build/verification/android-release-pass-1/live-metrics/010-cpu.txt": "01e47f47dcdc15c4c75658bb7c99986e37b6db18828ce7c92d0fb9ee33871fc2",
+    "build/verification/android-release-pass-1/live-metrics/010-frames.txt": "dc75e0d4e511d9ff07adf862241f4248d3192fd30672faf413de4ae813f4fe91",
+    "build/verification/android-release-pass-1/live-metrics/010-memory.txt": "cd351a169ddb46f231c44a4249b3996d4048fff93bd78c15e4822eeec48cdc98",
+    "build/verification/android-release-pass-1/live-metrics/011-cpu.txt": "980c5362a6fb7ce9438a9e3b1ce1e88b52dbe70d73bdffa438bd213042d1f172",
+    "build/verification/android-release-pass-1/live-metrics/011-frames.txt": "3af6ad7420246bca1951f54a9a17613871f4419420f70c9f6ddd935281d9fca6",
+    "build/verification/android-release-pass-1/live-metrics/011-memory.txt": "5e18b167d2110b36e235897198b22ff13191b8bbda730781a7f1a9e9124588d1",
+    "build/verification/android-release-pass-1/live-metrics/012-cpu.txt": "23cf6dd01f45e571026d0e3a907a274cfec3081c35d542462809c94581ff3f83",
+    "build/verification/android-release-pass-1/live-metrics/012-frames.txt": "65b243ee4f787c550cf8541a4a71c8ab3fef4b3f8e7d44086fee5a551cc41b39",
+    "build/verification/android-release-pass-1/live-metrics/012-memory.txt": "333cfb2ffe3a496483ddd1f26018184d33c14a4974343ce161defd6444eecf65",
+    "build/verification/android-release-pass-1/live-metrics/013-cpu.txt": "bfaca96f3fca9673d3197f1b517f2727db09480ea173798f5d3d39b0bb167ef9",
+    "build/verification/android-release-pass-1/live-metrics/013-frames.txt": "711dd63b5614ec6f669165881f4f8de736aec1ec9c70bffbe8336f76c63f1d15",
+    "build/verification/android-release-pass-1/live-metrics/013-memory.txt": "653a3bb75d7b5979df463c065e74686c583599c57fb6caedd0520090fa3fcf1f",
+    "build/verification/android-release-pass-1/live-metrics/014-cpu.txt": "5c18c0df05436de1284c0d9b3248341c9d9362992b981bd14833baaa605a2eb8",
+    "build/verification/android-release-pass-1/live-metrics/014-frames.txt": "dada7d330659e31fbf13023c50d1aa8b42f0d3e08073d3a89c40ac4a891587af",
+    "build/verification/android-release-pass-1/live-metrics/014-memory.txt": "ef7a04b80e3add5ff8c0a4786efffb5a055af6fb441150ecd7879062f2ab271b",
+    "build/verification/android-release-pass-1/live-metrics/015-cpu.txt": "6c7e26b49801dc8ffeda1e78bc3db76a3ce3cbb831a5d5403ad3e69d8657bc59",
+    "build/verification/android-release-pass-1/live-metrics/015-frames.txt": "5fd64267a9712bdb8f2a2d67c2b6cc6aff084f185d0a1c742eccc6b59ba55cac",
+    "build/verification/android-release-pass-1/live-metrics/015-memory.txt": "1d5c65c6d61b006e94b97b7028b5e6bdbcff05e1422bcb5ca1b8cd43c90c985f",
+    "build/verification/android-release-pass-1/live-metrics/monitor-finished.txt": "732d07a0b7e13a1b563f4fb1b2512135bcc8bceb9c6e83d7d1bcd635fc81f417",
+    "build/verification/android-release-pass-1/live-metrics/monitor.txt": "6ddf86042cdbefd7d6c8fb5a5d144bd9dd4ba11d01297130bb1caac23b44c103",
+    "build/verification/android-release-pass-1/live-metrics/samples.tsv": "d8cee88833212be81508e6dcb9aeecafc8e1b6f11cb2b22278eb6db44f6d6e73",
+    "build/verification/android-release-pass-2/live-metrics/001-cpu.txt": "35338b67ff68173415b09ba5ec4ca4a5ee1b16b51a2082d02c9162deaa508855",
+    "build/verification/android-release-pass-2/live-metrics/001-frames.txt": "e4ef457ce54ae397dd06e40c3a1d1ad5aab211f5ce12d55a1da3d9445f285f56",
+    "build/verification/android-release-pass-2/live-metrics/001-memory.txt": "e4ef457ce54ae397dd06e40c3a1d1ad5aab211f5ce12d55a1da3d9445f285f56",
+    "build/verification/android-release-pass-2/live-metrics/002-cpu.txt": "69bf095147ff0c000bb01abedc2541978a107dd6053d7892abaed915712ba66a",
+    "build/verification/android-release-pass-2/live-metrics/002-frames.txt": "623b8f2ea4764590736db57d0c3f31c38bde830fb397a0937e1eee3cfdbff517",
+    "build/verification/android-release-pass-2/live-metrics/002-memory.txt": "80e95783e4ffb03cedf55f2291172314bb475546cb40742dd1bda48204e41928",
+    "build/verification/android-release-pass-2/live-metrics/003-cpu.txt": "c9979639e62c171c44880f4d38f42848319be268eeae48abd5900b57928e4940",
+    "build/verification/android-release-pass-2/live-metrics/003-frames.txt": "c12b92ddffc34c28c489d568d1afd56c9e63ba3cee6ab6901e898baa0f46e259",
+    "build/verification/android-release-pass-2/live-metrics/003-memory.txt": "a0488a38cbd48fac4f70dca37f860c2c0f3105ca3e4f6b71910be2549f36df8c",
+    "build/verification/android-release-pass-2/live-metrics/004-cpu.txt": "f74362bf7337f6091bf75f553584d416672d9afea2ee4dd65198c330147a16c4",
+    "build/verification/android-release-pass-2/live-metrics/004-frames.txt": "c775d5193141ad3e530ea306d2e7c1e9ac7d42b0ddd2ba40bd7a75f4cb168ea8",
+    "build/verification/android-release-pass-2/live-metrics/004-memory.txt": "2fa40b7c8298835d276db326cdf78b97d92110b1183133da61c25aaec21f81c0",
+    "build/verification/android-release-pass-2/live-metrics/005-cpu.txt": "3641eb86373e87ec39eba1400dd2c3e534db02a5951457143469c0fc941e7940",
+    "build/verification/android-release-pass-2/live-metrics/005-frames.txt": "869ab9076b7c0a0d693be7d0b3bff2bf3ed142eb7b45cb04a0de9aeeb58a5cbb",
+    "build/verification/android-release-pass-2/live-metrics/005-memory.txt": "f737aa8a3118d4dcc6716374dd5e41c28913f89cad60a5cd7454545ec9210273",
+    "build/verification/android-release-pass-2/live-metrics/006-cpu.txt": "0bb0d45aa53b19f17ed2f7667d095b4ba703c188a6daa56549d0078c4fce31ec",
+    "build/verification/android-release-pass-2/live-metrics/006-frames.txt": "f4ce6d0c1eddf50d8a61f1808918d9b8db2d13786f796dc85125f933bc729e7d",
+    "build/verification/android-release-pass-2/live-metrics/006-memory.txt": "e6282f996814d86201d9242c51db3e5606d6e332e2ee119e0ac57a5cb3b2bd6e",
+    "build/verification/android-release-pass-2/live-metrics/007-cpu.txt": "9d329ed624d7e87c13676ba34d4bdc48f195bb0653165fd2d1d3a40e0d374048",
+    "build/verification/android-release-pass-2/live-metrics/007-frames.txt": "5adf27685a56587c78fdc20a53b59050816f8f55198dfce6ea48d7d705a8834b",
+    "build/verification/android-release-pass-2/live-metrics/007-memory.txt": "bda8de98265fcb4f4027516fc24bc4874f9f65fa9bb8e4be31088cbc36a97bf0",
+    "build/verification/android-release-pass-2/live-metrics/008-cpu.txt": "74c270958a8e8968b942a280f126d2e1fe916fc69c0cd229a49774c57f84f8bf",
+    "build/verification/android-release-pass-2/live-metrics/008-frames.txt": "78e921f55ae557eb0d071a63650abc0b0fddb28deb7978205f291e3e85e690af",
+    "build/verification/android-release-pass-2/live-metrics/008-memory.txt": "d201d63adb0afdea1ec2ab1357dff4996990a6ff59a4c4eb19af6c22d4a11c8d",
+    "build/verification/android-release-pass-2/live-metrics/009-cpu.txt": "b646c3421626fd35a914fabcf2bc21233353e21224e58718d3d3d84dc643c470",
+    "build/verification/android-release-pass-2/live-metrics/009-frames.txt": "3c6b749cd95539cbf820b1afa1b0d12cd397e5b77e4213267f7c3c469c0bad43",
+    "build/verification/android-release-pass-2/live-metrics/009-memory.txt": "72b5238d565e42621ac74fc7ed6bc5e9142944d4c4d7be5f8bba2f1abeffa48a",
+    "build/verification/android-release-pass-2/live-metrics/010-cpu.txt": "861d23a9e3adb125a3ff3904d0c4d5bd056ae15bcbb9a1375d33de3cd58a46d5",
+    "build/verification/android-release-pass-2/live-metrics/010-frames.txt": "030c3836355440cd187cab1ca5470251dbb99db65cfabc8aea727ce482656404",
+    "build/verification/android-release-pass-2/live-metrics/010-memory.txt": "71a9f9fe6ccd1d2ec82b7dfa89906a6999c62bdc41c0744b2912c648bfa08bf6",
+    "build/verification/android-release-pass-2/live-metrics/011-cpu.txt": "9c18e4da9186240e9b0d3382b7b4ab62871e15e628805ae7c8ae476a5fcd0c24",
+    "build/verification/android-release-pass-2/live-metrics/011-frames.txt": "a3a9086246856ea9880a6e5efc91fe3202ebfdd5c7f17cf5099e6bf33c4c1276",
+    "build/verification/android-release-pass-2/live-metrics/011-memory.txt": "ea4fe394a1b18f6a4ee387d66873239cf70c4614a82511b3e7326f5b3d8ca466",
+    "build/verification/android-release-pass-2/live-metrics/012-cpu.txt": "308d598d8af57ff275226f5c2c8a4bd53773819b402dfc15be2077c8ad6651cb",
+    "build/verification/android-release-pass-2/live-metrics/012-frames.txt": "3a87c8d517990c19743b775a7c47729e7b311335fee6b99787f6b66a081c19ca",
+    "build/verification/android-release-pass-2/live-metrics/012-memory.txt": "3dfa6f5d877a575b8daac31c3efb51d80b1a7145e16545114418eb27284c5014",
+    "build/verification/android-release-pass-2/live-metrics/013-cpu.txt": "cd7b3a47ff75986e690aa15521631774d43230ebc00dff55c1e07b014c036d5e",
+    "build/verification/android-release-pass-2/live-metrics/013-frames.txt": "6cc0352a8f555e87296bd3dae1d270945bdca3a7b9a9e19c189ae5f4fdce9e7e",
+    "build/verification/android-release-pass-2/live-metrics/013-memory.txt": "cad8f47842c0b71abb8bb62d98657011a7811c000a997ffa9ad372dd5b2725f3",
+    "build/verification/android-release-pass-2/live-metrics/014-cpu.txt": "3500a5cc9ea2acd8bb8dd92b4d87d3e43eae55625fa9a1e66a00250b29239a4c",
+    "build/verification/android-release-pass-2/live-metrics/014-frames.txt": "e5ff98545a42fcd0f5355e0b50bd490a56d562cb700f6fb233b583c6232af0d4",
+    "build/verification/android-release-pass-2/live-metrics/014-memory.txt": "e435b69e52a937d99f40c57e16dac5e90122dfa5f7c6b3083100478ca9ad931b",
+    "build/verification/android-release-pass-2/live-metrics/015-cpu.txt": "db170f7b1c9d5b3709222d759ce4e3b02bfe196227b2474d64ffc07277237733",
+    "build/verification/android-release-pass-2/live-metrics/015-frames.txt": "8576bd3bb95efcd157660bbe7b88cf905987321617a0fa05bad7f7ad06efd343",
+    "build/verification/android-release-pass-2/live-metrics/015-memory.txt": "b3b99f65e3e05781823e0f6bce371529ea68be728870053990d1f7c847c47eba",
+    "build/verification/android-release-pass-2/live-metrics/monitor-finished.txt": "732d07a0b7e13a1b563f4fb1b2512135bcc8bceb9c6e83d7d1bcd635fc81f417",
+    "build/verification/android-release-pass-2/live-metrics/monitor.txt": "6ddf86042cdbefd7d6c8fb5a5d144bd9dd4ba11d01297130bb1caac23b44c103",
+    "build/verification/android-release-pass-2/live-metrics/samples.tsv": "91f4196808725827ec2d78b955c60747b4db52849295f12ec180efa308e741fd",
+    "build/verification/source-commit.txt": "c42f7b15d9dc2467c4bd510d0233aef02d36deea528ec4c9ac664941592219c1"
+  },
+  "limitations": [
+    "Optional snapshots during deployment and mixed synthetic tests on an Android 36 x86_64 emulator.",
+    "Process restarts and changing synthetic scenarios prevent comparison as a stable film-playback benchmark.",
+    "No acoustic, battery, physical-phone, GPU/NPU or real-film performance claim is derived from these samples.",
+    "Exit status zero alone does not establish process presence or a valid PSS measurement."
+  ],
+  "reportsArtifact": {
+    "id": 12690416852,
+    "sha256": "38063817ff6ea6dfebc3d43bfd31688f331707db19c38c1692c318ca3c1ee4c7"
+  }
+}
