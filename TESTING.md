@@ -341,6 +341,25 @@ exécutions finales de `main` constituent une vérification supplémentaire sur
 le commit de fusion réel. Aucun ANR système ni test en échec n’est masqué par
 cette relance.
 
+Après publication, la [PR documentaire #15](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/15),
+tête `0ac3c43db278d8961c56ae09783ab37b479e5ba9`, a rencontré deux échecs de
+démarrage dans les [tentatives 1 et 2 du run 40409577689](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40409577689).
+Chacune a réussi **840 exécutions JVM**, puis le garde-fou a arrêté le lancement
+après détection d’un ANR de `com.android.systemui`, signalé comme échec de
+démarrage, avant installation de l’application et avant tout appel du lanceur
+d’instrumentation : **zéro test
+Android exécuté**, aucun état prêt délivré. Les archives téléchargées ont pour
+SHA-256 `1353054544ee21b944add671bb82ff8c4825a4cec5f96492a54f7081d8a2a129`
+(tentative 1) et `d74339e37d7008908e52534d1975801c957f35e8e298352895cdb5010fa6f9c0`
+(tentative 2). Le lancement CI remplace ensuite `-gpu swiftshader_indirect` par
+`-gpu swangle` pour examiner l’hypothèse d’un problème de rendu logiciel au
+démarrage ; cette hypothèse n’établit pas la cause des ANR. API 36, écran,
+quatre cœurs, mémoire, garde-fous et deux passages complets des 88 tests restent
+inchangés. La validation de cette configuration repose sur les suites complètes
+de la PR #15 et de son commit de fusion dans `main`, dont les résultats restent
+consultables dans leurs runs. Ces échecs de démarrage ne remplacent ni les
+résultats du commit publié `3740356` ni la vérification de son APK.
+
 La validation des sources et la publication sont deux contrôles distincts.
 L’APK distribué provient de l’artefact exact de la CI réussie ; il a été signé
 avec la clé durable hors dépôt, contrôlé puis téléchargé à nouveau après

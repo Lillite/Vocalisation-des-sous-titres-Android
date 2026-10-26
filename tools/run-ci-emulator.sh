@@ -93,8 +93,11 @@ printf 'no\n' | timeout -k 1s 120s "$avdmanager" create avd --name "$avd_name" -
   printf 'hw.cpu.ncore=4\nhw.ramSize=2048\ndisk.dataPartition.size=2048M\n'
 } >> "$avd_home/$avd_name.avd/config.ini"
 cp "$avd_home/$avd_name.avd/config.ini" "$evidence/avd-config.ini"
+# Use the supported ANGLE + SwiftShader backend on this GPU-less runner.
+# SystemUI timed out while the former legacy backend was warming shaders.
+# Keep the same device, resources, readiness/ANR guards and complete test runs.
 command=("$emulator" -port "$port" -avd "$avd_name" -cores 4 -memory 2048
-  -accel on -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none)
+  -accel on -no-window -gpu swangle -no-snapshot -noaudio -no-boot-anim -camera-back none)
 printf '%q ' "${command[@]}" > "$evidence/emulator-command.txt"
 printf '\n' >> "$evidence/emulator-command.txt"
 date -u '+%Y-%m-%dT%H:%M:%SZ' > "$evidence/launched-utc.txt"
@@ -117,6 +120,9 @@ for setting in window_animation_scale transition_animation_scale animator_durati
     exit 2
   fi
 done
+# Retain successful boot diagnostics before instrumentation replaces logcat.
+# This includes the renderer's shader warm-up, not an application benchmark.
+timeout -k 1s 10s "$adb" -s "$device" logcat -d -t 12000 > "$evidence/logcat-ready.txt" 2>&1
 # The existing guards, exact APK hashes, two whole suites and failure statuses
 # remain owned by the unchanged runner. No failed suite is retried here.
 bash tools/run-release-device-tests.sh
