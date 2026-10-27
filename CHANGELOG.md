@@ -1,5 +1,15 @@
 # Journal des changements
 
+## 0.5.1 — Correctifs, version candidate du 27 octobre 2026
+
+- Réglages : neutralisation du focus de saisie resté sur un champ éloigné lorsque l’utilisateur touche un curseur, une case ou un bouton. Les widgets sont conservés et la saisie explicite reste possible.
+- DeepL : HTTP 429/529 distinct de HTTP 456 ; appels espacés d’au moins 500 ms, au plus cinq reprises de refus de débit avec attente croissante, aléa et respect de Retry-After dans une limite de deux minutes d’attente cumulée par lot. Annulation prise en compte pendant l’attente.
+- Le quota du compte ou le plafond propre à une clé reste un motif d’arrêt explicite. Aucun renvoi automatique après réponse réseau perdue ou erreur serveur ambiguë. Les lots validés et la reprise demeurent conservés ; un refus explicite ne marque plus à tort le dernier lot comme une réponse perdue.
+- Guide des services gratuits : parcours Azure F0 déjà intégré, Google Cloud et ML Kit non intégrés, limites des accès non officiels et des quotas.
+- GitHub Actions : un passage de chaque suite avant fusion, véritable instrumentation de l’APK release de test ; construction après fusion sans répétition des tests, avec preuve de sources identiques et comparaison du contenu de l’APK. Signature durable requise avant publication.
+
+Les résultats de la candidate sont consignés dans [TESTING.md](TESTING.md). Cette entrée ne déclare pas une publication accomplie.
+
 Ce journal présente les étapes principales vérifiables dans l’historique du dépôt. Les rapports détaillés restent accessibles dans l’[index documentaire](docs/README.md). Les numéros ci-dessous désignent les versions de l’application ; les correspondances avec les publications GitHub figurent dans l’[historique](docs/HISTORIQUE_BRANCHES.md).
 
 ## 0.5.0 — Confort intégral, séances et traduction progressive

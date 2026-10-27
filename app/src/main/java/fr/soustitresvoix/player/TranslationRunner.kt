@@ -13,7 +13,8 @@ import java.nio.charset.CodingErrorAction
 /**
  * One worker owns this runner and its private cache directory. Only a complete,
  * validated track is committed. A cache miss (including a corrupt entry) uses the
- * engine only within an explicitly requested run; there are no automatic retries.
+ * engine only within an explicitly requested run. DeepL may retry explicit
+ * rate-limit rejections; uncertain network outcomes are never retried automatically.
  */
 class TranslationRunner(private val directory: File,
     checkpointDirectory: File? = null, private val retainedDirectory: File? = null) {
@@ -107,7 +108,19 @@ class TranslationRunner(private val directory: File,
             checkCancelled(cancelled)
             // Mark the request before sending: a lost response may already have consumed quota.
             checkpoints?.let { if (!it.write(plan, texts, true)) cacheWarning = "La progression n’a pas pu être enregistrée ; garde cette session ouverte." }
-            val response = engine.translate(batch.texts, plan.sourceLanguage, plan.targetLanguage, cancelled).toList()
+            val response = try {
+                engine.translate(batch.texts, plan.sourceLanguage, plan.targetLanguage, cancelled).toList()
+            } catch (failure: TranslationFailure) {
+                // An explicit refusal did not produce a billable translation. Preserve
+                // the validated prefix without falsely marking the request as lost.
+                if (failure.reason in setOf(TranslationFailure.Reason.RATE_LIMIT, TranslationFailure.Reason.QUOTA,
+                    TranslationFailure.Reason.AUTHENTICATION, TranslationFailure.Reason.CONFIGURATION,
+                    TranslationFailure.Reason.LANGUAGE, TranslationFailure.Reason.REDIRECT)) {
+                    checkpoints?.let { if (!it.write(plan, texts, false))
+                        cacheWarning = "La progression n’a pas pu être enregistrée ; garde cette session ouverte." }
+                }
+                throw failure
+            }
             checkCancelled(cancelled)
             // Validate each response immediately, so an invalid first lot cannot
             // trigger further billable requests before whole-track validation.

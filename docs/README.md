@@ -1,5 +1,11 @@
 # Documentation de Sous-titres en voix
 
+## Correctifs 0.5.1 en préparation
+
+- [Réglages stables et traduction résiliente : notes de la candidate](releases/0.5.1.md).
+- [Traduction gratuite et limites : Azure, Google et DeepL](TRADUCTION_GRATUITE_ET_LIMITES.md).
+- [Validation avant fusion et construction après fusion](../TESTING.md).
+
 [Accueil du projet](../README.md) · [Guide Confort intégral 0.5.0](CONFORT_INTEGRAL_050.md) · [Validation](../TESTING.md)
 
 La **[0.5.0 — lecture intégrale et traduction progressive](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0)** est publiée depuis le **26 octobre 2026**. [Télécharger l’APK](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.0/SousTitresVoix-0.5.0-confort-integral.apk). Les sources ont passé la validation de `main` : **1 016 exécutions JUnit de 508 méthodes** et lint sans erreur ; le téléchargement public a ensuite été vérifié. L’outillage a réussi 62 tests Python, dont 39 en CI Android et 23 autres vérifiés localement. Les guides distinguent les fonctions, les [résultats réellement exécutés](../TESTING.md) et l’historique des étapes.

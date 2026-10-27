@@ -1,0 +1,80 @@
+name: APK release — compilation après fusion sans nouveaux tests
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+concurrency:
+  group: release-main-build
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Vérifier que cette fusion exacte a été testée dans la PR
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/verify-pr-validation.py prepare
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Préparer SDK et démonstration synthétique
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install --no-install-recommends -y ffmpeg >/dev/null
+          fi
+          if [[ ! -f "$ANDROID_HOME/platforms/android-36/android.jar" || ! -x "$ANDROID_HOME/build-tools/36.0.0/aapt2" ]]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses < <(yes) >/dev/null
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          fi
+          git rev-parse HEAD > build/verification/source-commit.txt
+      - name: Compiler la release sans relancer les suites de tests
+        run: gradle --no-daemon --stacktrace --no-build-cache :app:assembleRelease
+      - name: Vérifier le contenu identique à l’APK déjà testé
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/distribution
+          cp app/build/outputs/apk/release/app-release-unsigned.apk build/distribution/app-release.apk
+          python3 tools/verify-pr-validation.py compare --apk build/distribution/app-release.apk
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print build/distribution/app-release.apk > build/verification/release-manifest.xml
+          python3 tools/check-apk-manifest.py build/verification/release-manifest.xml
+          sha256sum build/distribution/app-release.apk > build/verification/release-apk.sha256
+          git diff --exit-code
+      - name: Conserver APK à signer avec le certificat durable
+        uses: actions/upload-artifact@v4
+        with:
+          name: SousTitresVoix-release-main
+          path: |
+            build/distribution/app-release.apk
+            build/verification/source-commit.txt
+            build/verification/release-apk.sha256
+            build/verification/pr-validation/proof.json
+          retention-days: 14
+          if-no-files-found: error
+      - name: Conserver les preuves de construction
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Release-preuves-apres-fusion
+          path: build/verification/
+          retention-days: 14
+          if-no-files-found: warn

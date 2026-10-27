@@ -92,6 +92,55 @@ class SettingsPanelRobolectricTest {
             assertEquals(1, activations)
         } finally { owner.pause().stop().destroy() }
     }
+    @Test fun touchingAScrolledSettingReleasesEarlierTextFocusWithoutRebuildingControls() {
+        val owner = Robolectric.buildActivity(Activity::class.java).setup().visible()
+        try {
+            val activity = owner.get()
+            val panel = SettingsPanel(activity)
+            repeat(10) { index ->
+                panel.add(SettingsSection.VOICE, "Commande $index", Button(activity).apply {
+                    text = "Commande $index"; minimumHeight = 100
+                })
+            }
+            var value = 50
+            val number = SettingsNumberControl(activity, "Volume", 0, 100, 5, "%", { value }, { value = it })
+            panel.add(SettingsSection.VOICE, "Volume", number)
+            panel.onRefresh(number::refresh)
+            activity.setContentView(panel)
+            fun layout() {
+                panel.measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(700, View.MeasureSpec.EXACTLY))
+                panel.layout(0, 0, 600, 700)
+            }
+            layout()
+            val scroll = descendants(panel).filterIsInstance<android.widget.ScrollView>().single()
+            assertTrue(scroll.isFocusableInTouchMode)
+            assertTrue(panel.search.requestFocus())
+            val slider = requireNotNull(number.seekBar)
+            val bounds = android.graphics.Rect(0, 0, slider.width, slider.height)
+            scroll.offsetDescendantRectToMyCoords(slider, bounds)
+            scroll.scrollTo(0, bounds.top - 100)
+            val before = scroll.scrollY
+            assertTrue(before > 0)
+            val scrollLocation = IntArray(2).also(scroll::getLocationOnScreen)
+            val sliderLocation = IntArray(2).also(slider::getLocationOnScreen)
+            val x = sliderLocation[0] - scrollLocation[0] + slider.width * .75f
+            val y = sliderLocation[1] - scrollLocation[1] + slider.height / 2f
+            val now = android.os.SystemClock.uptimeMillis()
+            for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+                android.view.MotionEvent.obtain(now, now, action, x, y, 0).let { event ->
+                    try { scroll.dispatchTouchEvent(event) } finally { event.recycle() }
+                }
+            }
+            panel.refresh(); layout()
+            assertFalse("An earlier text input must not reclaim the viewport", panel.search.hasFocus())
+            assertEquals(before, scroll.scrollY)
+            assertSame(slider, number.seekBar)
+            assertTrue("Explicit keyboard editing must remain available", number.field.requestFocus())
+            assertTrue(number.field.hasFocus())
+        } finally { owner.pause().stop().destroy() }
+    }
+
     @Test fun numericValidationRejectsOutOfRangeAndOverflowAndAllInputsShareOneValue() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         var stored = 100

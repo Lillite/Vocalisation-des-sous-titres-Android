@@ -139,7 +139,7 @@ class TranslationProvidersRobolectricTest {
     @Test fun serviceFailuresAreSanitizedAndNeverRetried() {
         for ((status, reason) in listOf(302 to TranslationFailure.Reason.REDIRECT,
             401 to TranslationFailure.Reason.AUTHENTICATION, 403 to TranslationFailure.Reason.AUTHENTICATION,
-            429 to TranslationFailure.Reason.QUOTA, 456 to TranslationFailure.Reason.QUOTA,
+            456 to TranslationFailure.Reason.QUOTA,
             400 to TranslationFailure.Reason.LANGUAGE, 503 to TranslationFailure.Reason.SERVER)) {
             val transport = Transport(TranslationHttpResponse(status, "$privateText $privateKey"))
             assertFailure(reason) {

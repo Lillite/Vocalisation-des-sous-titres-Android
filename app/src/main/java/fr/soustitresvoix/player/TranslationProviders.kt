@@ -48,7 +48,8 @@ class TranslationFailure(val reason: Reason) : IOException(reason.message) {
         BUDGET("Le volume restant dépasse ton plafond local de nouveaux caractères. Aucun nouveau lot n’a été envoyé."),
         CONFIGURATION("Configuration du traducteur invalide. Vérifie le moteur, sa clé, sa région et les langues."),
         AUTHENTICATION("Accès au traducteur refusé. Vérifie la clé et les autorisations du compte."),
-        QUOTA("Quota ou limite du traducteur atteint. Vérifie le compte avant de relancer ; aucune relance automatique."),
+        QUOTA("Quota de caractères ou plafond du compte/de la clé atteint (DeepL : HTTP 456). Consulte le quota et les limites propres à la clé avant de reprendre."),
+        RATE_LIMIT("Débit temporairement limité par le traducteur (HTTP 429/529), distinct du quota de caractères. Les lots validés sont conservés ; réessaie plus tard si les attentes automatiques n’ont pas suffi."),
         LANGUAGE("Requête ou langue refusée par le traducteur. Vérifie les langues prises en charge par ce moteur."),
         REDIRECT("Redirection du service de traduction refusée. Vérifie l’adresse HTTPS configurée."),
         NETWORK("Connexion au traducteur impossible ou interrompue. Vérifie le réseau puis relance explicitement."),
@@ -63,7 +64,7 @@ class TranslationHttpRequest(val uri: URI, headers: Map<String, String>, val bod
     override fun toString(): String = "TranslationHttpRequest(HTTPS request, content hidden)"
 }
 
-class TranslationHttpResponse(val status: Int, val body: String) {
+class TranslationHttpResponse(val status: Int, val body: String, val retryAfterMillis: Long? = null) {
     override fun toString(): String = "TranslationHttpResponse(status=$status, content hidden)"
 }
 
@@ -105,7 +106,8 @@ class HttpsTranslationTransport : TranslationHttpTransport {
             checkCancelled()
             val status = connection.responseCode
             // Do not read error bodies, which may repeat private text or credentials.
-            if (status != 200) return TranslationHttpResponse(status, "")
+            if (status != 200) return TranslationHttpResponse(status, "",
+                TranslationRequestPacing.retryAfterMillis(connection.getHeaderField("Retry-After")))
             if (connection.contentLengthLong > MAX_RESPONSE_BYTES) throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
             val data = connection.inputStream.use { input ->
                 val output = ByteArrayOutputStream()
@@ -134,7 +136,10 @@ class HttpsTranslationTransport : TranslationHttpTransport {
 
 object TranslationEngines {
     fun create(config: TranslationProviderConfig,
-        transport: TranslationHttpTransport = HttpsTranslationTransport()): TranslationEngine = HttpEngine(config, transport)
+        transport: TranslationHttpTransport = HttpsTranslationTransport()): TranslationEngine = HttpEngine(config, transport, TranslationRequestPacing())
+
+    internal fun create(config: TranslationProviderConfig, transport: TranslationHttpTransport,
+        pacing: TranslationRequestPacing): TranslationEngine = HttpEngine(config, transport, pacing)
 
     /** Bind reusable translations to the selected server, without exposing its URL or key. */
     fun identity(config: TranslationProviderConfig): String {
@@ -192,7 +197,8 @@ object TranslationEngines {
                 200 -> Unit
                 in 300..399 -> throw TranslationFailure(TranslationFailure.Reason.REDIRECT)
                 401, 403 -> throw TranslationFailure(TranslationFailure.Reason.AUTHENTICATION)
-                429, 456 -> throw TranslationFailure(TranslationFailure.Reason.QUOTA)
+                429, 529 -> throw TranslationFailure(TranslationFailure.Reason.RATE_LIMIT)
+                456 -> throw TranslationFailure(TranslationFailure.Reason.QUOTA)
                 else -> throw TranslationFailure(TranslationFailure.Reason.SERVER)
             }
             if (response.body.toByteArray(Charsets.UTF_8).size > HttpsTranslationTransport.MAX_RESPONSE_BYTES)
@@ -228,7 +234,7 @@ object TranslationEngines {
     }
 
     private class HttpEngine(private val config: TranslationProviderConfig,
-        private val transport: TranslationHttpTransport) : TranslationEngine {
+        private val transport: TranslationHttpTransport, private val pacing: TranslationRequestPacing) : TranslationEngine {
         override val id: String = translationIdentity(config)
         private val closed = AtomicBoolean(false)
         override fun close() { closed.set(true); transport.close() }
@@ -281,13 +287,16 @@ object TranslationEngines {
                 if (request.body.toByteArray(Charsets.UTF_8).size > 120 * 1024)
                     throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
                 checkCancelled()
-                val response = transport.post(request) { closed.get() || cancelled() || Thread.currentThread().isInterrupted }
+                val stopped = { closed.get() || cancelled() || Thread.currentThread().isInterrupted }
+                val response = if (config.provider == TranslationProvider.DEEPL_FREE || config.provider == TranslationProvider.DEEPL_PRO)
+                    pacing.postDeepL(transport, request, stopped) else transport.post(request, stopped)
                 checkCancelled()
                 when (response.status) {
                     200 -> Unit
                     in 300..399 -> throw TranslationFailure(TranslationFailure.Reason.REDIRECT)
                     401, 403 -> throw TranslationFailure(TranslationFailure.Reason.AUTHENTICATION)
-                    429, 456 -> throw TranslationFailure(TranslationFailure.Reason.QUOTA)
+                    429, 529 -> throw TranslationFailure(TranslationFailure.Reason.RATE_LIMIT)
+                    456 -> throw TranslationFailure(TranslationFailure.Reason.QUOTA)
                     400, 404, 413, 422 -> throw TranslationFailure(TranslationFailure.Reason.LANGUAGE)
                     else -> throw TranslationFailure(TranslationFailure.Reason.SERVER)
                 }

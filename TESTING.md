@@ -1,5 +1,18 @@
 # Vérifications de régression
 
+## Candidate 0.5.1 — validation avant fusion, publication distincte
+
+Version Android **0.5.1 / code 8**. L’APK public reste la 0.5.0 jusqu’à signature et publication effectives. La signature privée existante n’est ni versionnée ni placée dans les artefacts de CI.
+
+Le nouveau parcours exécute, avant chaque fusion vers `main`, **178 tests du noyau**, **254 tests JVM de l’application release** et **92 tests instrumentés Android release**, soit **524 méthodes distinctes attendues**. Les effectifs sont un inventaire attendu, pas une déclaration de réussite : les XML du run Actions vérifient chaque identité de méthode, les échecs, erreurs et tests ignorés. Les compilations des APK debug/test debug et release/test release, les lints debug/release, les manifestes, signatures éphémères, alignements et empreintes restent contrôlés.
+
+Les régressions nouvelles couvrent le défilement après curseur/bouton/case, le maintien de la saisie, les refus DeepL 429/529 puis succès, les délais du serveur, le nombre maximal de reprises, l’annulation et la fermeture, le refus 456, la réponse réseau perdue, ainsi que la reprise d’une piste sans renvoyer son préfixe déjà traduit. Les échanges de traduction sont simulés avec des textes synthétiques ; ils ne consomment aucun quota personnel et ne prouvent pas l’état d’un compte DeepL réel.
+
+Après une **fusion avec commit de merge**, `release-build.yml` exige la réussite de la validation de la PR, vérifie le même arbre de sources et les mêmes parents, puis exécute uniquement `:app:assembleRelease`. Il compare le contenu applicatif obtenu à celui de l’APK testé avant fusion. Il produit un artefact **non signé** `SousTitresVoix-release-main`, avec preuve de provenance ; il ne rejoue pas les suites. L’APK doit ensuite être signé avec le certificat durable existant et contrôlé avant publication. La publication ne relance pas les tests.
+
+**État lors de la préparation :** contrôles locaux structurels et tests d’outillage exécutés ; résultats Android/JVM à consulter dans la validation de la PR. Les essais sur le téléphone et les appels aux services réels restent à distinguer des essais automatisés.
+
+
 ## Version publiée 0.5.0 — lecture intégrale et traduction progressive
 
 La version **0.5.0, code 7**, conserve l’identité Android
