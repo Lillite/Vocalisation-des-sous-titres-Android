@@ -1,16 +1,16 @@
-# Vérifier la version 0.5.0 sur le téléphone
+# Vérifier la version 0.5.1 sur le téléphone
 
 [Documentation](README.md) · [Guide Confort intégral](CONFORT_INTEGRAL_050.md) · [Installation](../README.md) · [Fournisseurs](GUIDE_MOTEURS_TRADUCTION.md)
 
-Ce parcours concerne **0.5.0 — Confort intégral**, code **7**, identité **fr.soustitresvoix.player.translation**, [publiée le 26 octobre 2026](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0). Les sources ont passé la validation automatisée de `main` et l’APK public a été vérifié après téléchargement. **Les essais sur téléphone décrits ici sont à consigner séparément : ni compilation ni instrumentation sur émulateur ne les déclarent réussis.**
+Ce parcours concerne **0.5.1 — réglages stables et traduction résiliente**, code **8**, identité **fr.soustitresvoix.player.translation**. Les sources ont réussi **524 tests avant fusion** et la release a été reconstruite avec comparaison du contenu après fusion. L’état du téléchargement signé est indiqué dans les [notes 0.5.1](releases/0.5.1.md). **Les essais sur téléphone décrits ici restent à consigner séparément : ni compilation ni instrumentation sur émulateur ne les déclarent réussis.**
 
-Pour chaque ligne, relever **réussi**, **échec** ou **non testé**, l’attendu, l’observé et les étapes exactes. L’objectif principal est de vérifier la vocalisation de toutes les occurrences textuelles de la piste prise en charge, avec répétitions réelles conservées.
+Le [guide Confort intégral](CONFORT_INTEGRAL_050.md) couvre les fonctions conservées ; le [guide des services gratuits](TRADUCTION_GRATUITE_ET_LIMITES.md) précise les offres et les limites DeepL.
 
 ## Préparer une séance reproductible
 
 | Élément | À relever |
 | --- | --- |
-| Application | Nom affiché, version 0.5.0, code 7, date |
+| Application | Nom affiché, version 0.5.1, code 8, date |
 | Téléphone | Modèle exact, Android, orientation, taille des polices |
 | Voix | Moteur, voix, langue, données installées, vitesse |
 | Narration | Profil intégral, mode, plafond, reprise après Pause |
@@ -23,13 +23,13 @@ Commencer par les contenus synthétiques du dépôt, à volume confortable. Ne p
 
 ## Installer la bonne version
 
-1. Vérifier que la release 0.5.0 a été publiée sur [la page du projet](../README.md).
-2. Télécharger **SousTitresVoix-0.5.0-confort-integral.apk** ; les archives « Source code » ne sont pas installables.
+1. Vérifier que la release 0.5.1 a été publiée sur [la page du projet](../README.md).
+2. Télécharger **SousTitresVoix-0.5.1-correctifs.apk** ; les archives « Source code » ne sont pas installables.
 3. Ouvrir le fichier et autoriser l’installation depuis l’application de téléchargement si Android le demande.
 4. Avec la 0.4.0 déjà installée, vérifier qu’Android propose sa mise à jour et conserve les réglages/données. Ne pas désinstaller pour forcer un échec de signature.
 5. Vérifier version/code dans l’application et les repères de la release.
 
-La 0.5.0 conserve l’identité et le certificat de la 0.4.0 ; la 0.3.2 reste une autre application. Les empreintes, taille et résultats vérifiés sont disponibles dans [TESTING.md](../TESTING.md) et les notes de la publication.
+La 0.5.1 conserve l’identité et le certificat des 0.4.0 et 0.5.0 ; la 0.3.2 reste une autre application. Les empreintes, taille et résultats vérifiés sont disponibles dans [TESTING.md](../TESTING.md) et les notes de la publication.
 
 ## Parcourir les huit rubriques et les champs numériques
 
@@ -48,6 +48,16 @@ La 0.5.0 conserve l’identité et le certificat de la 0.4.0 ; la 0.3.2 reste un
 | Refaire portrait/paysage, grandes polices, clavier ouvert et TalkBack | Champs, erreurs et boutons utilisables ; focus retrouvé |
 
 L’annulation des réglages ne remet pas un fichier supprimé et ne retire pas un appel API déjà confirmé. Ne pas utiliser une suppression personnelle pour essayer le retour aux valeurs.
+
+## Vérifier la conservation du défilement
+
+1. Ouvrir les paramètres puis descendre suffisamment pour que le début du panneau soit hors de l’écran.
+2. Modifier successivement un curseur, un bouton +/− et une case : la commande doit rester visible, sans retour en haut.
+3. Toucher un champ numérique, saisir une valeur valide, puis toucher une autre commande plus bas : le champ précédent ne doit plus attirer le panneau vers lui.
+4. Toucher explicitement le même champ de nouveau : la saisie doit rester possible.
+5. Refaire le parcours avec grande police et TalkBack, en notant séparément les éventuels changements du focus d’accessibilité.
+
+Le changement volontaire de rubrique ou du filtre de recherche peut modifier le contenu affiché. La régression visée est le retour en haut après une modification d’une commande dans le panneau déjà parcouru.
 
 ## Vérifier les phrases complètes et le bilan
 
@@ -166,6 +176,20 @@ Le petit exemple de 24 secondes ne suffit pas à observer un tampon initial d’
 8. Essayer un déplacement vers une portion encore indisponible : attente contrôlée.
 
 Un résultat partiel n’est pas exportable comme une traduction entière et ne peut pas rendre l’œuvre Prêt hors ligne.
+
+## DeepL : débit, quota et reprise
+
+Les tests automatisés de la 0.5.1 simulent les refus HTTP ; **ne pas épuiser volontairement le quota d’un compte réel** pour les reproduire.
+
+| Situation observée | Résultat à relever |
+| --- | --- |
+| Limitation temporaire 429/529 | Attentes et reprises bornées, puis poursuite ou arrêt perceptible |
+| Annuler pendant une attente | Pas de nouvel envoi du lot après annulation |
+| Limite 456 malgré un solde affiché | Vérification du plafond propre à la clé et du compte ; aucune boucle de renvoi |
+| Reprendre la même piste avec la même configuration | Lots déjà validés réutilisés ; estimation portant sur le travail restant |
+| Connexion perdue après un envoi | Consommation du lot présentée comme incertaine avant une reprise confirmée |
+
+Le détail des délais et des offres figure dans [Traduction gratuite et limites](TRADUCTION_GRATUITE_ET_LIMITES.md). Un quota interrogé est une observation ponctuelle, pas une réservation.
 
 ## Affichage, correction, export et fournisseurs
 

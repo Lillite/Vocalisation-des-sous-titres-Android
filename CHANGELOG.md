@@ -1,6 +1,8 @@
 # Journal des changements
 
-## 0.5.1 — Correctifs, version candidate du 27 octobre 2026
+[Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
+
+## 0.5.1 — Réglages stables et traduction résiliente
 
 - Réglages : neutralisation du focus de saisie resté sur un champ éloigné lorsque l’utilisateur touche un curseur, une case ou un bouton. Les widgets sont conservés et la saisie explicite reste possible.
 - DeepL : HTTP 429/529 distinct de HTTP 456 ; appels espacés d’au moins 500 ms, au plus cinq reprises de refus de débit avec attente croissante, aléa et respect de Retry-After dans une limite de deux minutes d’attente cumulée par lot. Annulation prise en compte pendant l’attente.
@@ -8,7 +10,7 @@
 - Guide des services gratuits : parcours Azure F0 déjà intégré, Google Cloud et ML Kit non intégrés, limites des accès non officiels et des quotas.
 - GitHub Actions : un passage de chaque suite avant fusion, véritable instrumentation de l’APK release de test ; construction après fusion sans répétition des tests, avec preuve de sources identiques et comparaison du contenu de l’APK. Signature durable requise avant publication.
 
-Les résultats de la candidate sont consignés dans [TESTING.md](TESTING.md). Cette entrée ne déclare pas une publication accomplie.
+**Publiée le 27 octobre 2026.** La [PR #16](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/16) a réussi **524 tests avant fusion**. Le [build après fusion](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40560530124) a confirmé le même contenu applicatif, sans rejouer les suites. [Télécharger l’APK](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.1/SousTitresVoix-0.5.1-correctifs.apk) · [Notes 0.5.1](docs/releases/0.5.1.md) · [Résultats et empreintes](TESTING.md).
 
 Ce journal présente les étapes principales vérifiables dans l’historique du dépôt. Les rapports détaillés restent accessibles dans l’[index documentaire](docs/README.md). Les numéros ci-dessous désignent les versions de l’application ; les correspondances avec les publications GitHub figurent dans l’[historique](docs/HISTORIQUE_BRANCHES.md).
 

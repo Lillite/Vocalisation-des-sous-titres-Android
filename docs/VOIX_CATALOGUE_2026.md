@@ -1,5 +1,9 @@
 # Catalogue guidé des moteurs vocaux Android
 
+[Accueil](../README.md) · [Documentation](README.md) · [Essais sur téléphone](TESTS_TELEPHONE.md)
+
+Le catalogue vocal est conservé dans la 0.5.1. La date d’audit ci-dessous décrit la vérification documentaire des moteurs ; elle n’est pas une nouvelle mesure de leurs voix sur téléphone.
+
 Vérification documentaire : **20 octobre 2026**. Le catalogue embarqué comprend **41 notices**, avec des liens vers les éditeurs, auteurs, projets ou canaux de distribution qu’ils indiquent. Il vise une couverture large, y compris les moteurs régionaux et les projets récents. Il ne garantit pas de recenser tous les produits privés, variantes constructeur, anciens moteurs ou distributions régionales.
 
 La vérification porte sur les descriptions et les modes de distribution. **Aucun de ces moteurs externes n’a été installé, écouté, mesuré ou validé sur le OnePlus dans cet audit.** Les déclarations des auteurs sur les langues, le calcul local et les performances restent des déclarations documentaires. L’application n’installe rien automatiquement et le catalogue ne demande aucune permission Internet supplémentaire au lecteur.

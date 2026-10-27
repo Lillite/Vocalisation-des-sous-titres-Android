@@ -1,0 +1,50 @@
+{
+  "version": "0.5.1",
+  "version_code": 8,
+  "application_id": "fr.soustitresvoix.player.translation",
+  "source_commit": "d5d5b63ea37ca4be423f375e8e7a75e870d154e6",
+  "source_tree": "6ee86dbeab9cde02598325de3316d34ea3be4cb7",
+  "pull_request": 16,
+  "validation": {
+    "run_id": 40556708779,
+    "attempt": 1,
+    "url": "https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40556708779",
+    "head_commit": "4fc267007fd416f551a25b6454a27f3501e5e9b8",
+    "tested_merge_commit": "5487d82f8d883c11321b88371abbb85668c8a515",
+    "tests": {
+      "core_jvm": 178,
+      "application_jvm": 254,
+      "android_instrumented": 92,
+      "total": 524,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "instrumented_android_api": 36,
+    "conclusion": "success"
+  },
+  "post_merge_build": {
+    "run_id": 40560530124,
+    "url": "https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40560530124",
+    "test_suites_rerun": false,
+    "payload_identical_to_tested_apk": true,
+    "unsigned_apk_sha256": "5cb61d8fb11eb0f704730dbaf1c682bc53c013c282be245bbc1ea42ceeb56953"
+  },
+  "publication": {
+    "run_id": 40580117622,
+    "url": "https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40580117622",
+    "conclusion": "success",
+    "release_id": 425961994,
+    "tag": "v0.5.1",
+    "release_url": "https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.1",
+    "published_at": "2026-10-27T20:40:46Z",
+    "asset_id": 682813699,
+    "file": "SousTitresVoix-0.5.1-correctifs.apk",
+    "bytes": 5242523,
+    "sha256": "75ed88b3198d4ea2bef9b837d870bb48db2624c8a8325e6f3d1fa8b9d2f5d881",
+    "signer_certificate_sha256": "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d",
+    "public_download_verified": true
+  },
+  "scope": "Validation automatisée sur émulateur Android 36 ; les vérifications de TalkBack, des voix et du matériel sur téléphone réel restent décrites dans docs/TESTS_TELEPHONE.md."
+}
+

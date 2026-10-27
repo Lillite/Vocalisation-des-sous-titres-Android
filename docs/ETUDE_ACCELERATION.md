@@ -1,5 +1,9 @@
 # Accélération réelle : ce qui est intégré et ce qui ne l’est pas
 
+[Accueil](../README.md) · [Documentation](README.md) · [Architecture](ARCHITECTURE.md)
+
+Cette étude distingue les fonctions conservées en 0.5.1 des capacités restant à mesurer ou à développer. Aucun résultat matériel nouveau n’est déduit des correctifs 0.5.1.
+
 ## Intégré
 
 Décodage vidéo via Media3/MediaCodec et ses décodeurs disponibles, sélection normale ou préférence logicielle explicite. Effets graphiques Media3 de recadrage, luminosité et contraste SDR ; leur pipeline peut utiliser OpenGL sur l’appareil. Préparation et hachage WAV hors du thread d’interface ; indexation séquentielle sans décoder une seconde vidéo. Métriques séparant processus lecteur et moteur TTS externe. Le diagnostic ne prétend pas mesurer l’utilisation Adreno ou Hexagon.

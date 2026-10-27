@@ -1,5 +1,7 @@
 # Confort intégral — guide de la version 0.5.0
 
+> **Guide des fonctions introduites en 0.5.0 et conservées en 0.5.1.** Pour installer la version actuelle et connaître les derniers correctifs : [accueil](../README.md) et [notes 0.5.1](releases/0.5.1.md). Les résultats de validation cités pour la 0.5.0 restent historiques.
+
 [Accueil](../README.md) · [Documentation](README.md) · [Tests sur téléphone](TESTS_TELEPHONE.md) · [Notes de version](releases/0.5.0.md) · [Couverture des demandes](COUVERTURE_DEMANDES_050.md)
 
 **Version 0.5.0 publiée le 26 octobre 2026.** [Télécharger l’APK Android](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.0/SousTitresVoix-0.5.0-confort-integral.apk) · [Release et sommes de contrôle](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0). Les six suites ont réussi **1 016 exécutions de 508 méthodes distinctes** ; le fichier public, son certificat et son contenu ont été contrôlés après téléchargement. Les [résultats et limites](../TESTING.md) sont propres à ces sources. Aucun résultat d’un APK antérieur n’est réattribué à cette version.

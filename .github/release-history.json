@@ -105,7 +105,7 @@
       "source_commit": "3740356420fb09eadabe23da207fa554515da101",
       "title": "Sous-titres en voix 0.5.0 — lecture intégrale et traduction progressive",
       "prerelease": false,
-      "latest": true,
+      "latest": false,
       "notes": "docs/releases/0.5.0.md",
       "asset": {
         "id": 679580568,
@@ -114,6 +114,24 @@
         "sha256": "dcaf9f07cdc85f5dfa007ceeef40a3e71cdba25b40c66381a3cf39998207ed7c",
         "version_name": "0.5.0",
         "version_code": 7,
+        "application_id": "fr.soustitresvoix.player.translation"
+      }
+    },
+    {
+      "id": 425961994,
+      "tag": "v0.5.1",
+      "source_commit": "d5d5b63ea37ca4be423f375e8e7a75e870d154e6",
+      "title": "Sous-titres en voix 0.5.1 — réglages stables et traduction résiliente",
+      "prerelease": false,
+      "latest": true,
+      "notes": "docs/releases/0.5.1.md",
+      "asset": {
+        "id": 682813699,
+        "name": "SousTitresVoix-0.5.1-correctifs.apk",
+        "size": 5242523,
+        "sha256": "75ed88b3198d4ea2bef9b837d870bb48db2624c8a8325e6f3d1fa8b9d2f5d881",
+        "version_name": "0.5.1",
+        "version_code": 8,
         "application_id": "fr.soustitresvoix.player.translation"
       }
     }

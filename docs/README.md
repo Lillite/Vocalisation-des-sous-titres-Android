@@ -1,79 +1,69 @@
 # Documentation de Sous-titres en voix
 
-## Correctifs 0.5.1 en préparation
+[Accueil et téléchargement](../README.md) · [Changements](../CHANGELOG.md) · [Validation](../TESTING.md) · [Signaler un problème](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/issues/new/choose)
 
-- [Réglages stables et traduction résiliente : notes de la candidate](releases/0.5.1.md).
-- [Traduction gratuite et limites : Azure, Google et DeepL](TRADUCTION_GRATUITE_ET_LIMITES.md).
-- [Validation avant fusion et construction après fusion](../TESTING.md).
+**Version actuelle : 0.5.1, publiée le 27 octobre 2026.** **[Télécharger l’APK Android](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.1/SousTitresVoix-0.5.1-correctifs.apk)** · [Notes de version](releases/0.5.1.md). Les sources ont réussi 524 tests avant fusion ; la construction après fusion a vérifié le même contenu applicatif sans répéter les suites, puis la publication signée a été contrôlée.
 
-[Accueil du projet](../README.md) · [Guide Confort intégral 0.5.0](CONFORT_INTEGRAL_050.md) · [Validation](../TESTING.md)
+## Installer et utiliser sur téléphone
 
-La **[0.5.0 — lecture intégrale et traduction progressive](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0)** est publiée depuis le **26 octobre 2026**. [Télécharger l’APK](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.0/SousTitresVoix-0.5.0-confort-integral.apk). Les sources ont passé la validation de `main` : **1 016 exécutions JUnit de 508 méthodes** et lint sans erreur ; le téléchargement public a ensuite été vérifié. L’outillage a réussi 62 tests Python, dont 39 en CI Android et 23 autres vérifiés localement. Les guides distinguent les fonctions, les [résultats réellement exécutés](../TESTING.md) et l’historique des étapes.
-
-## Utiliser la version 0.5.0 sur téléphone
-
-| Besoin | Document |
+| Besoin | Guide |
 | --- | --- |
-| Installer, choisir une voix et ouvrir une vidéo | [Présentation et démarrage rapide](../README.md) |
-| Trouver les huit rubriques, rechercher et régler précisément | [Guide Confort intégral](CONFORT_INTEGRAL_050.md#réglages--huit-rubriques-et-une-recherche) |
-| Conserver les phrases, consulter le bilan et relire une interruption | [Lecture et suivi](CONFORT_INTEGRAL_050.md#suivi-des-occurrences-et-bilan) |
-| Retrouver la séance ou réparer l’accès à un fichier | [Séances et réparation](CONFORT_INTEGRAL_050.md#séances-mémorisées-et-réparation-daccès) |
-| Corriger décalage, dérive et portions | [Synchronisation](CONFORT_INTEGRAL_050.md#synchronisation--décalage-dérive-et-portions) |
-| Préparer les voix et vérifier la disponibilité hors ligne | [Conservation hors ligne](CONFORT_INTEGRAL_050.md#conserver-pour-une-écoute-hors-ligne) |
-| Traduire avant lecture ou progressivement, reprendre et exporter | [Traduction 0.5.0](CONFORT_INTEGRAL_050.md#traduction-complète-reprise-et-mode-progressif) |
-| Configurer les comptes Azure, DeepL et LibreTranslate | [Guide des moteurs de traduction](GUIDE_MOTEURS_TRADUCTION.md) |
+| Installer, choisir une voix et ouvrir une vidéo | [Démarrage rapide](../README.md#installer-et-commencer-sur-android) |
+| Comprendre les corrections des réglages et de DeepL | [Nouveautés 0.5.1](releases/0.5.1.md) |
+| Réglages, lecture intégrale, séances, synchronisation et stockage hors ligne | [Guide Confort intégral](CONFORT_INTEGRAL_050.md) — fonctions introduites en 0.5.0 et conservées |
+| Régler cadrage, zoom, bandes, contraste et luminosité | [Interface d’image](INTERFACE_IMAGE_ETAPE_4.md) |
+| Régler les volumes, fondus et l’atténuation du film | [Commandes audio](COMMANDES_AUDIO_ETAPE_5.md) |
+| Régler préampli, égaliseur, balance, mono et limiteur | [Audio expert](AUDIO_EXPERT_ETAPE_6.md) |
 | Choisir un moteur vocal externe | [Catalogue des voix et moteurs](VOIX_CATALOGUE_2026.md) |
-| Vérifier les parcours sur un téléphone réel | [Tests sur téléphone](TESTS_TELEPHONE.md) |
-| Lire tous les changements de la version | [Notes 0.5.0](releases/0.5.0.md), [journal des changements](../CHANGELOG.md) |
+| Vérifier la mise à jour sur un téléphone réel | [Parcours manuel 0.5.1](TESTS_TELEPHONE.md) |
 
-La 0.5.0 garde l’identité de l’édition Traduction 0.4.0 et son certificat durable, vérifié sur l’APK public, pour permettre sa mise à jour. La stable 0.3.2 reste une application distincte. Les originaux vidéo ne sont pas modifiés. L’affichage propose original, français, bilingue ou masqué ; la narration utilise la piste choisie indépendamment.
+La série 0.5 conserve l’identité Android et le certificat durable de l’édition Traduction 0.4.0 ; la 0.3.2 possède une autre identité. Les versions publiées et leurs consignes d’installation restent accessibles depuis l’accueil. Les originaux vidéo ne sont pas modifiés.
 
-## Références des fonctions conservées
+## Traduire les sous-titres
 
-| Sujet | Document |
+| Besoin | Guide |
 | --- | --- |
-| Cadrage, bandes, corrections, zoom, luminosité et saisie précise | [Interface d’image — étape 4](INTERFACE_IMAGE_ETAPE_4.md) |
-| Volumes, fondus et atténuation du film | [Commandes audio — étape 5](COMMANDES_AUDIO_ETAPE_5.md) |
-| Préampli, égaliseur, balance, mono et limiteur | [Audio expert — étape 6](AUDIO_EXPERT_ETAPE_6.md) |
-| Intégrité des occurrences et contrat initial de traduction complète | [Traduction — référence 0.4.0](TRADUCTION_ETAPE_7.md) |
-| CPU/GPU/NPU, ressources et mesures nécessaires | [Étude de l’accélération](ETUDE_ACCELERATION.md) |
-| Modèles locaux, catalogues, runtimes et limites | [Étude de traduction locale](ETUDE_TRADUCTION_LOCALE.md) |
+| Choisir une offre gratuite, comprendre Google et les limites DeepL | [Traduction gratuite et limites](TRADUCTION_GRATUITE_ET_LIMITES.md) |
+| Configurer Azure, DeepL ou LibreTranslate depuis Android | [Moteurs, comptes, options et dépannage](GUIDE_MOTEURS_TRADUCTION.md) |
+| Traduction complète/progressive, reprise, affichage, correction, conservation et export | [Parcours Confort intégral](CONFORT_INTEGRAL_050.md#traduction-complète-reprise-et-mode-progressif) |
+| Comprendre le contrat initial des occurrences et de traduction complète | [Référence historique 0.4.0](TRADUCTION_ETAPE_7.md) |
+| Étudier un futur traducteur exécuté sur téléphone | [Traduction locale : candidats et limites](ETUDE_TRADUCTION_LOCALE.md) |
+| Essayer une piste synthétique anglaise | [Exemple SRT](../examples/essai-traduction-en.srt) |
 
-Le guide 0.5.0 prévaut pour le mode progressif, la reprise des lots, la conservation, les exports et le choix d’affichage ajoutés après la 0.4.0. Les contrats d’étape conservent leurs résultats et limites historiques.
+**Aucun OCR, traducteur local, import Hugging Face ou service de lecture durable en arrière-plan n’est intégré.** Une traduction conservée peut être réutilisée sans réseau ; cette réutilisation ne réalise pas une nouvelle traduction locale. Les comptes et quotas réels restent à vérifier auprès du fournisseur.
 
-**Aucun OCR, moteur local de traduction, import Hugging Face ou service de lecture durable en arrière-plan n’est intégré ici.** Réutiliser une traduction conservée sans réseau ne constitue pas une nouvelle traduction locale. Les profils de préparation ne prouvent pas un usage neuronal du GPU/NPU.
-
-## Développer, tester et contribuer
+## Développer, vérifier et contribuer
 
 | Besoin | Document |
 | --- | --- |
-| Vérifier la couverture de toutes les demandes 0.5.0 et les tests associés | [Matrice de couverture 0.5.0](COUVERTURE_DEMANDES_050.md) |
-| Résultats attachés au commit distribué, compilation et contrôle APK | [TESTING.md](../TESTING.md) |
-| Inventaires JUnit, empreintes et faits de publication conservés | [Preuve durable 0.5.0](verification/0.5.0.json) |
-| Graines des essais supplémentaires et relevés de l’émulateur | [Charge du noyau](verification/0.5.0-additional-stress.json), [relevés Android](verification/0.5.0-device-metrics.json) |
-| Architecture et invariants de lecture | [Architecture](ARCHITECTURE.md) |
-| Interfaces et composition des composants | [Modularisation — étape 1](MODULARISATION_ETAPE_1.md) |
-| Capacités déclarées, demandes, configuration et observations | [Capacités — étape 2](CAPACITES_ETAPE_2.md) |
-| Contrat des commandes d’image | [Commandes d’image — étape 3](COMMANDES_IMAGE_ETAPE_3.md) |
-| Fusion des modifications vérifiées dans main | [Contribution](../CONTRIBUTING.md), [AGENTS.md](../AGENTS.md) |
-| Archives, commits, branches et sources des APK précédents | [Historique](HISTORIQUE_BRANCHES.md) |
-| Démonstration anglaise de cinq occurrences | [SRT synthétique](../examples/essai-traduction-en.srt) |
+| Résultats 0.5.1, provenance des APK et procédure de validation | [TESTING.md](../TESTING.md) |
+| Repères durables de la validation et de la publication 0.5.1 | [Preuve structurée 0.5.1](verification/0.5.1.json) |
+| Fusion avec validation préalable, puis livraison sans répéter les suites | [Contribution](../CONTRIBUTING.md), [consignes de développement](../AGENTS.md) |
+| Invariants et composition des composants | [Architecture actuelle](ARCHITECTURE.md) |
+| Interfaces de session et responsabilités des composants | [Modularisation — étape 1](MODULARISATION_ETAPE_1.md) |
+| Capacités déclarées et observations effectives | [Capacités — étape 2](CAPACITES_ETAPE_2.md) |
+| Contrat de validation des commandes d’image | [Commandes d’image — étape 3](COMMANDES_IMAGE_ETAPE_3.md) |
+| Distinguer CPU/GPU/NPU et mesures nécessaires | [Étude de l’accélération](ETUDE_ACCELERATION.md) |
+| Demandes et régressions ajoutées en 0.5.0 | [Matrice de couverture 0.5.0](COUVERTURE_DEMANDES_050.md) |
+| Preuves conservées de la 0.5.0 | [Inventaires et publication](verification/0.5.0.json), [charge du noyau](verification/0.5.0-additional-stress.json), [relevés Android](verification/0.5.0-device-metrics.json) |
+| Commits exacts, branches et archives | [Historique du dépôt](HISTORIQUE_BRANCHES.md) |
 
-La validation des sources et la publication vérifiée de la 0.5.0 figurent dans [TESTING.md](../TESTING.md). Les chiffres de la 0.4.0 et de ses maintenances ne sont pas réattribués à ces nouvelles sources. Un test sur émulateur ne déclare pas réussis TalkBack réel, l’écoute d’une voix commerciale, un compte API personnel, la fidélité linguistique, l’autonomie ou les performances du OnePlus 15.
+Les **524 tests de la 0.5.1** se répartissent en 178 tests noyau, 254 JVM application et 92 tests instrumentés Android 36. Les preuves et effectifs anciens restent attachés à leurs propres sources. Les tests sur émulateur ne remplacent pas TalkBack réel, l’écoute d’une voix externe, l’évaluation d’une traduction, l’autonomie ou les performances du téléphone.
 
-## Versions et repères de développement
+## Versions et archives
 
-| Version ou document | Repère |
+| Version ou document | Statut et périmètre |
 | --- | --- |
-| [0.5.0 — Confort intégral](releases/0.5.0.md) | Version actuelle, publiée le 26 octobre 2026 ; même identité et certificat que la 0.4.0 |
-| [0.4.0 — Traduction](releases/0.4.0.md) | Version publiée le 24 octobre 2026 ; sept étapes consolidées |
-| [0.3.2 — ancienne stable](releases/0.3.2.md) | Identité et signature distinctes |
+| [0.5.1 — réglages stables et traduction résiliente](releases/0.5.1.md) | Version actuelle ; publiée le 27 octobre 2026 |
+| [0.5.0 — Confort intégral](releases/0.5.0.md) | Publiée le 26 octobre 2026 ; fonctions conservées par la 0.5.1 |
+| [0.4.0 — Traduction](releases/0.4.0.md) | Publiée le 24 octobre 2026 ; consolidation des sept étapes |
+| [0.3.2 — ancienne stable](releases/0.3.2.md) | Identité et signature distinctes de la série Traduction |
 | [0.3.1 — préversion Cinéma](releases/0.3.1-cinema-test.md) | Cadrage et corrections de cette série |
 | [0.2.0 — préversion Cinéma](releases/0.2.0-cinema-test.md) | Première série Cinéma |
 | [0.1.0 — première préversion](releases/0.1.0-test.md) | Première livraison |
 | [Révision 0.3](REVISION_03.md) | Adaptatif, préparation, cadrage et audio de l’époque |
-| [Révision 0.3.1](REVISION_031.md) | Corrections et constats de validation |
-| [Couverture des demandes 0.3.1](COUVERTURE_DEMANDES_031.md) | Correspondance demandes/code/preuves |
+| [Révision 0.3.1](REVISION_031.md) | Corrections et constats de cette révision |
+| [Couverture des demandes 0.3.1](COUVERTURE_DEMANDES_031.md) | Correspondance historique entre demandes, code et preuves |
 | [Régression Android initiale](REGRESSION_ANDROID.md) | Défaut d’expressions régulières et contrôles ajoutés |
 
-Les anciens numéros, signatures, branches et effectifs restent historiques. Pour l’APK actuel, suivre le lien disponible en tête du README et vérifier les preuves de cette publication.
+Les documents d’étape et de version gardent leurs constats d’origine. Les pages courantes — accueil, moteurs de traduction, services gratuits, architecture, tests et contribution — indiquent le fonctionnement à retenir aujourd’hui. Pour installer, suivre le lien disponible en tête de l’accueil.

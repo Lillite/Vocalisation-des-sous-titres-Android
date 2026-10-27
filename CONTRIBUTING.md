@@ -1,5 +1,7 @@
 # Contribuer à Sous-titres en voix
 
+[Accueil](README.md) · [Documentation](docs/README.md) · [Validation](TESTING.md) · [Consignes](AGENTS.md)
+
 La branche **`main` est la référence du projet**. Chaque modification terminée et vérifiée doit y être fusionnée avant d’être annoncée comme livrée. Cette règle s’applique aussi au travail réalisé par les agents d’intelligence artificielle.
 
 ## Préparer et intégrer une modification
@@ -25,7 +27,7 @@ Un test en échec, une protection de branche ou un conflit non résolu empêche 
 
 La compilation et la publication d’un APK sont deux opérations distinctes. Après fusion, le workflow `release-build.yml` construit un APK release non signé sans relancer les suites déjà validées ; la publication exige ensuite la clé durable existante et un contrôle du fichier signé. Les artefacts de validation CI utilisent une signature éphémère ; ils ne remplacent pas automatiquement l’APK distribué avec sa clé durable.
 
-Pour une nouvelle publication, suivre [TESTING.md](TESTING.md), conserver la même identité et la même clé pour les mises à jour, vérifier le fichier distribué, et fournir dans les notes de version le commit source, les résultats de validation, le SHA-256 et les limites connues. Utiliser un tag correspondant à la version réelle, par exemple `v0.3.3` pour une application versionnée 0.3.3, ou un suffixe explicite pour une préversion.
+Pour une nouvelle publication, suivre [TESTING.md](TESTING.md), conserver la même identité et la même clé pour les mises à jour, vérifier le fichier distribué, et fournir dans les notes de version le commit source, les résultats de validation, le SHA-256 et les limites connues. Utiliser un tag correspondant à la version réelle, par exemple `v0.5.2` pour une application versionnée 0.5.2, ou un suffixe explicite pour une préversion.
 
 Les secrets, mots de passe, vidéos personnelles et clés privées ne doivent pas être versionnés. Les déclarations sur les tests doivent distinguer compilation, tests JVM, instrumentation Android et essais manuels sur un téléphone.
 
