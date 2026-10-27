@@ -1,5 +1,8 @@
 package fr.soustitresvoix.player
 
+import android.view.View
+import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.Spinner
 import androidx.media3.common.util.UnstableApi
 import androidx.test.core.app.ActivityScenario
@@ -12,6 +15,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import fr.soustitresvoix.core.NarrationMachine
 import org.hamcrest.Matchers.allOf
+import org.hamcrest.Matchers.startsWith
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -35,6 +39,77 @@ class SettingsAndroidTest {
         onView(withContentDescription("Accélération maximale du mode adaptatif : valeur précise en %, de 100 à 250"))
             .inRoot(isDialog()).perform(scrollTo(), replaceText(value.toString()), closeSoftKeyboard())
         onView(allOf(withText("Valider"), isDisplayed())).inRoot(isDialog()).perform(click())
+    }
+    private fun enclosingScroll(view: View): ScrollView {
+        var parent = view.parent
+        while (parent !is ScrollView) parent = requireNotNull(parent).parent
+        return parent
+    }
+    private fun panelOf(view: View): SettingsPanel {
+        var parent = view.parent
+        while (parent !is SettingsPanel) parent = requireNotNull(parent).parent
+        return parent
+    }
+    @Test fun scrolledSliderAndIncrementKeepTheirPositionAfterSearchHadInputFocus() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            open()
+            onView(withContentDescription("Rechercher dans les huit rubriques de réglages"))
+                .inRoot(isDialog()).perform(click(), closeSoftKeyboard())
+            var sliderId = View.NO_ID
+            var before = 0
+            onView(allOf(isAssignableFrom(SeekBar::class.java), withContentDescription("Volume de la voix")))
+                .inRoot(isDialog()).perform(scrollTo()).check { view, error ->
+                    if (error != null) throw error
+                    sliderId = view.id
+                    before = enclosingScroll(view).scrollY
+                    assertTrue("The control must be below the initial viewport", before > 0)
+                    assertTrue(panelOf(view).search.hasFocus())
+                }.perform(click())
+            onView(withId(sliderId)).inRoot(isDialog()).check { view, error ->
+                if (error != null) throw error
+                assertEquals("Moving a slider must not return to the search box", before, enclosingScroll(view).scrollY)
+                assertFalse(panelOf(view).search.hasFocus())
+            }
+            var afterSlider = 0f
+            scenario.onActivity { afterSlider = it.session.prefs.voiceVolume; assertTrue(afterSlider < 1f) }
+            onView(withContentDescription(startsWith("Volume de la voix : augmenter de 5")))
+                .inRoot(isDialog()).perform(scrollTo()).check { view, error ->
+                    if (error != null) throw error
+                    before = enclosingScroll(view).scrollY
+                    assertTrue(before > 0)
+                }.perform(click()).check { view, error ->
+                    if (error != null) throw error
+                    assertEquals("Incrementing the same setting must keep its position", before, enclosingScroll(view).scrollY)
+                }
+            scenario.onActivity { assertEquals(afterSlider + .05f, it.session.prefs.voiceVolume, .001f) }
+            onView(withText("Fermer")).inRoot(isDialog()).perform(click())
+        }
+    }
+    @Test fun scrolledCheckboxKeepsItsPositionDuringTheWholePanelRefresh() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { it.session.prefs.putBool("integralReading", false) }
+            open()
+            onView(withContentDescription("Choisir une rubrique de réglages")).inRoot(isDialog()).check { view, error ->
+                if (error != null) throw error
+                panelOf(view).select(SettingsSection.SUBTITLES)
+            }
+            onView(withContentDescription("Rechercher dans les huit rubriques de réglages"))
+                .inRoot(isDialog()).perform(scrollTo(), click(), closeSoftKeyboard())
+            var before = 0
+            onView(withText("Ne pas lire les indications entre crochets, par exemple [musique]"))
+                .inRoot(isDialog()).perform(scrollTo()).check { view, error ->
+                    if (error != null) throw error
+                    before = enclosingScroll(view).scrollY
+                    assertTrue(before > 0)
+                    assertTrue(panelOf(view).search.hasFocus())
+                }.perform(click()).check { view, error ->
+                    if (error != null) throw error
+                    assertEquals("Refreshing every setting must not scroll to the top", before, enclosingScroll(view).scrollY)
+                    assertFalse(panelOf(view).search.hasFocus())
+                }
+            scenario.onActivity { assertTrue(it.session.prefs.skipDescriptions); assertFalse(it.session.player.playWhenReady) }
+            onView(withText("Fermer")).inRoot(isDialog()).perform(click())
+        }
     }
     @Test fun eightSectionsSearchWithoutAccentsAndCancelRestoresImmediateChanges() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->

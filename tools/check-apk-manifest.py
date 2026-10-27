@@ -8,7 +8,7 @@ if len(sys.argv) != 2:
 ns = '{http://schemas.android.com/apk/res/android}'
 root = ET.parse(Path(sys.argv[1])).getroot()
 assert root.get('package') == 'fr.soustitresvoix.player.translation', 'Unexpected application identity'
-assert root.get(ns + 'versionCode') == '7' and root.get(ns + 'versionName') == '0.5.0', 'Unexpected version'
+assert root.get(ns + 'versionCode') == '8' and root.get(ns + 'versionName') == '0.5.1', 'Unexpected version'
 app = root.find('application')
 assert app is not None and app.get(ns + 'allowBackup') == 'false', 'Backup must remain disabled'
 assert app.get(ns + 'usesCleartextTraffic') == 'false', 'Cleartext network traffic must remain disabled'

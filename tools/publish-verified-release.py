@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish only the signed 0.5.0 integral narration edition already validated on main.
+"""Publish only the signed 0.5.1 integral narration edition already validated on main.
 
 The temporary branch contains three data files, never a signing key. This script
 does not compile or sign an APK, delete a release/tag, replace an asset, execute a
@@ -32,17 +32,17 @@ import zipfile
 
 
 REPOSITORY = "Lillite/Vocalisation-des-sous-titres-Android"
-BRANCH = "release-upload/v0.5.0"
-TAG = "v0.5.0"
-TITLE = "Sous-titres en voix 0.5.0 — lecture intégrale et traduction progressive"
+BRANCH = "release-upload/v0.5.1"
+TAG = "v0.5.1"
+TITLE = "Sous-titres en voix 0.5.1 — réglages stables et traduction résiliente"
 APPLICATION_ID = "fr.soustitresvoix.player.translation"
-VERSION_NAME = "0.5.0"
-VERSION_CODE = "7"
+VERSION_NAME = "0.5.1"
+VERSION_CODE = "8"
 EXPECTED_SIGNER_SHA256 = "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d"
-APK_PATH = "release-upload/SousTitresVoix-0.5.0-confort-integral.apk"
+APK_PATH = "release-upload/SousTitresVoix-0.5.1-correctifs.apk"
 NOTES_PATH = "release-upload/notes.md"
 METADATA_PATH = "release-upload/release.json"
-VALIDATION_ARTIFACT = "SousTitresVoix-release-validation"
+VALIDATION_ARTIFACT = "SousTitresVoix-release-main"
 API_VERSION = "2026-03-10"
 MAX_BINARY_BYTES = 512 * 1024 * 1024
 MAX_JSON_BYTES = 8 * 1024 * 1024
@@ -298,7 +298,7 @@ def successful_main_run(github: GitHub, source_sha: str) -> dict[str, Any]:
     while True:
         assert_main(github, source_sha)
         query = urllib.parse.urlencode({"event": "push", "head_sha": source_sha, "per_page": 100})
-        result = github.api(PREFIX + "/actions/workflows/android.yml/runs?" + query)
+        result = github.api(PREFIX + "/actions/workflows/release-build.yml/runs?" + query)
         candidates = [run for run in result.get("workflow_runs", []) if
                       run.get("head_sha") == source_sha and run.get("head_branch") == "main" and
                       run.get("event") == "push" and
@@ -306,10 +306,10 @@ def successful_main_run(github: GitHub, source_sha: str) -> dict[str, Any]:
         if candidates:
             latest = max(candidates, key=lambda run: (int(run["id"]), int(run.get("run_attempt", 1))))
             if latest.get("status") == "completed":
-                require(latest.get("conclusion") == "success", "Latest Android push validation of main did not succeed.")
+                require(latest.get("conclusion") == "success", "Latest post-merge release build did not succeed.")
                 return latest
-        require(time.monotonic() < deadline, "Android push validation did not finish within 25 minutes.")
-        print("Waiting for the exact main Android push validation…", flush=True)
+        require(time.monotonic() < deadline, "Post-merge release build did not finish within 25 minutes.")
+        print("Waiting for the post-merge build and its pre-merge validation proof…", flush=True)
         time.sleep(15)
 
 
@@ -369,7 +369,7 @@ def compare_ci_artifact(github: GitHub, run: dict[str, Any], source_sha: str, ap
                 output.write(block)
     require(apk_payload(verified) == apk_payload(apk),
             "Signed APK differs from the exact CI-tested APK outside its signing metadata.")
-    print("Verified all non-signature APK entries against the exact successful main artifact.", flush=True)
+    print("Verified all non-signature APK entries against the exact post-merge artifact, already compared with the tested PR APK.", flush=True)
 
 
 def no_existing_release_or_tag(github: GitHub) -> None:

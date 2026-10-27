@@ -5,8 +5,10 @@ import android.content.Context
 import android.graphics.Color
 import android.text.Editable
 import android.text.TextWatcher
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import androidx.core.view.ViewCompat
 import java.text.Normalizer
@@ -82,7 +84,7 @@ internal class SettingsPanel(context: Context) : LinearLayout(context) {
             })
             groups[section] = group; content.addView(group)
         }
-        addView(ScrollView(context).apply { addView(content) }, LayoutParams(-1, 0, 1f))
+        addView(SettingsScrollView(context).apply { addView(content) }, LayoutParams(-1, 0, 1f))
         search.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { filter() }
@@ -138,5 +140,37 @@ internal class SettingsPanel(context: Context) : LinearLayout(context) {
         }
         val summary = if (query.isBlank()) "Rubrique ${selected.title}" else "$count résultat(s) pour « $query »"
         if (results.text.toString() != summary) results.text = summary
+    }
+}
+
+/** Keep keyboard focus out of an unrelated text field while using touch controls.
+ * A focused EditText can ask ScrollView to reveal its cursor during a relayout,
+ * returning to the search box (or an earlier value) when a setting changes.
+ * Native explicit text focus, D-pad navigation and accessibility focus remain
+ * available; only a touch outside every text field relinquishes input focus. */
+internal class SettingsScrollView(context: Context) : ScrollView(context) {
+    init {
+        isFocusableInTouchMode = true
+        descendantFocusability = ViewGroup.FOCUS_BEFORE_DESCENDANTS
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN && findFocus() is EditText &&
+            !touchesTextField(this, event.x, event.y)) {
+            requestFocus()
+            context.getSystemService(InputMethodManager::class.java)
+                ?.hideSoftInputFromWindow(windowToken, 0)
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
+    private fun touchesTextField(view: View, x: Float, y: Float): Boolean {
+        if (view.visibility != View.VISIBLE || x < 0 || y < 0 || x >= view.width || y >= view.height) return false
+        if (view is EditText) return true
+        if (view is ViewGroup) for (index in view.childCount - 1 downTo 0) {
+            val child = view.getChildAt(index)
+            if (touchesTextField(child, x + view.scrollX - child.left, y + view.scrollY - child.top)) return true
+        }
+        return false
     }
 }

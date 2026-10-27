@@ -4,6 +4,9 @@ Guide vérifié le **24 octobre 2026**. Les offres commerciales, les langues et 
 fichiers des catalogues peuvent évoluer. Les liens ci-dessous permettent de
 contrôler l'offre effectivement proposée à ton compte avant toute souscription.
 
+La politique de reprise ci-dessous décrit le **correctif candidat 0.5.1**, mis à
+jour le 27 octobre 2026. Voir aussi le [guide des offres gratuites et des limites](TRADUCTION_GRATUITE_ET_LIMITES.md).
+
 ## Ce qui est disponible dans cette étape
 
 Le parcours ajouté prépare **toute la piste textuelle avant la lecture**, traduit
@@ -55,7 +58,8 @@ local le moteur qui l'a produite. Le cache n'est pas un export SRT durable.
    unités UTF-16 n'est pas une facture
    garantie : les règles de comptage du fournisseur restent applicables.
 6. Attends la fin de la traduction. Une réponse incomplète ou une erreur ne doit
-   pas activer une piste partielle. Il n'y a pas de relance réseau automatique.
+   pas activer une piste incomplète en mode intégral. DeepL peut réessayer un
+   refus de débit **429/529** ; les autres erreurs nécessitent une reprise explicite.
 7. Si la vocalisation est activée, sélectionne une voix française prête dans
    **« Voix et confort »**. Appuie ensuite sur **« Lire »** quand la piste
    française est annoncée prête. L'application vérifie la voix française avant
@@ -205,6 +209,28 @@ ou le choix du modèle DeepL. Ces possibilités de l'API ne sont pas annoncées
 comme des commandes déjà présentes dans le lecteur.
 
 Source technique : [traduire un texte avec DeepL](https://developers.deepl.com/api-reference/translate/request-translation).
+
+### Débit temporaire et quota : deux situations distinctes
+
+Une réponse **HTTP 429/529** indique une limitation temporaire du débit. Le
+correctif candidat espace les appels DeepL de **500 ms** au minimum et réessaie
+au plus **cinq fois** le même lot après 1, 2, 4, 8 puis 16 secondes, avec un
+léger aléa. Un `Retry-After` valide est respecté. L'attente cumulée est limitée
+à **120 secondes par lot**, hors durée des échanges réseau ; si le serveur exige
+un délai supérieur au budget restant, le lecteur s'arrête sans renvoyer trop tôt.
+L'annulation reste possible pendant ces attentes. Les lots gardent leur limite
+de **20 textes**, et les résultats déjà validés sont conservés pour la reprise,
+sous réserve de réussite du stockage et de paramètres correspondants.
+
+**HTTP 456** signifie une limite de caractères, de coût ou de clé. Le solde
+global restant ne suffit pas à exclure un plafond propre à une clé. Il faut
+contrôler le compte avant de reprendre. Les **500/502/503/504**, erreurs réseau
+et résultats incomplets ne sont pas renvoyés automatiquement : la consommation
+du lot peut être incertaine. Les autres moteurs et la consultation du quota
+DeepL conservent une reprise explicite. Une nouvelle demande peut refacturer
+un lot dont la réponse a été perdue, mais réutilise les lots validés disponibles.
+
+Source : [gestion des erreurs DeepL](https://developers.deepl.com/docs/best-practices/error-handling).
 
 ## LibreTranslate : utiliser un serveur choisi
 
@@ -456,8 +482,9 @@ réutilisation ; si elle a été évincée ou corrompue, une nouvelle traduction
 les accès requis et peut consommer le quota de nouveau.
 
 Le transport de traduction utilise HTTPS, la validation des certificats du
-système, des délais réseau et des réponses bornées. Il refuse les redirections
-et ne relance pas automatiquement les appels en erreur. Les messages destinés
+système, des délais réseau et des réponses bornées. Il refuse les redirections.
+Seuls les refus explicites de débit DeepL **429/529** autorisent les nouvelles
+tentatives bornées décrites plus haut ; les autres erreurs ne sont pas relancées. Les messages destinés
 à l'utilisateur ne recopient ni le corps d'erreur du prestataire ni ses secrets.
 Le cache de traduction contient toutefois du texte privé de sous-titres : un
 stockage privé d'application n'est pas synonyme de chiffrement de ce cache.

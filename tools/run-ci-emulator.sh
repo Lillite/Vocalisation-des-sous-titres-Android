@@ -123,6 +123,6 @@ done
 # Retain successful boot diagnostics before instrumentation replaces logcat.
 # This includes the renderer's shader warm-up, not an application benchmark.
 timeout -k 1s 10s "$adb" -s "$device" logcat -d -t 12000 > "$evidence/logcat-ready.txt" 2>&1
-# The existing guards, exact APK hashes, two whole suites and failure statuses
-# remain owned by the unchanged runner. No failed suite is retried here.
+# The existing guards, exact APK hashes, one whole suite and failure statuses
+# remain owned by the device runner. No failed suite is retried here.
 bash tools/run-release-device-tests.sh

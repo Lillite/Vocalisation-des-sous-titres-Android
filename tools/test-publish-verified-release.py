@@ -118,7 +118,7 @@ class PublicationGitHub:
             assert data['draft'] is True
             self.draft = {**deepcopy(data), 'id': 12, 'assets': []}
             return deepcopy(self.draft)
-        if suffix.startswith('/actions/workflows/android.yml/runs?'):
+        if suffix.startswith('/actions/workflows/release-build.yml/runs?'):
             run = deepcopy(self.ci_run)
             if self.change_ci:
                 run['id'] += 1

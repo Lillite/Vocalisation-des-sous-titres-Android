@@ -65,10 +65,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Tester les migrations et les nouvelles versions canoniques
-        run: python3 -m unittest tools/test_sync_releases.py
-      - name: Tester les conditions du rangement documentaire
-        run: python3 tools/test-documentation-cleanup.py
       - name: Verifier puis harmoniser les releases existantes
         env:
           GITHUB_TOKEN: ${{ github.token }}

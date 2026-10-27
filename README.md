@@ -18,6 +18,12 @@ Lecteur vidéo Android destiné d’abord à **vocaliser intégralement les occu
 
 **Ce projet est réalisé intégralement par intelligence artificielle : la conception de l’application, l’écriture du code, les corrections, les tests automatisés et la documentation sont produits par IA à partir des demandes, des indications et des retours de son utilisateur.** Cette mention concerne le travail propre au projet. Android, Kotlin, Media3, les moteurs vocaux, les services de traduction et les autres composants tiers restent les créations de leurs auteurs respectifs.
 
+## Correctifs 0.5.1 en préparation
+
+La branche de développement prépare la **0.5.1, code 8** : conservation du défilement dans les réglages, distinction entre débit temporaire et quota DeepL, espacement des appels et reprises bornées des refus HTTP 429/529. Les résultats déjà traduits sont réutilisables après interruption. La signature et la publication sont des étapes distinctes : le téléchargement public ci-dessus reste celui de la **0.5.0** jusqu’à publication effective de la nouvelle version.
+
+Le parcours GitHub Actions construit et teste l’APK **avant fusion**. Après fusion, il reconstruit la release sans rejouer les suites et vérifie que les sources et le contenu applicatif correspondent à ceux validés. [Procédure et résultats](TESTING.md) · [Correctifs 0.5.1](docs/releases/0.5.1.md) · [Traduction gratuite, Google, Azure et limites DeepL](docs/TRADUCTION_GRATUITE_ET_LIMITES.md).
+
 ## Installer et commencer sur Android
 
 La 0.5.0 conserve l’identité de la 0.4.0 et utilise le même certificat durable, vérifié sur l’APK publié. Android peut ainsi mettre à jour cette édition en conservant ses données. **Ne pas désinstaller la 0.4.0 pour préparer cette mise à jour.** La 0.3.2 reste une autre application, avec sa propre identité et ses propres données.

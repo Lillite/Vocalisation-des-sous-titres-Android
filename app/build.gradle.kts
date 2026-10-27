@@ -27,6 +27,7 @@ val demoPattern = "geq=lum='if(between(hypot(X-W/2,Y-H/2),78,81),220,lum(X,Y))':
 val generateDemo = tasks.register<Exec>("generateDemo") {
     inputs.file(demoSubtitles)
     inputs.property("pattern", demoPattern)
+    inputs.property("deterministicEncoding", 1)
     outputs.file(demoFile)
     doFirst { demoFile.get().asFile.parentFile.mkdirs() }
     commandLine("ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
@@ -38,6 +39,9 @@ val generateDemo = tasks.register<Exec>("generateDemo") {
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "32k", "-af", "volume=0.08",
         "-c:s", "srt", "-metadata:s:s:0", "language=fra", "-t", "28",
+        // Stable Matroska IDs and codec metadata allow comparing independently built APKs.
+        "-fflags", "+bitexact", "-flags:v", "+bitexact", "-flags:a", "+bitexact",
+        "-threads:v", "1", "-threads:a", "1",
         demoFile.get().asFile.absolutePath)
 }
 android {
@@ -48,8 +52,8 @@ android {
         applicationId = "fr.soustitresvoix.player.translation"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.5.0"
+        versionCode = 8
+        versionName = "0.5.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets.getByName("main").res.srcDir(demoResources)
@@ -75,6 +79,8 @@ android {
     }
     buildTypes {
         release {
+            // Git provenance is verified separately; PR merge SHA and final merge SHA differ.
+            vcsInfo.include = false
             isMinifyEnabled = false
             if (releaseSigning != null) signingConfig = signingConfigs.getByName("privateRelease")
         }
