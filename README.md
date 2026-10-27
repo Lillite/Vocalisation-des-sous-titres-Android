@@ -2,33 +2,36 @@
 
 Lecteur vidéo Android destiné d’abord à **vocaliser intégralement les occurrences textuelles de la piste choisie** : dialogues, panneaux, chevauchements et répétitions réelles. Les modes Confort et Adaptatif donnent à la voix le temps de terminer ; une traduction manquante provoque une attente perceptible.
 
-**Version 0.5.0 publiée le 26 octobre 2026 — lecture intégrale et traduction progressive.** [Télécharger l’APK Android](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.0/SousTitresVoix-0.5.0-confort-integral.apk) · [Release et sommes de contrôle](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0). Les sources exactes sont le commit [`3740356`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/3740356420fb09eadabe23da207fa554515da101), validé dans `main` avant publication ; le fichier publié a été téléchargé et contrôlé à nouveau.
+**Version 0.5.1 publiée le 27 octobre 2026 — réglages stables et traduction résiliente.** **[Télécharger l’APK Android](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.1/SousTitresVoix-0.5.1-correctifs.apk)** · [Release et sommes de contrôle](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.1). Cette mise à jour corrige le défilement des paramètres et la gestion des limites DeepL, en conservant les fonctions précédentes.
 
-[Guide complet 0.5.0](docs/CONFORT_INTEGRAL_050.md) · [Tous les guides](docs/README.md) · [Parcours de tests sur téléphone](docs/TESTS_TELEPHONE.md) · [Signaler un problème](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/issues/new/choose)
+[Installation](#installer-et-commencer-sur-android) · [Tous les guides](docs/README.md) · [Correctifs 0.5.1](docs/releases/0.5.1.md) · [Tests et preuves](TESTING.md) · [Signaler un problème](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/issues/new/choose)
 
-| Repère | Version 0.5.0 |
+| Repère | Version 0.5.1 |
 | --- | --- |
-| Édition | **Confort intégral**, code 7 |
+| Édition | **Réglages stables et traduction résiliente**, code 8 ; fonctions Confort intégral conservées |
 | Android minimum | **Android 8.0 — API 26** |
 | Identité Android | **fr.soustitresvoix.player.translation**, conservée depuis la 0.4.0 |
 | Narration | Lecture intégrale, Confort, Adaptatif, suivi par occurrence et relecture explicite |
 | Traduction | Azure Translator, DeepL API Free/payant, serveur LibreTranslate HTTPS ; préparation complète ou progressive sur choix explicite |
 | Préparation | Anticipation vocale, cache réglable et conservation durable par œuvre |
-| Validation | **1 016 exécutions JUnit de 508 méthodes**, 62 tests Python (39 en CI Android, 23 autres vérifiés localement), lint sans erreur ; [preuves et limites](TESTING.md) |
+| Validation | **524 tests réussis avant fusion** : 178 noyau, 254 JVM application et 92 instrumentés Android 36 ; [preuves et limites](TESTING.md) |
 
 **Ce projet est réalisé intégralement par intelligence artificielle : la conception de l’application, l’écriture du code, les corrections, les tests automatisés et la documentation sont produits par IA à partir des demandes, des indications et des retours de son utilisateur.** Cette mention concerne le travail propre au projet. Android, Kotlin, Media3, les moteurs vocaux, les services de traduction et les autres composants tiers restent les créations de leurs auteurs respectifs.
 
-## Correctifs 0.5.1 en préparation
+## Changements de la 0.5.1
 
-La branche de développement prépare la **0.5.1, code 8** : conservation du défilement dans les réglages, distinction entre débit temporaire et quota DeepL, espacement des appels et reprises bornées des refus HTTP 429/529. Les résultats déjà traduits sont réutilisables après interruption. La signature et la publication sont des étapes distinctes : le téléchargement public ci-dessus reste celui de la **0.5.0** jusqu’à publication effective de la nouvelle version.
+- **Paramètres** : modifier un curseur, une case ou un bouton ne doit plus ramener en haut du panneau à cause d’un ancien champ de saisie focalisé. La saisie précise reste disponible.
+- **DeepL** : distinction du débit temporaire 429/529 et du quota 456, espacement des appels et reprises bornées des refus de débit. Les lots validés sont réutilisés à la reprise ; une réponse réseau incertaine n’est pas renvoyée automatiquement.
+- **Traduction gratuite** : [guide Azure F0, Google et autres possibilités](docs/TRADUCTION_GRATUITE_ET_LIMITES.md), avec disponibilité réelle dans le lecteur et conditions des offres.
+- **Livraison** : construction et tests de l’APK avant chaque fusion ; reconstruction après fusion sans répéter les suites, avec vérification des sources et du contenu applicatif.
 
-Le parcours GitHub Actions construit et teste l’APK **avant fusion**. Après fusion, il reconstruit la release sans rejouer les suites et vérifie que les sources et le contenu applicatif correspondent à ceux validés. [Procédure et résultats](TESTING.md) · [Correctifs 0.5.1](docs/releases/0.5.1.md) · [Traduction gratuite, Google, Azure et limites DeepL](docs/TRADUCTION_GRATUITE_ET_LIMITES.md).
+Les [notes 0.5.1](docs/releases/0.5.1.md) donnent le détail des corrections. Le [guide Confort intégral](docs/CONFORT_INTEGRAL_050.md) décrit les fonctions conservées de la 0.5.0 ; les guides courants de traduction précisent les évolutions de la 0.5.1.
 
 ## Installer et commencer sur Android
 
-La 0.5.0 conserve l’identité de la 0.4.0 et utilise le même certificat durable, vérifié sur l’APK publié. Android peut ainsi mettre à jour cette édition en conservant ses données. **Ne pas désinstaller la 0.4.0 pour préparer cette mise à jour.** La 0.3.2 reste une autre application, avec sa propre identité et ses propres données.
+La 0.5.1 conserve l’identité des 0.4.0 et 0.5.0 et utilise le même certificat durable. Android peut ainsi mettre à jour cette édition en conservant ses données. **Ne pas désinstaller la 0.4.0 ou la 0.5.0 pour préparer cette mise à jour.** La 0.3.2 reste une autre application, avec sa propre identité et ses propres données.
 
-Le fichier installable est **[SousTitresVoix-0.5.0-confort-integral.apk](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.0/SousTitresVoix-0.5.0-confort-integral.apk)**. Les archives GitHub « Source code » ne sont pas des APK. Le fichier [SHA256SUMS](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.0/SHA256SUMS) fournit son empreinte.
+Le fichier installable est **[SousTitresVoix-0.5.1-correctifs.apk](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.1/SousTitresVoix-0.5.1-correctifs.apk)**. Les archives GitHub « Source code » ne sont pas des APK. Le fichier [SHA256SUMS](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.1/SHA256SUMS) fournit son empreinte.
 
 1. Ouvrir **Réglages de la voix et du confort**.
 2. Dans **Voix**, choisir le moteur vocal de ce lecteur et une voix installée dans la langue à prononcer. Écouter un essai ; le choix ne modifie pas le moteur de TalkBack.
@@ -44,6 +47,8 @@ La lecture dépend des codecs disponibles et d’une voix Android réellement pr
 Les commandes sont réparties entre **Voix, Synchronisation, Traduction, Sous-titres, Image, Son, Stockage et Diagnostic**. Le sélecteur de rubrique et la recherche se trouvent au début du panneau défilant ; les boutons Fermer et Annuler modifications gardent leur zone dédiée, même en grande police.
 
 La recherche filtre les commandes réelles dans toutes les rubriques, sans tenir compte des accents : **vitesse**, **voix**, **bandes noires** ou **traduction** donnent accès aux contrôles correspondants. Effacer la recherche ou choisir une rubrique revient à sa liste de commandes.
+
+Depuis la 0.5.1, toucher un curseur, une case ou un bouton libère le focus de saisie resté sur un champ éloigné ; le panneau conserve ainsi sa position. Toucher directement un champ permet toujours de le modifier.
 
 Les réglages prennent effet immédiatement. **Fermer** les conserve ; **Annuler modifications** restaure les paramètres présents à l’ouverture du panneau. Cette annulation ne rétablit pas un fichier supprimé, ne retire pas un export et n’annule pas les opérations ou appels API déjà confirmés.
 
@@ -212,22 +217,23 @@ Le [guide 0.5.0](docs/CONFORT_INTEGRAL_050.md) détaille les contraintes de repr
 
 ## Validation et identité du téléchargement
 
-Le [run Android de `main` 40402709269](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40402709269) a réussi les six suites : **178 tests du noyau et 242 de l’application en debug, autant en release, puis deux passages de 88 tests sur Android 36**. Les identités des méthodes sont vérifiées, sans test ignoré, manquant ou dupliqué. Lint conserve **69 avertissements et une indication par variante, sans erreur**. Deux suites autonomes du noyau ont aussi passé **800 000 événements aléatoires supplémentaires** ; ce nombre ne s’ajoute pas aux méthodes JUnit. Le [run de publication 40407440389](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40407440389) a réussi, puis le téléchargement public a été vérifié.
+Les sources de la 0.5.1 sont le commit [`d5d5b63`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/d5d5b63ea37ca4be423f375e8e7a75e870d154e6), intégré par la [PR #16](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/16). Le [run préalable 40556708779](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40556708779) a réussi **524 tests**, sans échec, erreur ni test ignoré, avec contrôle des méthodes attendues, compilations et lint. Le [run après fusion 40560530124](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40560530124) a reconstruit la release et vérifié le même contenu applicatif hors signature, sans relancer ces suites.
 
-| Fichier publié | Valeur vérifiée |
+| APK 0.5.1 publié | Valeur vérifiée |
 | --- | --- |
-| Taille | **5 242 608 octets** |
-| SHA-256 de l’APK | `dcaf9f07cdc85f5dfa007ceeef40a3e71cdba25b40c66381a3cf39998207ed7c` |
+| Fichier | `SousTitresVoix-0.5.1-correctifs.apk` |
+| Taille | **5 242 523 octets** |
+| SHA-256 de l’APK | `75ed88b3198d4ea2bef9b837d870bb48db2624c8a8325e6f3d1fa8b9d2f5d881` |
 | SHA-256 du certificat | `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d` |
 
-[TESTING.md](TESTING.md) et la [preuve durable 0.5.0](docs/verification/0.5.0.json) distinguent compilation, tests JVM, instrumentation Android, contrôles de publication et essais manuels. Les tests automatisés utilisent des contenus synthétiques, des réponses API contrôlées et une fixture TTS. La fidélité des fournisseurs, les droits/quota d’un compte, les voix commerciales, TalkBack réel, Bluetooth, HDR physique, autonomie et chauffe demandent leurs essais distincts.
+Le [run de publication 40580117622](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40580117622) a réussi ; il a contrôlé la signature durable, la provenance et les fichiers téléchargés après leur envoi avant de rendre la release publique. Un téléchargement public indépendant a ensuite confirmé la taille et le SHA-256 du fichier. [TESTING.md](TESTING.md) distingue les résultats actuels et les preuves historiques. Les tests utilisent des contenus synthétiques, des réponses API contrôlées et un service vocal de test. Fidélité des fournisseurs, droits/quota d’un compte, voix commerciales, TalkBack réel, Bluetooth, HDR physique, autonomie et chauffe demandent leurs essais distincts.
 
 ## Documentation et développement
 
 | Besoin | Point d’entrée |
 | --- | --- |
 | Utiliser les nouvelles fonctions | [Guide Confort intégral 0.5.0](docs/CONFORT_INTEGRAL_050.md) |
-| Lire les changements de cette version | [Notes 0.5.0](docs/releases/0.5.0.md), [changelog](CHANGELOG.md) |
+| Lire les changements de cette version | [Notes 0.5.1](docs/releases/0.5.1.md), [changelog](CHANGELOG.md) |
 | Parcourir tous les guides | [Index documentaire](docs/README.md) |
 | Configurer les comptes de traduction | [Moteurs et dépannage](docs/GUIDE_MOTEURS_TRADUCTION.md) |
 | Tester sur téléphone | [Parcours manuel](docs/TESTS_TELEPHONE.md) |
@@ -239,4 +245,4 @@ Le [run Android de `main` 40402709269](https://github.com/Lillite/Vocalisation-d
 
 Le dépôt contient l’application Android dans **app/**, le moteur indépendant d’Android dans **core/**, les guides dans **docs/**, les démonstrations synthétiques dans **examples/** et les contrôles dans **tools/**. La compilation utilise JDK 17 ; les tests Robolectric Android 36 utilisent JDK 21. FFmpeg génère le média de démonstration à la compilation ; il n’est pas nécessaire sur le téléphone.
 
-**Tout travail terminé et vérifié est intégré à main avant d’être annoncé livré.** Une proposition de fusion et ses contrôles précèdent cette intégration, puis le commit de main est vérifié. Les tags publiés conservent les sources exactes des APK antérieurs. Les guides des étapes 1 à 7 décrivent leur version de référence ; le guide 0.5.0 prévaut pour les fonctions ajoutées ici.
+**Tout travail terminé et vérifié est intégré à main avant d’être annoncé livré.** Une proposition de fusion et ses contrôles précèdent cette intégration, puis le commit de main est vérifié. Les tags publiés conservent les sources exactes des APK antérieurs. Les guides des étapes 1 à 7 décrivent leur version de référence ; le guide Confort intégral décrit les fonctions ajoutées en 0.5.0 et les notes 0.5.1 précisent les derniers correctifs.

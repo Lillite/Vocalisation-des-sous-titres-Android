@@ -1,7 +1,9 @@
 # Traduction gratuite et limites des services
 
+[Accueil](../README.md) · [Documentation](README.md) · [Configuration des moteurs](GUIDE_MOTEURS_TRADUCTION.md) · [Notes 0.5.1](releases/0.5.1.md)
+
 Offres vérifiées le **27 octobre 2026** ; contrôler les conditions affichées dans son compte. Ce guide décrit
-le comportement prévu pour la **version candidate 0.5.1**.
+le comportement des sources **0.5.1**, validées avant fusion ; l’état de publication figure dans les [notes de version](releases/0.5.1.md).
 
 ## Quel service choisir pour une piste complète ?
 
@@ -57,7 +59,7 @@ Le message seul ne suffit pas pour identifier la cause. Le code HTTP distingue :
 - **500, 502, 503 ou 504** : incident côté service ou passerelle ; reprise explicite.
 - **401/403** : accès ou clé à vérifier ; **413** : requête trop volumineuse.
 
-Le correctif candidat conserve les lots de **20 textes maximum** et les résultats
+Le correctif 0.5.1 conserve les lots de **20 textes maximum** et les résultats
 validés. Il espace les appels DeepL d'au moins **500 ms** et autorise au plus
 **cinq nouvelles tentatives**, uniquement après **429/529** : attente de
 **1, 2, 4, 8 puis 16 secondes**, avec un léger aléa. Un en-tête `Retry-After`

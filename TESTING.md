@@ -1,17 +1,55 @@
 # Vérifications de régression
 
-## Candidate 0.5.1 — validation avant fusion, publication distincte
+[Accueil](README.md) · [Documentation](docs/README.md) · [Essais sur téléphone](docs/TESTS_TELEPHONE.md) · [Contribution](CONTRIBUTING.md)
 
-Version Android **0.5.1 / code 8**. L’APK public reste la 0.5.0 jusqu’à signature et publication effectives. La signature privée existante n’est ni versionnée ni placée dans les artefacts de CI.
+## Version 0.5.1 — validation exécutée avant fusion
 
-Le nouveau parcours exécute, avant chaque fusion vers `main`, **178 tests du noyau**, **254 tests JVM de l’application release** et **92 tests instrumentés Android release**, soit **524 méthodes distinctes attendues**. Les effectifs sont un inventaire attendu, pas une déclaration de réussite : les XML du run Actions vérifient chaque identité de méthode, les échecs, erreurs et tests ignorés. Les compilations des APK debug/test debug et release/test release, les lints debug/release, les manifestes, signatures éphémères, alignements et empreintes restent contrôlés.
+Les sources **0.5.1 / code 8** ont été fusionnées par la [PR #16](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/16). Leur commit exact est [`d5d5b63ea37ca4be423f375e8e7a75e870d154e6`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/d5d5b63ea37ca4be423f375e8e7a75e870d154e6). La signature privée reste hors du dépôt et des artefacts de CI.
 
-Les régressions nouvelles couvrent le défilement après curseur/bouton/case, le maintien de la saisie, les refus DeepL 429/529 puis succès, les délais du serveur, le nombre maximal de reprises, l’annulation et la fermeture, le refus 456, la réponse réseau perdue, ainsi que la reprise d’une piste sans renvoyer son préfixe déjà traduit. Les échanges de traduction sont simulés avec des textes synthétiques ; ils ne consomment aucun quota personnel et ne prouvent pas l’état d’un compte DeepL réel.
+### Résultats réellement obtenus
 
-Après une **fusion avec commit de merge**, `release-build.yml` exige la réussite de la validation de la PR, vérifie le même arbre de sources et les mêmes parents, puis exécute uniquement `:app:assembleRelease`. Il compare le contenu applicatif obtenu à celui de l’APK testé avant fusion. Il produit un artefact **non signé** `SousTitresVoix-release-main`, avec preuve de provenance ; il ne rejoue pas les suites. L’APK doit ensuite être signé avec le certificat durable existant et contrôlé avant publication. La publication ne relance pas les tests.
+Le [run préalable 40556708779](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40556708779) a réussi sur la proposition de fusion, avant son intégration à `main` :
 
-**État lors de la préparation :** contrôles locaux structurels et tests d’outillage exécutés ; résultats Android/JVM à consulter dans la validation de la PR. Les essais sur le téléphone et les appels aux services réels restent à distinguer des essais automatisés.
+| Contrôle | Résultat |
+| --- | --- |
+| Noyau indépendant d’Android | **178 tests réussis** |
+| Application, JVM release | **254 tests réussis** |
+| APK release, instrumentation Android 36 | **92 tests réussis** |
+| Total | **524 tests**, aucun échec, erreur ou test ignoré |
+| Compilations | APK debug et release, avec leurs APK d’instrumentation, construits |
+| Lint | Variantes debug et release réussies ; les avertissements restent dans les rapports |
+| APK | Manifestes, permissions, signatures éphémères, alignements et empreintes contrôlés |
 
+Chaque suite complète est exécutée une fois. Les XML sont confrontés aux méthodes attendues ; la compilation d’un APK d’instrumentation ne remplace pas son exécution sur Android. Les effectifs historiques de 0.5.0 restent dans leur section et ne s’additionnent pas à ces résultats.
+
+Les régressions ajoutées couvrent le défilement après curseur/bouton/case, le maintien de la saisie, les refus DeepL 429/529 puis succès, les délais du serveur, le plafond de reprises, l’annulation et la fermeture, le refus 456, une réponse réseau perdue et la reprise sans renvoyer le préfixe déjà traduit. Ces échanges utilisent des textes et réponses synthétiques : aucun quota personnel n’est consommé.
+
+### Construction après fusion et identité de l’APK
+
+Le [run de construction 40560530124](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40560530124) a réussi après fusion. Il a vérifié le même arbre de sources et les parents de la fusion testée, exécuté `:app:assembleRelease`, puis constaté que le **contenu applicatif reconstruit est identique à celui de l’APK testé**, hors métadonnées de signature. Il n’a pas relancé les suites.
+
+| Preuve | Valeur |
+| --- | --- |
+| Arbre de sources | `6ee86dbeab9cde02598325de3316d34ea3be4cb7` |
+| Source de la release | `d5d5b63ea37ca4be423f375e8e7a75e870d154e6` |
+| APK reconstruit non signé, SHA-256 | `5cb61d8fb11eb0f704730dbaf1c682bc53c013c282be245bbc1ea42ceeb56953` |
+| APK signé publié | `SousTitresVoix-0.5.1-correctifs.apk` |
+| Taille du fichier signé | **5 242 523 octets** |
+| APK signé, SHA-256 | `75ed88b3198d4ea2bef9b837d870bb48db2624c8a8325e6f3d1fa8b9d2f5d881` |
+| Certificat durable, SHA-256 | `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d` |
+| Identité Android | `fr.soustitresvoix.player.translation`, version `0.5.1`, code `8` |
+
+La signature locale v2/v3, l’alignement et l’identité du contenu hors signature ont été vérifiés. Le [run de publication 40580117622](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40580117622) a réussi : vérification de la provenance et du certificat, envoi des assets, contrôle des fichiers téléchargés puis publication publique. La release porte l’identifiant `425961994`, l’APK l’identifiant `682813699`. Un téléchargement public indépendant a ensuite confirmé la taille et le SHA-256 exacts du fichier signé. **[Télécharger la 0.5.1](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.1/SousTitresVoix-0.5.1-correctifs.apk)** · [Notes de version](docs/releases/0.5.1.md).
+
+### Portée des résultats
+
+La [preuve structurée 0.5.1](docs/verification/0.5.1.json) conserve les identifiants des exécutions, les effectifs, la source exacte et les empreintes de publication après expiration des artefacts temporaires GitHub Actions.
+
+Les tests valident les sources et les scénarios exécutés. Ils ne déclarent pas réussis les essais acoustiques, TalkBack réel, Bluetooth, la qualité linguistique d’un fournisseur, les droits et quotas d’un compte personnel, ni l’autonomie ou les performances du OnePlus 15. Le [parcours sur téléphone](docs/TESTS_TELEPHONE.md) permet de consigner ces observations séparément.
+
+## Historique des validations
+
+Les sections suivantes conservent les résultats, les échecs intermédiaires et les contrôles attachés aux versions antérieures. Pour la procédure actuelle, consulter [Validation continue dans GitHub Actions](#validation-continue-dans-github-actions).
 
 ## Version publiée 0.5.0 — lecture intégrale et traduction progressive
 
@@ -499,74 +537,28 @@ vérification et la publication ; aucune garantie absolue n’est revendiquée.
 
 ## Validation continue dans GitHub Actions
 
-Le workflow unique [Android — compilation et régressions](.github/workflows/android.yml)
-s'exécute pour chaque proposition de fusion vers `main`, après une modification
-de `main` et à la demande depuis l'onglet **Actions**. Chaque nouvelle exécution
-doit réussir avant de présenter les modifications correspondantes comme validées.
-Les anciens workflows propres aux branches Cinéma sont remplacés par ce parcours.
+Le parcours demandé depuis le 27 octobre 2026 comprend deux phases. Le workflow [Android — compilation et régressions](.github/workflows/android.yml) s’exécute sur une proposition de fusion vers `main`, ainsi qu’à la demande. Une fusion exige sa réussite sur la tête exacte proposée. Le workflow [Construction après fusion](.github/workflows/release-build.yml) contrôle ensuite la provenance et reconstruit la release sans répéter les suites.
 
-| Étape | Contrôles exigés |
+| Phase | Contrôles |
 | --- | --- |
-| Structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée. |
-| Variante debug | 178 tests JVM du noyau, 242 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation ; manifeste et signature de l'APK. |
-| Variante release | Nouvelle exécution des 178 tests du noyau et des 242 tests JVM de l'application, lint, compilation de l'application et de son APK d'instrumentation. |
-| Identité de la release | Application non débogable, permissions, signatures identiques de l'application et des tests, alignement et empreintes SHA-256. |
-| Android 36 | Deux passages complets des 88 tests instrumentés sur émulateur AOSP x86_64, appliqués à la même paire d'APK release. |
-| Intégrité finale | APK inchangés entre les passages, sources inchangées et conservation des preuves. |
+| Avant fusion, structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée |
+| Avant fusion, JVM | Un passage des **178 tests noyau** et des **254 tests application release** |
+| Avant fusion, compilations | APK debug/test debug et release/test release, lint debug/release |
+| Avant fusion, Android 36 | Un passage des **92 tests instrumentés**, installé et exécuté sur la paire d’APK release |
+| Avant fusion, intégrité | Inventaires des méthodes, absence d’échec/erreur/test ignoré/manquant/dupliqué, manifestes, permissions, signatures, alignements, empreintes et conservation des preuves |
+| Après fusion | Commit de merge à deux parents, validation réussie de la PR, même arbre/parents que la fusion testée, reconstruction de release et comparaison de son contenu applicatif hors signature |
+| Publication | Signature durable, contrôles du fichier et de sa provenance, publication et vérification du téléchargement ; aucune recompilation ni répétition des suites dans cette phase |
 
-Ces effectifs incluent les suites de la version 0.3.2 et les compléments de la
-[première étape de modularisation](docs/MODULARISATION_ETAPE_1.md) : trois tests
-du contrôleur de narration, trois tests de composition et un scénario instrumenté
-de pause/reprise. La [deuxième étape](docs/CAPACITES_ETAPE_2.md) ajoute quatre tests
-du modèle de diagnostic, trois tests JVM de consultation et d'invalidation, et
-un scénario Android de consultation/copie avec observation des requêtes TTS.
-La [troisième étape](docs/COMMANDES_IMAGE_ETAPE_3.md) ajoute quatre tests de
-validation des commandes d’image, cinq tests JVM de leur raccordement et un
-scénario instrumenté supplémentaire. La [quatrième étape](docs/INTERFACE_IMAGE_ETAPE_4.md)
-ajoute sept scénarios JVM et un scénario Android aux fichiers de tests d’image
-existants. La [cinquième étape](docs/COMMANDES_AUDIO_ETAPE_5.md) ajoute six tests
-au noyau, onze tests JVM de raccordement et d’interface audio, ainsi que deux
-scénarios Android. Les totaux 40/41/69 de l’étape 2, 44/46/70 de l’étape 3 et
-44/53/71 de l’étape 4 restent propres à leurs états historiques ; les effectifs
-de l’étape 5 sont 50/64/73. La [sixième étape](docs/AUDIO_EXPERT_ETAPE_6.md)
-ajoute 27 méthodes noyau, 28 méthodes JVM de l’application et deux scénarios
-Android ; le scénario ASS de l’étape 5 est aussi étendu aux commandes DSP.
-Les effectifs de référence de la version 0.4.0 restent **87/137/82** ; ceux
-de la version 0.5.0 sont **178/242/88**.
-Ces nombres sont des critères à contrôler,
-pas une preuve d’exécution :
-consulter les rapports de l’exécution reliée au commit et à la demande de fusion.
-Aucun test antérieur n'est retiré. Lorsqu'un test est
-ajouté, mettre à jour les effectifs attendus dans le workflow ou dans
-`tools/run-device-tests.sh` ; ne jamais retirer un test pour retrouver un nombre
-attendu. Les contrôles des rapports refusent les tests manquants, ignorés,
-échoués ou dupliqués. Les quatre suites JVM et les deux passages Android
-comparent aussi les méthodes exécutées à l’inventaire des sources. Les dates des rapports doivent correspondre au passage
-en cours.
+La variante debug et son APK de tests sont construits ; l’instrumentation automatique porte sur la **variante release**. Les effectifs 178/254/92 décrivent la 0.5.1 ; ils doivent évoluer avec les tests ajoutés. Aucun test antérieur n’est retiré pour retrouver un total. Les nombres attendus ne remplacent jamais les rapports réels de l’exécution concernée.
 
-La variante debug est compilée et vérifiée sur la JVM. Les deux exécutions
-instrumentées automatiques portent sur la **variante release** ; la compilation
-de l'APK de tests debug ne constitue pas une exécution de ces tests sur Android.
+Les artefacts avant fusion sont :
 
-Deux artefacts sont produits :
+- **Android-rapports-validation** : journaux, résultats JUnit, lint, manifestes, signatures, empreintes, diagnostics d’émulateur, commit source et archive des sources ; les preuves disponibles sont conservées même en cas d’échec.
+- **SousTitresVoix-release-validation** : paire d’APK release testée, empreintes, certificat éphémère et commit source, produite après réussite des contrôles.
 
-- **Android-rapports-validation** : journaux, résultats JUnit, rapports lint,
-  manifestes, signatures, empreintes, diagnostics de l'émulateur, commit source
-  et archive `sources-verifiees.zip`. Les preuves disponibles sont conservées
-  même lorsqu'une étape échoue.
-- **SousTitresVoix-release-validation** : paire d'APK release testée, empreintes,
-  certificat de validation et commit source. Cet artefact est produit uniquement
-  après la réussite de tous les contrôles.
+Après fusion, **SousTitresVoix-release-main** contient la nouvelle construction non signée et sa preuve ; **Release-preuves-apres-fusion** conserve les contrôles de provenance et de contenu. La démonstration FFmpeg est déterministe et les métadonnées VCS variables sont exclues de l’APK ; le commit reste conservé dans les preuves séparées.
 
-La clé créée dans cette CI est **éphémère**, conservée hors du dépôt puis
-supprimée. L'APK de validation ne remplace pas une distribution signée avec la
-clé stable et ne garantit pas une mise à jour par-dessus une installation
-existante. Les artefacts Actions sont conservés 14 jours ; les APK destinés à
-l'utilisation et leurs informations de version sont accessibles depuis le
-[README](README.md).
-
-
-L’étape traduction ajoute 10 méthodes du noyau, 45 méthodes JVM de l’application et 7 méthodes Android. Les contrôles du transport sont réalisés avec des réponses synthétiques sans compte fournisseur. Les trois scénarios Android de traduction utilisent une traduction contrôlée et le service TTS de fixture ; ils ne mesurent ni fidélité linguistique, ni disponibilité d’un compte API, ni rendu d’une voix commerciale.
+La signature CI est **éphémère** : l’APK de validation ne remplace pas la distribution signée avec la clé durable. Les artefacts Actions ont une conservation limitée ; le [README](README.md) pointe vers l’APK effectivement distribué. Les passages doubles des anciennes versions restent décrits dans leur historique : ils ne représentent plus le parcours courant.
 
 ## Validation locale
 

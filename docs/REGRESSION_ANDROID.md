@@ -1,5 +1,7 @@
 # Régression détectée par l'exécution réelle sur Android
 
+[Accueil actuel](../README.md) · [Documentation](README.md) · [Versions et archives](HISTORIQUE_BRANCHES.md)
+
 > **Note historique de la version initiale.** Les nombres de tests et l’environnement ci-dessous décrivent cette régression au moment de sa correction. La procédure actuelle se trouve dans [TESTING.md](../TESTING.md) ; voir aussi l’[index de la documentation](README.md) et l’[historique des versions](../CHANGELOG.md).
 
 ## Échec observé

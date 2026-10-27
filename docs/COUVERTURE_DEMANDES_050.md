@@ -1,5 +1,7 @@
 # Couverture des demandes — 0.5.0
 
+> **Matrice historique des demandes 0.5.0.** Les fonctions restent conservées en 0.5.1 ; les correctifs et leurs résultats supplémentaires figurent dans les [notes 0.5.1](releases/0.5.1.md) et [TESTING.md](../TESTING.md).
+
 [Documentation](README.md) · [Guide utilisateur](CONFORT_INTEGRAL_050.md) · [Résultats de validation](../TESTING.md) · [Notes de version](releases/0.5.0.md)
 
 **Priorité : vocaliser toutes les occurrences textuelles distinctes extraites de la piste choisie.** Dialogues, panneaux, indications, chevauchements et répétitions légitimes conservent leur identité. En Lecture intégrale, la vidéo attend la voix si nécessaire ; aucune suppression de mots ni substitution silencieuse d’une traduction absente ne sert au rattrapage. Les exclusions sont des choix visibles, accessibles après désactivation explicite de Lecture intégrale. Le mode Continu exige une confirmation et peut interrompre une phrase.

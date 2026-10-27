@@ -1,5 +1,7 @@
 # Cinéma 0.3.1 — couverture des demandes et limites vérifiables
 
+[Accueil actuel](../README.md) · [Documentation](README.md) · [Versions et archives](HISTORIQUE_BRANCHES.md)
+
 > **Document historique — suivi des demandes de la 0.3.1.** Cette matrice conserve les preuves, branches et limites constatées à cette étape. Elle complète l’[historique des versions](../CHANGELOG.md) ; les instructions actuelles sont dans l’[accueil](../README.md) et [TESTING.md](../TESTING.md).
 
 État documentaire : **20 octobre 2026**. Cette matrice reprend les demandes explicites du message utilisateur, y compris ses priorités : image entière étirée, ponctuation, préparation fiable, adaptation plus rapide et exploitation utile du téléphone. Elle décrit le code de la révision 0.3.1 en cours de validation. La présence d'une fonction ou d'un test ne signifie pas que son exécution a réussi sur le téléphone.

@@ -1,24 +1,14 @@
 # Choisir et configurer les moteurs de traduction
 
-Guide vérifié le **24 octobre 2026**. Les offres commerciales, les langues et les
-fichiers des catalogues peuvent évoluer. Les liens ci-dessous permettent de
-contrôler l'offre effectivement proposée à ton compte avant toute souscription.
+[Accueil](../README.md) · [Documentation](README.md) · [Services gratuits et limites](TRADUCTION_GRATUITE_ET_LIMITES.md) · [Tests sur téléphone](TESTS_TELEPHONE.md)
 
-La politique de reprise ci-dessous décrit le **correctif candidat 0.5.1**, mis à
-jour le 27 octobre 2026. Voir aussi le [guide des offres gratuites et des limites](TRADUCTION_GRATUITE_ET_LIMITES.md).
+Guide d’utilisation des fonctions **0.5.0 et des correctifs 0.5.1** ; état du projet au **27 octobre 2026**. Les références commerciales initiales ont été vérifiées le 24 octobre, puis les offres gratuites le 27 octobre. Les conditions, langues et droits applicables restent ceux affichés dans le compte du fournisseur.
 
-## Ce qui est disponible dans cette étape
+## Fonctions disponibles
 
-Le parcours ajouté prépare **toute la piste textuelle avant la lecture**, traduit
-vers le français, puis transmet uniquement les occurrences françaises au moteur
-vocal. Les moteurs vocaux et les moteurs de traduction ont des fonctions
-distinctes : une meilleure voix ne corrige pas une traduction, et une traduction
-ne fournit pas nécessairement une voix.
+La **traduction complète avant lecture** reste le choix initial. Le mode **progressif**, activé explicitement, permet de commencer avec au moins une minute de tampon validé avant la première occurrence non traduite. Si la lecture rattrape ce travail, le lecteur attend ; la fin d’un lot ne reprend pas automatiquement la vidéo. Les textes manquants ne sont pas remplacés silencieusement par l’original.
 
-L'affichage des sous-titres sur la vidéo conserve la piste originale : cette
-étape change la source de la narration et ne promet pas un rendu visuel traduit.
-Les filtres vocaux facultatifs restent applicables ; leur configuration peut
-donc encore influencer les événements effectivement lus.
+La narration utilise les occurrences françaises validées. L’affichage propose indépendamment **original, français, bilingue ou masqué**. Le profil Lecture intégrale préserve toutes les occurrences textuelles extraites de la piste choisie ; les filtres d’exclusion exigent sa désactivation explicite. Moteur vocal et traducteur sont distincts : la voix prononce le résultat fourni par le traducteur.
 
 | Choix affiché | Où travaille le traducteur ? | Ce qu'il faut fournir | Installation de poids sur Android |
 | --- | --- | --- | --- |
@@ -32,11 +22,13 @@ Hugging Face ne sont intégrés pour l'instant.** Les modèles locaux présenté
 loin sont des candidats documentés pour une étape future. Leur téléchargement
 ne les active pas dans ce lecteur.
 
-Un cache conserve les pistes complètes validées dans le stockage privé de
-l'application, sous réserve d'espace et de réussite de l'écriture. Il peut être
-supprimé par Android. Une piste conservée peut être réutilisée sans refaire les
-requêtes lorsque son identité et ses paramètres correspondent. Cela ne rend pas
-local le moteur qui l'a produite. Le cache n'est pas un export SRT durable.
+Les résultats ont trois usages distincts :
+
+- **Cache** : réutilisation des traductions complètes validées, dans une limite de 32 Mio ; une entrée peut être évincée.
+- **Progression** : lots déjà validés conservés pour reprendre avec la même piste et les mêmes paramètres. Un lot au résultat incertain demande une confirmation avant un éventuel renvoi.
+- **Conservation et export** : conservation durable explicite d’une traduction complète, ou export SRT/VTT à l’emplacement choisi. L’export peut ensuite être réimporté comme piste française.
+
+Ces fonctions réutilisent un texte déjà traduit ; elles n’ajoutent pas de moteur de traduction local. La conservation privée dépend du stockage de l’application ; un export constitue un fichier séparé.
 
 ## Parcours depuis le téléphone
 
@@ -49,7 +41,7 @@ local le moteur qui l'a produite. Le cache n'est pas un export SRT durable.
 3. Renseigne les informations du fournisseur décrites ci-dessous. La clé
    personnelle se saisit dans l'application, jamais dans une issue GitHub,
    une capture publique ou un message de diagnostic.
-4. Appuie sur **« Indexer la piste et estimer la traduction »**. Le lecteur se
+4. Choisis éventuellement **Traduction progressive** et un plafond de nouveaux caractères UTF-16. Appuie sur **« Indexer la piste et estimer la traduction »**. Le lecteur se
    met en pause et indexe la piste entière.
    Cette première opération sert à contrôler les occurrences et leur volume ;
    elle n'envoie pas encore le texte au traducteur.
@@ -57,17 +49,14 @@ local le moteur qui l'a produite. Le cache n'est pas un export SRT durable.
    de confirmer avec **« Traduire / réutiliser le cache »**. L'estimation en
    unités UTF-16 n'est pas une facture
    garantie : les règles de comptage du fournisseur restent applicables.
-6. Attends la fin de la traduction. Une réponse incomplète ou une erreur ne doit
-   pas activer une piste incomplète en mode intégral. DeepL peut réessayer un
-   refus de débit **429/529** ; les autres erreurs nécessitent une reprise explicite.
+6. Attends la piste complète, ou le tampon validé si tu as choisi le mode progressif. Une réponse incomplète n’est jamais présentée comme une piste complète. En 0.5.1, DeepL peut réessayer un refus de débit **429/529** ; les autres erreurs nécessitent une reprise explicite.
 7. Si la vocalisation est activée, sélectionne une voix française prête dans
    **« Voix et confort »**. Appuie ensuite sur **« Lire »** quand la piste
-   française est annoncée prête. L'application vérifie la voix française avant
+   française ou le tampon progressif est annoncé prêt. L'application vérifie la voix française avant
    cette lecture uniquement lorsque la vocalisation est activée.
 
 L'annulation ne restitue pas les caractères déjà consommés chez le fournisseur.
-Une nouvelle demande après un échec peut donc consommer de nouveau des
-caractères. Le retour à la vocalisation originale reste un choix explicite ; un
+La reprise réutilise les lots validés si la piste et les paramètres correspondent. Un lot sans résultat confirmé peut toutefois consommer des caractères une seconde fois. Le retour à la vocalisation originale reste un choix explicite ; un
 échec de traduction ne doit pas provoquer une substitution silencieuse.
 
 ### Codes de langues utiles
@@ -204,16 +193,24 @@ gratuits toutes les garanties commerciales d'un autre plan.
 
 Les textes d'un lot DeepL sont traduits séparément : la présence de répliques
 voisines dans le même tableau ne garantit pas qu'elles servent de contexte entre
-elles. L'adaptateur actuel n'expose pas les glossaires, le contexte additionnel
-ou le choix du modèle DeepL. Ces possibilités de l'API ne sont pas annoncées
-comme des commandes déjà présentes dans le lecteur.
+elles. Les options suivantes sont accessibles depuis la 0.5.0 :
+
+| Option DeepL | Fonction et limite |
+| --- | --- |
+| Contexte facultatif | Synopsis, noms et indications utiles, jusqu’à 24 000 caractères ; envoyé avec chaque lot. |
+| Glossaire et révision | Identifiant d’un glossaire déjà créé dans ton compte ; modifier la révision locale après une modification distante pour invalider les anciens résultats. L’application ne crée pas le glossaire. |
+| Modèle | Valeur prise en charge par le compte et la paire, par exemple `quality_optimized`, `latency_optimized` ou `prefer_quality_optimized`. |
+| Registre | `more`, `less`, `prefer_more` ou `prefer_less`, selon la langue et le compte. |
+| Consultation du quota | Requête au compte DeepL sans texte de sous-titres ; valeurs à l’instant de la consultation, sans réservation du solde. |
+
+Contexte, glossaire, révision, modèle et registre font partie de l’identité des résultats réutilisables. Une option refusée doit être corrigée explicitement. La comparaison d’un échantillon entre plusieurs configurations exige une confirmation et peut consommer le quota de chaque destination ; elle ne produit pas de classement automatique de fidélité.
 
 Source technique : [traduire un texte avec DeepL](https://developers.deepl.com/api-reference/translate/request-translation).
 
 ### Débit temporaire et quota : deux situations distinctes
 
 Une réponse **HTTP 429/529** indique une limitation temporaire du débit. Le
-correctif candidat espace les appels DeepL de **500 ms** au minimum et réessaie
+correctif 0.5.1 espace les appels DeepL de **500 ms** au minimum et réessaie
 au plus **cinq fois** le même lot après 1, 2, 4, 8 puis 16 secondes, avec un
 léger aléa. Un `Retry-After` valide est respecté. L'attente cumulée est limitée
 à **120 secondes par lot**, hors durée des échanges réseau ; si le serveur exige
@@ -443,7 +440,8 @@ et la conservation locale de leurs résultats complets.
 | Symptôme | Vérification à faire |
 | --- | --- |
 | Clé refusée | Compte API, clé révoquée, endpoint du plan, région Azure ; ne pas publier la clé |
-| Quota atteint | Tableau de bord du fournisseur et plafond configuré ; décider avant toute nouvelle tentative |
+| Débit temporaire DeepL, 429/529 | Attente et reprises bornées en 0.5.1 ; consulter le statut avant une reprise manuelle |
+| Quota atteint, 456 | Tableau de bord du fournisseur et plafond propre à la clé ; décider avant toute nouvelle tentative |
 | Langue refusée | Code propre au fournisseur, disponibilité de la paire ; pour LibreTranslate, modèles réellement installés |
 | Adresse LibreTranslate refusée | HTTPS, certificat, absence de mot de passe dans l'URL, bonne API et absence de redirection |
 | Préparation impossible | Piste textuelle chargée et index complet ; des pixels ne deviennent pas du texte sans OCR |

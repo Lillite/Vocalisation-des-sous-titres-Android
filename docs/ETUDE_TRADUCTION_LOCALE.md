@@ -1,5 +1,9 @@
 # Traduction locale sur Android : candidats et limites
 
+[Accueil](../README.md) · [Documentation](README.md) · [Moteurs disponibles](GUIDE_MOTEURS_TRADUCTION.md) · [Google et offres gratuites](TRADUCTION_GRATUITE_ET_LIMITES.md)
+
+**Étude prospective : aucun moteur local n’est intégré dans la 0.5.1.** Les dates et références ci-dessous restent celles de l’étude initiale.
+
 État de l'étude : **24 octobre 2026**. Cette note prépare un choix ; **aucun
 moteur de traduction exécuté sur le téléphone n'est intégré dans cette étape**.
 Un serveur LibreTranslate, même personnel, reste un traitement sur ce serveur.
