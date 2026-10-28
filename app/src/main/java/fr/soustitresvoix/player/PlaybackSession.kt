@@ -410,8 +410,19 @@ class PlaybackSession(
         focusHeld = true; return true
     }
     fun pause() {
+        translation.playbackInterrupted()
         features.cancelCheckpointResume()
         pauseForIndexing()
+    }
+    /** Internal buffering hold preserves only the translation-owned playback intent. */
+    internal fun pauseForTranslationBuffer(sourcePositionUs: Long) {
+        pauseForIndexing()
+        if (sourcePositionUs == Long.MAX_VALUE) return
+        val sourceMs = (sourcePositionUs / 1000).coerceAtLeast(0)
+        val boundary = features.timeline.mapInterval(sourceMs, sourceMs + 1, narration = true).startMs
+        if (player.currentPosition > boundary) player.seekTo(boundary)
+        timedCursorMs = null
+        savePosition()
     }
     private fun pauseForIndexing() {
         completionSequence++
@@ -423,6 +434,7 @@ class PlaybackSession(
         savePosition()
     }
     fun seek(positionMs: Long) {
+        translation.playbackInterrupted()
         features.cancelCheckpointResume(abandon = true)
         completionSequence++; phraseEndByUtterance.clear(); timedCursorMs = null
         endDrainCursorMs = null; endDrainComplete = true

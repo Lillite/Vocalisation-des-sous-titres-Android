@@ -71,7 +71,7 @@ class TranslationProvidersRobolectricTest {
         }
     }
     @Test fun autoDetectionIsOmittedForAzureAndDeepLButExplicitForLibre() {
-        for (provider in TranslationProvider.entries) {
+        for (provider in TranslationProvider.entries.filterNot { it.isGoogle }) {
             val response = when (provider) {
                 TranslationProvider.AZURE -> """[{"translations":[{"text":"Bonjour","to":"fr"}]}]"""
                 TranslationProvider.LIBRE -> """{"translatedText":["Bonjour"]}"""

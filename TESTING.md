@@ -2,6 +2,46 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Essais sur téléphone](docs/TESTS_TELEPHONE.md) · [Contribution](CONTRIBUTING.md)
 
+## Version 0.5.2 — parcours de validation
+
+La version courante est **0.5.2 / code 9**, avec l’identité Android
+`fr.soustitresvoix.player.translation`. Les [notes de version](docs/releases/0.5.2.md)
+décrivent Google en ligne, ML Kit local, la lecture pendant la traduction et le
+correctif du bouton audio avancé. Les preuves d’exécution sont produites par les
+[runs GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml)
+du commit proposé ; la présence d’un test dans les sources ne signifie pas qu’il
+a été exécuté avec succès.
+
+L’inventaire de cette version contient **178 tests noyau, 290 tests JVM application et 99 tests Android**, soit **567 méthodes**. Le workflow doit retrouver exactement cet inventaire dans les rapports, sans échec ni test ignoré. Ce total décrit les tests attendus ; leur réussite doit être établie par le run concerné.
+
+Les régressions ajoutées portent sur :
+
+- la conservation de tous les fragments, caractères Unicode, segments de réponse
+  et occurrences répétées pendant la traduction ;
+- le refus d’une réponse incomplète, les délais entre appels, les refus Google,
+  l’annulation et la reprise des occurrences déjà validées ;
+- le téléchargement des modèles locaux, les erreurs et les réponses tardives ;
+- l’attente à la frontière de traduction, la reprise seulement après une attente
+  créée par l’application, et la vocalisation complète des occurrences ;
+- l’ouverture réelle des paramètres audio experts depuis Son, et l’absence de
+  reprise de lecture provoquée par ce dialogue.
+
+Les transports réseau et les tâches ML Kit sont simulés dans les régressions
+déterministes. Ils vérifient le comportement de l’application, pas la qualité
+linguistique ni la disponibilité permanente des services. Une sonde séparée
+envoie **une seule phrase synthétique** au service Google en ligne, sans reprise
+ni contournement. Son rapport `google-network-probe.json` distingue une réponse
+complète, un refus et une indisponibilité ; un refus ne devient jamais un succès
+de traduction. Le téléchargement réel des modèles et la qualité d’une voix sur
+un téléphone font l’objet du [parcours manuel](docs/TESTS_TELEPHONE.md).
+
+Avant fusion, le workflow construit l’APK release de test puis exécute la suite
+Android sur ce même fichier. Après fusion, il reconstruit la release, vérifie sa
+provenance et compare son contenu avec l’APK testé, sans relancer les suites.
+La publication ajoute les empreintes et les preuves à la
+[release 0.5.2](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.2).
+Les résultats historiques ci-dessous restent attachés à leurs versions.
+
 ## Version 0.5.1 — validation exécutée avant fusion
 
 Les sources **0.5.1 / code 8** ont été fusionnées par la [PR #16](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/16). Leur commit exact est [`d5d5b63ea37ca4be423f375e8e7a75e870d154e6`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/d5d5b63ea37ca4be423f375e8e7a75e870d154e6). La signature privée reste hors du dépôt et des artefacts de CI.
@@ -542,14 +582,14 @@ Le parcours demandé depuis le 27 octobre 2026 comprend deux phases. Le workflow
 | Phase | Contrôles |
 | --- | --- |
 | Avant fusion, structure | XML, manifeste source, démonstration synthétique et absence de clé privée versionnée |
-| Avant fusion, JVM | Un passage des **178 tests noyau** et des **254 tests application release** |
+| Avant fusion, JVM | Un passage de tous les tests noyau et application release, avec inventaire exact des méthodes attendues |
 | Avant fusion, compilations | APK debug/test debug et release/test release, lint debug/release |
-| Avant fusion, Android 36 | Un passage des **92 tests instrumentés**, installé et exécuté sur la paire d’APK release |
+| Avant fusion, Android 36 | Un passage de tous les tests instrumentés, installé et exécuté sur la paire d’APK release |
 | Avant fusion, intégrité | Inventaires des méthodes, absence d’échec/erreur/test ignoré/manquant/dupliqué, manifestes, permissions, signatures, alignements, empreintes et conservation des preuves |
 | Après fusion | Commit de merge à deux parents, validation réussie de la PR, même arbre/parents que la fusion testée, reconstruction de release et comparaison de son contenu applicatif hors signature |
 | Publication | Signature durable, contrôles du fichier et de sa provenance, publication et vérification du téléchargement ; aucune recompilation ni répétition des suites dans cette phase |
 
-La variante debug et son APK de tests sont construits ; l’instrumentation automatique porte sur la **variante release**. Les effectifs 178/254/92 décrivent la 0.5.1 ; ils doivent évoluer avec les tests ajoutés. Aucun test antérieur n’est retiré pour retrouver un total. Les nombres attendus ne remplacent jamais les rapports réels de l’exécution concernée.
+La variante debug et son APK de tests sont construits ; l’instrumentation automatique porte sur la **variante release**. Les effectifs attendus sont versionnés dans le workflow et `tools/run-device-tests.sh`, puis confrontés à l’inventaire des sources et aux rapports réels. Aucun test antérieur n’est retiré pour retrouver un total. Les nombres attendus ne remplacent jamais les résultats de l’exécution concernée.
 
 Les artefacts avant fusion sont :
 

@@ -1,6 +1,6 @@
 # Capacités et observations — étape 2
 
-> **Référence historique : cette étape a été intégrée à `main` et à la [version 0.4.0 — édition Traduction](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0).** Les mentions ci-dessous de travail séparé, de livraison future, d’ancienne version ou d’effectifs intermédiaires décrivent le développement de cette étape. La branche de travail est conservée par son [tag d’archive](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/archive/20261024/work/etape-2-capacites-20261022). Ces fonctions sont conservées en 0.5.1. Pour installer et vérifier la version actuelle : [accueil](../README.md), [notes 0.5.1](releases/0.5.1.md) et [TESTING.md](../TESTING.md).
+> **Référence historique : cette étape a été intégrée à `main` et à la [version 0.4.0 — édition Traduction](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0).** Les mentions ci-dessous de travail séparé, de livraison future, d’ancienne version ou d’effectifs intermédiaires décrivent le développement de cette étape. La branche de travail est conservée par son [tag d’archive](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/archive/20261024/work/etape-2-capacites-20261022). Ces fonctions sont conservées en 0.5.2. Pour installer et vérifier la version actuelle : [accueil](../README.md), [notes 0.5.2](releases/0.5.2.md) et [TESTING.md](../TESTING.md).
 
 [Index](README.md) · [Architecture](ARCHITECTURE.md) · [Validation](../TESTING.md)
 

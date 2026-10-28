@@ -8,7 +8,7 @@ if len(sys.argv) != 2:
 ns = '{http://schemas.android.com/apk/res/android}'
 root = ET.parse(Path(sys.argv[1])).getroot()
 assert root.get('package') == 'fr.soustitresvoix.player.translation', 'Unexpected application identity'
-assert root.get(ns + 'versionCode') == '8' and root.get(ns + 'versionName') == '0.5.1', 'Unexpected version'
+assert root.get(ns + 'versionCode') == '9' and root.get(ns + 'versionName') == '0.5.2', 'Unexpected version'
 app = root.find('application')
 assert app is not None and app.get(ns + 'allowBackup') == 'false', 'Backup must remain disabled'
 assert app.get(ns + 'usesCleartextTraffic') == 'false', 'Cleartext network traffic must remain disabled'
@@ -25,6 +25,8 @@ assert not permissions.intersection(forbidden), f'Forbidden permissions: {permis
 assert 'android.permission.INTERNET' in permissions, 'Explicit translation requires Internet permission'
 assert root.find("queries/intent/action[@" + ns + "name='android.intent.action.TTS_SERVICE']") is not None
 assert not any('Fixture' in x.get(ns + 'name', '') for x in app), 'Test service leaked into production APK'
+assert all(provider.get(ns + 'name') != 'com.google.mlkit.common.internal.MlKitInitProvider'
+           for provider in app.findall('provider')), 'ML Kit must initialize only after explicit translation confirmation'
 print('PASS compiled cinema APK: identity, backup disabled, TTS query, no test service')
 print('PASS translation Internet permission, HTTPS only, no microphone, camera, contacts or broad storage permission')
 print('Actual permissions:', ', '.join(sorted(permissions)) or '(none)')

@@ -11,6 +11,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.media3.common.util.UnstableApi
 import fr.soustitresvoix.core.AudioCommandContext
 import fr.soustitresvoix.core.AudioCommandDecision
 import fr.soustitresvoix.core.AudioCommandPolicy
@@ -39,6 +40,7 @@ import org.robolectric.shadows.ShadowAlertDialog
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 @LooperMode(LooperMode.Mode.PAUSED)
+@UnstableApi
 class AudioDspUiRobolectricTest {
     private class Port : AudioCommandPort {
         var context = AudioCommandContext(81, false, CapabilityStatus.CONDITIONAL,
@@ -95,6 +97,55 @@ class AudioDspUiRobolectricTest {
         dialog.findViewById<EditText>(R.id.audio_numeric_input).setText(value)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
         shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    @Test fun actualSettingsSoundEntryOpensExpertPanelsAndClosingSettingsDismissesTheirEditors() {
+        RuntimeEnvironment.getApplication().getSharedPreferences("player", Activity.MODE_PRIVATE).edit()
+            .clear().putBoolean("narration", false).commit()
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup().visible()
+        val dialogs = mutableListOf<AlertDialog>()
+        fun openChild(parent: AlertDialog, buttonId: Int): AlertDialog {
+            requireNotNull(parent.findViewById<Button>(buttonId)).performClick()
+            // In PAUSED mode, show() does not finish attaching the new window.
+            // Nested audio controls deliberately reject clicks before attachment.
+            shadowOf(Looper.getMainLooper()).idle()
+            return requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).also { child ->
+                assertNotSame("The clicked control must open a new child dialog", parent, child)
+                assertTrue(child.isShowing)
+                assertTrue(requireNotNull(child.window).decorView.isAttachedToWindow)
+                dialogs += child
+            }
+        }
+        try {
+            val activity = controller.get()
+            val original = activity.session.audioCommands.snapshot().context.requested
+            descendants(activity.window.decorView).filterIsInstance<Button>().single {
+                it.text.toString() == "Réglages de la voix et du confort"
+            }.performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            val settings = requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).also { dialogs += it }
+            val panel = descendants(requireNotNull(settings.window).decorView).filterIsInstance<SettingsPanel>().single()
+            panel.select(SettingsSection.SOUND)
+            assertTrue(panel.isAttachedToWindow)
+            val expert = openChild(settings, R.id.audio_dsp_open)
+            assertTrue(settings.isShowing)
+            assertEquals(original, activity.session.audioCommands.snapshot().context.requested)
+            val band = openChild(expert, R.id.audio_dsp_band_3)
+            val editor = openChild(band, R.id.audio_dsp_gain_edit)
+            requireNotNull(editor.findViewById<EditText>(R.id.audio_numeric_input)).setText("2,5")
+            settings.getButton(AlertDialog.BUTTON_NEGATIVE).performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            for (dialog in listOf(settings, expert, band, editor)) assertFalse(dialog.isShowing)
+            editor.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+            assertEquals(original, activity.session.audioCommands.snapshot().context.requested)
+            assertFalse(activity.session.prefs.narration)
+            assertFalse(activity.session.player.playWhenReady)
+            assertNull(activity.session.machine.snapshot().speakingId)
+            assertEquals(0, activity.session.machine.snapshot().pendingCount)
+        } finally {
+            dialogs.asReversed().forEach { it.dismiss() }
+            controller.pause().stop().destroy()
+        }
     }
 
     @Test fun mainControlsKeepDefaultsInactiveAndApplyAllPreciseValuesWithReadOnlyRefresh() {

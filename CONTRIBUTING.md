@@ -31,6 +31,23 @@ Pour une nouvelle publication, suivre [TESTING.md](TESTING.md), conserver la mê
 
 Les secrets, mots de passe, vidéos personnelles et clés privées ne doivent pas être versionnés. Les déclarations sur les tests doivent distinguer compilation, tests JVM, instrumentation Android et essais manuels sur un téléphone.
 
+### Préparer la documentation avant les tests
+
+Réunir code, tests utiles et documentation dans la même PR. Le manifeste
+`.github/release-history.json` conserve les identifiants et empreintes des
+publications historiques. Son champ `next_release` déclare la prochaine version,
+ses notes et son identité Android avant la validation : aucun identifiant de
+release ni SHA-256 encore inconnu ne doit être inventé. Avant publication, la
+synchronisation conserve la version recommandée existante. Après publication,
+elle résout le tag déclaré, vérifie que sa source appartient à `main`, puis
+contrôle les sources, les fichiers publics, leur taille et leur empreinte avant
+toute modification. Une publication non déclarée reste bloquante.
+
+Ce parcours évite une seconde campagne Android uniquement pour ajouter les
+identifiants que GitHub attribue après publication. Les résultats et empreintes
+propres à l’exécution figurent dans les preuves de la release et les artefacts
+Actions, avec leurs limites de conservation.
+
 ## Signaler un problème
 
 Indiquer la version de l’application, la version Android, le modèle du téléphone, le moteur et la voix utilisés, le format de la vidéo et des sous-titres, les réglages concernés et les étapes de reproduction. Décrire le résultat attendu et le résultat observé. Un diagnostic ou un petit exemple synthétique peut aider ; ne pas joindre de vidéo personnelle ni d’information privée.

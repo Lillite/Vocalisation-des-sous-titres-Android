@@ -102,4 +102,53 @@ class TranslationResumeRobolectricTest {
         assertEquals(20 to true, TranslationRunner(cache, progress).checkpointSummary(source))
     }
 
+    @Test fun singleOccurrenceEngineResumesExactlyAfterLastValidatedCueIncludingRepeatedTexts() {
+        val cache = temporary.newFolder(); val progress = temporary.newFolder()
+        val source = TranslationPlan.create((0 until 7).map {
+            TranslationCue("same-$it", it * 2_000_000L, it * 2_000_000L + 1_000_000, "Again")
+        }, "en", "fr", "single")
+        fun engine(failAt: Int?, inputs: MutableList<String>) = object : TranslationEngine {
+            override val id = "single"
+            override val maxBatchItems = 1
+            override val maxBatchCharacters = 100
+            private var calls = 0
+            override fun translate(texts: List<String>, sourceLanguage: String, targetLanguage: String, cancelled: () -> Boolean): List<String> {
+                assertEquals(1, texts.size)
+                if (++calls == failAt) throw TranslationFailure(TranslationFailure.Reason.NETWORK)
+                inputs.addAll(texts)
+                return texts.map { "Encore" }
+            }
+            override fun close() = Unit
+        }
+        val firstInputs = mutableListOf<String>()
+        try { TranslationRunner(cache, progress).run(source, engine(4, firstInputs), { false }) { _, _ -> }; fail() }
+        catch (_: TranslationFailure) { }
+        assertEquals(3 to true, TranslationRunner(cache, progress).checkpointSummary(source))
+        val nextInputs = mutableListOf<String>()
+        val track = TranslationRunner(cache, progress).run(source, engine(null, nextInputs), { false }) { _, _ -> }
+        assertEquals(3, firstInputs.size)
+        assertEquals(4, nextInputs.size)
+        assertEquals(source.cues.map { it.id }, track.cues.map { it.id })
+        assertEquals(List(7) { "Encore" }, track.cues.map { it.text })
+    }
+
+    @Test fun engineSpecificCharacterLimitRejectsTheWholePlanBeforeSendingItsFirstCue() {
+        val source = TranslationPlan.create(listOf(
+            TranslationCue("short", 0, 1, "Hi"), TranslationCue("long", 1, 2, "x".repeat(11))
+        ), "en", "fr", "bounded")
+        var calls = 0
+        val engine = object : TranslationEngine {
+            override val id = "bounded"
+            override val maxBatchItems = 1
+            override val maxBatchCharacters = 10
+            override fun translate(texts: List<String>, sourceLanguage: String, targetLanguage: String, cancelled: () -> Boolean): List<String> {
+                calls++; return texts
+            }
+            override fun close() = Unit
+        }
+        try { TranslationRunner(temporary.newFolder()).run(source, engine, { false }) { _, _ -> }; fail() }
+        catch (_: IllegalArgumentException) { }
+        assertEquals(0, calls)
+    }
+
 }

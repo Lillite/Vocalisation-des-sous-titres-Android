@@ -1,6 +1,6 @@
 # Traduction des sous-titres — édition 0.4.0
 
-> **Référence historique 0.4.0.** Les parcours actuels ajoutent traduction progressive, reprise, affichage français/bilingue, conservation, exports et options DeepL. Consulter le [guide des moteurs](GUIDE_MOTEURS_TRADUCTION.md), les [notes 0.5.1](releases/0.5.1.md) et l’[index](README.md). Les constats et effectifs ci-dessous restent ceux de cette étape.
+> **Référence historique 0.4.0.** Les parcours actuels ajoutent traduction progressive, reprise, affichage français/bilingue, conservation, exports et options DeepL. Consulter le [guide des moteurs](GUIDE_MOTEURS_TRADUCTION.md), les [notes 0.5.2](releases/0.5.2.md) et l’[index](README.md). Les constats et effectifs ci-dessous restent ceux de cette étape.
 
 [Guide des moteurs, comptes et modèles](GUIDE_MOTEURS_TRADUCTION.md) · [Architecture](ARCHITECTURE.md) · [Vérifications](../TESTING.md)
 

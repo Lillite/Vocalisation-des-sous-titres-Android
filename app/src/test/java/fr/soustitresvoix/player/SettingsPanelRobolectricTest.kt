@@ -8,6 +8,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.Spinner
 import androidx.test.core.app.ApplicationProvider
 import androidx.media3.common.util.UnstableApi
@@ -231,6 +232,50 @@ class SettingsPanelRobolectricTest {
             assertFalse(activity.session.player.playWhenReady)
         } finally { owner.pause().stop().destroy() }
     }
+
+    @Test fun googleAttributionReservesCaptionSpaceAndStaysAboveCinemaControls() {
+        val owner = Robolectric.buildActivity(Activity::class.java).setup()
+        val activity = owner.get()
+        val session = PlaybackSession(activity, PlayerPreferences(activity), {}, { _, _ -> }, {})
+        var cinema: CinemaView? = null
+        try {
+            fun dp(value: Int) = (value * activity.resources.displayMetrics.density).toInt()
+            fun layout(view: View, width: Int, height: Int) {
+                repeat(2) {
+                    view.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY))
+                    view.layout(0, 0, width, height)
+                }
+            }
+            val video = PlayerView(activity)
+            val overlay = SubtitleView(activity).apply { tag = "narration-subtitle-overlay" }
+            val badge = GoogleTranslationAttribution.badge(activity).apply { tag = GoogleTranslationAttribution.VIDEO_TAG }
+            video.addView(overlay, FrameLayout.LayoutParams(-1, -1))
+            video.addView(badge, FrameLayout.LayoutParams(dp(176), dp(24),
+                android.view.Gravity.BOTTOM or android.view.Gravity.END))
+            GoogleTranslationAttribution.positionVideoBadge(video, overlay)
+            layout(video, dp(360), dp(160))
+            assertTrue(overlay.paddingBottom >= badge.height + dp(8))
+            assertTrue(video.height - overlay.paddingBottom < badge.top)
+
+            cinema = CinemaView(activity, session, session.prefs, video, {}, {}, {}, {})
+            activity.setContentView(cinema)
+            layout(cinema, dp(640), dp(720))
+            val controls = cinema.findViewById<View>(R.id.cinema_controls)
+            assertTrue(controls.height > 0)
+            assertTrue("The Google badge (${badge.top}..${badge.bottom}) must be above the controls (${controls.top}..${controls.bottom})",
+                badge.bottom < controls.top)
+            assertTrue("Captions must end above the badge strip", video.height - overlay.paddingBottom < badge.top)
+            cinema.showControls(false)
+            layout(cinema, dp(640), dp(720))
+            assertEquals(dp(4), (badge.layoutParams as FrameLayout.LayoutParams).bottomMargin)
+            assertTrue(video.height - overlay.paddingBottom < badge.top)
+            badge.visibility = View.GONE
+            cinema.updateCaptionPosition()
+            assertEquals(0, overlay.paddingBottom)
+        } finally { cinema?.close(); session.close(); owner.pause().stop().destroy() }
+    }
+
     @Test fun comprehensionAndIntegralPresetsRemoveLossyFiltersAndKeepCompleteReading() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.getSharedPreferences("player", Context.MODE_PRIVATE).edit().clear().putBoolean("narration", false).commit()

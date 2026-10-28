@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish only the signed 0.5.1 integral narration edition already validated on main.
+"""Publish only the signed 0.5.2 integral narration edition already validated on main.
 
 The temporary branch contains three data files, never a signing key. This script
 does not compile or sign an APK, delete a release/tag, replace an asset, execute a
@@ -32,14 +32,14 @@ import zipfile
 
 
 REPOSITORY = "Lillite/Vocalisation-des-sous-titres-Android"
-BRANCH = "release-upload/v0.5.1"
-TAG = "v0.5.1"
-TITLE = "Sous-titres en voix 0.5.1 — réglages stables et traduction résiliente"
+BRANCH = "release-upload/v0.5.2"
+TAG = "v0.5.2"
+TITLE = "Sous-titres en voix 0.5.2 — Google, traduction progressive et vocalisation intégrale"
 APPLICATION_ID = "fr.soustitresvoix.player.translation"
-VERSION_NAME = "0.5.1"
-VERSION_CODE = "8"
+VERSION_NAME = "0.5.2"
+VERSION_CODE = "9"
 EXPECTED_SIGNER_SHA256 = "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d"
-APK_PATH = "release-upload/SousTitresVoix-0.5.1-correctifs.apk"
+APK_PATH = "release-upload/SousTitresVoix-0.5.2-google.apk"
 NOTES_PATH = "release-upload/notes.md"
 METADATA_PATH = "release-upload/release.json"
 VALIDATION_ARTIFACT = "SousTitresVoix-release-main"

@@ -4,13 +4,15 @@
 
 ## Branche de référence
 
-**`main` rassemble le travail terminé et vérifié.** La version actuelle **0.5.1 — réglages stables et traduction résiliente**, publiée le **27 octobre 2026**, provient du commit [`d5d5b63ea37ca4be423f375e8e7a75e870d154e6`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/d5d5b63ea37ca4be423f375e8e7a75e870d154e6), intégré par la [PR #16](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/16).
-
-Le [run préalable 40556708779](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40556708779) a réussi **524 tests** avant la fusion. Le [run après fusion 40560530124](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40560530124) a reconstruit la release et vérifié le même contenu applicatif sans rejouer les suites. Le [run de publication 40580117622](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40580117622) a publié la release `425961994` et l’asset APK `682813699` après ses contrôles. Le tag `v0.5.1` reste attaché aux sources exactes de cet APK ; une maintenance documentaire ultérieure ne le déplace pas.
+**`main` rassemble le travail terminé et vérifié.** La **0.5.2 — Google et traduction pendant la lecture** est décrite dans ses [notes](releases/0.5.2.md). Le [tag v0.5.2](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/v0.5.2), les fichiers de sa release et les [exécutions GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml) fournissent les références vérifiables ; aucun numéro de commit ou de run antérieur ne sert de preuve à ces ajouts.
 
 ### Publications précédentes
 
- La version **0.5.0 — lecture intégrale et traduction progressive**, publiée le **26 octobre 2026**, est issue du commit [`3740356420fb09eadabe23da207fa554515da101`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/3740356420fb09eadabe23da207fa554515da101). Le tag [`v0.5.0`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0) désigne exactement ce commit, validé dans `main` avant la publication. L’APK public a été téléchargé et vérifié à nouveau ; une mise à jour documentaire ultérieure ne déplace pas ce tag.
+La version **0.5.1 — réglages stables et traduction résiliente**, publiée le **27 octobre 2026**, provient du commit [`d5d5b63ea37ca4be423f375e8e7a75e870d154e6`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/d5d5b63ea37ca4be423f375e8e7a75e870d154e6), intégré par la [PR #16](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/16).
+
+Le [run préalable 40556708779](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40556708779) a réussi **524 tests** avant la fusion. Le [run après fusion 40560530124](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40560530124) a reconstruit la release et vérifié le même contenu applicatif sans rejouer les suites. Le [run de publication 40580117622](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40580117622) a publié la release `425961994` et l’asset APK `682813699` après ses contrôles. Le tag `v0.5.1` reste attaché aux sources exactes de cet APK ; une maintenance documentaire ultérieure ne le déplace pas.
+
+La version **0.5.0 — lecture intégrale et traduction progressive**, publiée le **26 octobre 2026**, est issue du commit [`3740356420fb09eadabe23da207fa554515da101`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/3740356420fb09eadabe23da207fa554515da101). Le tag [`v0.5.0`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0) désigne exactement ce commit, validé dans `main` avant la publication. L’APK public a été téléchargé et vérifié à nouveau ; une mise à jour documentaire ultérieure ne déplace pas ce tag.
 
 La version **0.4.0 — édition Traduction**, publiée le **24 octobre 2026**, est conservée comme version antérieure. Elle réunit les étapes 1 à 6 et la traduction de l’étape 7. Son tag `v0.4.0` désigne exactement [`32864ba732d834e71d87b887ae63f0d7bc09eb8c`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/32864ba732d834e71d87b887ae63f0d7bc09eb8c), source de cet APK. La 0.5.0 conserve son identité d’application et son certificat durable ; les fichiers des versions antérieures ne sont pas remplacés.
 
@@ -101,7 +103,8 @@ Les APK antérieurs sont conservés, sans recompilation ni modification de leur 
 | `0.3.2` | [`v0.3.2`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.3.2) | `Test4` | `311d990` | Ancienne stable, conservée |
 | `0.4.0` | [`v0.4.0`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.4.0) | Aucun | `32864ba` | Ancienne édition Traduction, conservée |
 | `0.5.0` | [`v0.5.0`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.0) | Aucun | `3740356` | Lecture intégrale et traduction progressive, conservée |
-| `0.5.1` | [`v0.5.1`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.1) | Aucun | `d5d5b63` | Version actuelle, correctifs des réglages et de DeepL |
+| `0.5.1` | [`v0.5.1`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.1) | Aucun | `d5d5b63` | Correctifs des réglages et de DeepL, conservée |
+| `0.5.2` | [`v0.5.2`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.2) | Aucun | [Sources du tag](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/tree/v0.5.2) | Google en ligne/local et traduction pendant la lecture |
 
 Auparavant, les quatre anciens tags pointaient tous vers `8028f5d`. Les archives automatiques de sources des publications 0.2, 0.3.1 et 0.3.2 étaient donc incorrectes. La réorganisation crée les nouveaux tags sur les commits vérifiés, rattache les publications existantes à ces tags, puis retire les anciens tags après vérification. Les identifiants des publications et de leurs APK sont conservés.
 
@@ -109,6 +112,7 @@ Les liens contenant les anciens noms de tags doivent être remplacés par les li
 
 ### Notes de version
 
+- [0.5.2 — Google et traduction pendant la lecture](releases/0.5.2.md)
 - [0.5.1 — réglages stables et traduction résiliente](releases/0.5.1.md)
 - [0.5.0 — lecture intégrale et traduction progressive](releases/0.5.0.md)
 - [0.4.0 — édition Traduction](releases/0.4.0.md)

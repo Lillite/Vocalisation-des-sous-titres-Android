@@ -1,8 +1,8 @@
-# Vérifier la version 0.5.1 sur le téléphone
+# Vérifier la version 0.5.2 sur le téléphone
 
 [Documentation](README.md) · [Guide Confort intégral](CONFORT_INTEGRAL_050.md) · [Installation](../README.md) · [Fournisseurs](GUIDE_MOTEURS_TRADUCTION.md)
 
-Ce parcours concerne **0.5.1 — réglages stables et traduction résiliente**, code **8**, identité **fr.soustitresvoix.player.translation**. Les sources ont réussi **524 tests avant fusion** et la release a été reconstruite avec comparaison du contenu après fusion. L’état du téléchargement signé est indiqué dans les [notes 0.5.1](releases/0.5.1.md). **Les essais sur téléphone décrits ici restent à consigner séparément : ni compilation ni instrumentation sur émulateur ne les déclarent réussis.**
+Ce parcours concerne **0.5.2 — Google et traduction pendant la lecture**, code **9**, identité **fr.soustitresvoix.player.translation**. Les [notes 0.5.2](releases/0.5.2.md), [TESTING.md](../TESTING.md) et les [exécutions GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml) donnent accès à la distribution et aux preuves automatisées. **Les essais sur téléphone décrits ici restent à consigner séparément : ni compilation ni instrumentation sur émulateur ne les déclarent réussis.** Les [524 tests de la 0.5.1](releases/0.5.1.md) demeurent une preuve historique distincte.
 
 Le [guide Confort intégral](CONFORT_INTEGRAL_050.md) couvre les fonctions conservées ; le [guide des services gratuits](TRADUCTION_GRATUITE_ET_LIMITES.md) précise les offres et les limites DeepL.
 
@@ -10,7 +10,7 @@ Le [guide Confort intégral](CONFORT_INTEGRAL_050.md) couvre les fonctions conse
 
 | Élément | À relever |
 | --- | --- |
-| Application | Nom affiché, version 0.5.1, code 8, date |
+| Application | Nom affiché, version 0.5.2, code 9, date |
 | Téléphone | Modèle exact, Android, orientation, taille des polices |
 | Voix | Moteur, voix, langue, données installées, vitesse |
 | Narration | Profil intégral, mode, plafond, reprise après Pause |
@@ -23,13 +23,13 @@ Commencer par les contenus synthétiques du dépôt, à volume confortable. Ne p
 
 ## Installer la bonne version
 
-1. Vérifier que la release 0.5.1 a été publiée sur [la page du projet](../README.md).
-2. Télécharger **SousTitresVoix-0.5.1-correctifs.apk** ; les archives « Source code » ne sont pas installables.
+1. Ouvrir la [release 0.5.2](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.2) et ses sommes de contrôle.
+2. Télécharger **[SousTitresVoix-0.5.2-google.apk](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.2/SousTitresVoix-0.5.2-google.apk)** ; les archives « Source code » ne sont pas installables.
 3. Ouvrir le fichier et autoriser l’installation depuis l’application de téléchargement si Android le demande.
-4. Avec la 0.4.0 déjà installée, vérifier qu’Android propose sa mise à jour et conserve les réglages/données. Ne pas désinstaller pour forcer un échec de signature.
+4. Avec une édition Traduction 0.4.0 ou 0.5.x déjà installée, vérifier qu’Android propose sa mise à jour et conserve les réglages/données. Ne pas désinstaller pour forcer un échec de signature.
 5. Vérifier version/code dans l’application et les repères de la release.
 
-La 0.5.1 conserve l’identité et le certificat des 0.4.0 et 0.5.0 ; la 0.3.2 reste une autre application. Les empreintes, taille et résultats vérifiés sont disponibles dans [TESTING.md](../TESTING.md) et les notes de la publication.
+La 0.5.2 conserve l’identité Android de la série Traduction ; la publication vérifie le certificat durable des versions précédentes ; la 0.3.2 reste une autre application. Les empreintes, taille et résultats vérifiés sont disponibles dans [TESTING.md](../TESTING.md) et les notes de la publication.
 
 ## Parcourir les huit rubriques et les champs numériques
 
@@ -162,20 +162,51 @@ Vérifier la conservation des cinq occurrences et la distinction entre leur iden
 | Budget zéro avec résultat complet local compatible | Réutilisation sans nouvel appel |
 | Modifier contexte/glossaire/révision/modèle | Résultat d’une ancienne configuration non réutilisé comme identique |
 | Annuler ou changer vidéo/piste | Ancienne réponse ne remplace pas la piste courante |
-| Terminer un lot | Aucun démarrage automatique de la vidéo |
+| Terminer un lot sans intention Lire valide | Aucun démarrage automatique de la vidéo |
 
-Le petit exemple de 24 secondes ne suffit pas à observer un tampon initial d’une minute avant la fin. Pour le progressif, employer un contenu synthétique plus long ou le scénario contrôlé de la suite automatisée.
+Le tampon progressif est de **30 secondes par défaut**, réglable de **10 à 120 secondes**. Le petit exemple de 24 secondes ne suffit pas à observer le fonctionnement du tampon par défaut sur une longue piste. Employer un contenu synthétique plus long ou le scénario contrôlé de la suite automatisée.
 
-1. Cocher **Traduction progressive**.
+1. Cocher **Traduction progressive** et conserver un tampon de 30 secondes.
 2. Confirmer la préparation de la piste synthétique.
-3. Essayer Lire avant le tampon : refus/attente perceptible.
-4. Quand le tampon validé est suffisant, appuyer sur Lire.
+3. Essayer Lire avant le tampon : attente perceptible, aucune occurrence manquante sautée.
+4. Quand le tampon validé est suffisant, vérifier que la lecture dépend toujours de l’intention Lire de l’utilisateur.
 5. Observer la progression sans répétition ni interruption d’une phrase déjà en cours.
-6. Si la lecture rattrape le travail, vérifier l’arrêt sur l’occurrence indisponible.
-7. Attendre puis appuyer de nouveau sur Lire ; aucune substitution originale ni reprise spontanée.
-8. Essayer un déplacement vers une portion encore indisponible : attente contrôlée.
+6. Si la lecture rattrape le travail, vérifier l’arrêt avant l’occurrence indisponible.
+7. Laisser cette attente se terminer : la vidéo peut reprendre uniquement si l’attente vient de la traduction et si l’intention Lire reste valide.
+8. Refaire le scénario et appuyer volontairement sur **Pause** pendant l’attente : aucune reprise lorsque de nouveaux résultats arrivent ; une nouvelle commande Lire est nécessaire.
+9. Essayer un déplacement vers une portion encore indisponible, une fermeture et un changement de piste : aucune réponse ancienne ne doit reprendre le film.
+10. Comparer 10, 30 puis 120 secondes de tampon sur un contenu synthétique ; noter le premier départ et les attentes sans en déduire un débit garanti.
 
 Un résultat partiel n’est pas exportable comme une traduction entière et ne peut pas rendre l’œuvre Prêt hors ligne.
+
+## Google en ligne : appels modérés et occurrences
+
+Employer une piste synthétique et un seul essai réel borné, sans chercher à provoquer un blocage du service. Les refus 429/5xx et les longs `Retry-After` sont des scénarios de réponses contrôlées.
+
+| Essai | Résultat à vérifier |
+| --- | --- |
+| Choisir Google en ligne sans clé | Avertissement sur l’accès non officiel ; aucune clé Cloud demandée |
+| Indexer avant confirmation | Estimation et occurrences visibles ; aucune traduction de texte envoyée |
+| Conserver l’intervalle par défaut | Valeur de 1 000 ms ; saisie limitée à 500–10 000 ms |
+| Confirmer la piste synthétique | Traduction et badge Google visibles ; toutes les occurrences restent présentes |
+| Deux occurrences « Wait here. » | Traduction réutilisable, mais deux événements vocaux à leurs instants respectifs |
+| Annuler puis reprendre avec la même configuration | Progrès compatible conservé ; aucun résultat tardif activé après annulation |
+| Refus temporaire dans un scénario contrôlé | Au plus trois nouvelles tentatives, attente bornée et `Retry-After` respecté ; erreur perceptible après épuisement |
+
+## Google local : modèles, consentement et hors connexion
+
+| Essai | Résultat à vérifier |
+| --- | --- |
+| Choisir Google local puis annuler la confirmation | Aucun démarrage de traduction ni téléchargement demandé par le lecteur |
+| Confirmer avec des modèles absents | Information sur ML Kit, télémétrie technique et téléchargement ; Wi-Fi par défaut |
+| Rester sur réseau mobile sans l’autoriser | Le lecteur n’autorise pas le téléchargement sur ce réseau |
+| Autoriser explicitement les données mobiles | Le téléchargement peut utiliser le forfait ; option lisible et réversible |
+| Saisir une langue non prise en charge | Refus explicite avant préparation, aucune substitution par une autre langue |
+| Annuler pendant le téléchargement | Attente du lecteur interrompue ; aucun résultat activé ; le SDK peut terminer une opération déjà lancée |
+| Une fois les modèles prêts, couper le réseau et traduire un nouveau texte synthétique | Résultat produit localement avec attribution Google, sans réutiliser uniquement une piste déjà en cache |
+| Vérifier une paire non anglaise | Évaluer séparément noms, négations, nombres et idiomes ; ne pas assimiler la qualité au service web |
+
+Le fonctionnement hors connexion de la traduction ne supprime pas la télémétrie technique du SDK lorsqu’un réseau est disponible. Voir [confidentialité et provenance](TRADUCTION_GOOGLE_052.md#google-local--ml-kit).
 
 ## DeepL : débit, quota et reprise
 
@@ -248,7 +279,11 @@ Commencer avec les traitements avancés désactivés et un volume modéré. Ne p
 |---|---|
 | Régler séparément volume du film et volume de la voix | Les commandes produisent des effets distincts |
 | Essayer atténuation et fondus du film pendant une phrase | Changements progressifs conformes aux réglages, sans reprise après Pause |
-| Ouvrir **Traitements audio avancés du film** | Traitements optionnels désactivés par défaut, paramètres expliqués |
+| Depuis **Réglages de la voix et du confort → Son**, ouvrir **Traitements audio avancés du film** | La fenêtre s’ouvre depuis le panneau réel, sans reprise de vidéo ni narration parasite |
+| Ouvrir une bande puis un éditeur numérique | Champs utilisables, valeur relue et focus accessible |
+| Fermer les fenêtres parentes pendant une saisie non validée | Éditeurs enfants fermés ; aucune modification tardive appliquée |
+| Modifier une bande puis **Annuler modifications** dans les réglages | État initial restauré ; vidéo toujours en pause |
+| Refaire depuis **Volumes rapides** | Accès avancé conservé ; traitements optionnels désactivés par défaut |
 | Saisir un préampli négatif, puis rétablir | Valeur relue correctement et retour à la valeur prévue |
 | Régler une bande de l’égaliseur à faible gain, puis la désactiver | Effet sur le son du film ; la voix du lecteur conserve son parcours séparé |
 | Tester balance et mono avec un extrait stéréo adapté | Effet attendu gauche/droite et retour au réglage initial |

@@ -1,7 +1,14 @@
 package fr.soustitresvoix.player
 
+import android.app.Activity
+import android.app.AlertDialog
 import android.content.Context
+import android.content.DialogInterface
 import android.os.Looper
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.ImageView
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.ForwardingPlayer
@@ -31,10 +38,12 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
+import org.robolectric.shadows.ShadowAlertDialog
 
 /**
  * Real session, Media3 source selection, ASS parser, complete index and narration
@@ -140,6 +149,53 @@ class TranslationSessionRobolectricTest {
             // The persistent panel appears in several display intervals but is spoken once.
             assertTrue(published.count { "SORTIE" in it.texts } > 1)
             assertEquals(1, fixture.components.speech.requests.count { it.second == "SORTIE" })
+        }
+    }
+
+    @Test fun googleReviewAndEditorKeepAttributionEvenWhenVideoCaptionsUseOriginalOrHiddenMode() {
+        Fixture().use { fixture ->
+            val preview = fixture.prepare(TranslationProvider.GOOGLE_WEB.id)
+            fixture.session.translation.start(preview) { Engine(id = TranslationProvider.GOOGLE_WEB.id) }
+            await("Controlled Google translation did not complete") { fixture.session.translation.complete }
+            val controller = Robolectric.buildActivity(Activity::class.java).setup()
+            val controls = SubtitleTranslationControls(controller.get(), fixture.session)
+            fun descendants(view: View): List<View> = buildList {
+                add(view)
+                if (view is ViewGroup) for (i in 0 until view.childCount) addAll(descendants(view.getChildAt(i)))
+            }
+            fun button(dialog: AlertDialog, title: String) = descendants(dialog.window!!.decorView)
+                .filterIsInstance<Button>().single { it.text.toString() == title }
+            fun assertBadge(dialog: AlertDialog) {
+                val badge = descendants(dialog.window!!.decorView).filterIsInstance<ImageView>()
+                    .single { it.contentDescription == "Traduction automatique fournie par Google Traduction" }
+                assertEquals(View.VISIBLE, badge.visibility)
+                assertNotNull(badge.drawable)
+            }
+            try {
+                for (mode in listOf(TranslationDisplayMode.ORIGINAL, TranslationDisplayMode.HIDDEN)) {
+                    fixture.session.translation.setDisplayMode(mode)
+                    assertTrue(fixture.session.translation.googleTranslationActive)
+                    assertFalse(fixture.session.translation.googleAttributionRequired)
+                    controls.show()
+                    val panel = requireNotNull(ShadowAlertDialog.getLatestAlertDialog())
+                    button(panel, "Vérifier les alertes linguistiques").performClick()
+                    requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).also { assertBadge(it); it.dismiss() }
+                    button(panel, "Corriger une réplique de la traduction complète").performClick()
+                    requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).getButton(DialogInterface.BUTTON_POSITIVE).performClick()
+                    // AlertDialog dispatches its positive-button listener through the main Handler.
+                    shadowOf(Looper.getMainLooper()).idle()
+                    requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).also { assertBadge(it); it.dismiss() }
+                    controls.close()
+                }
+                for (mode in listOf(TranslationDisplayMode.TRANSLATED, TranslationDisplayMode.BILINGUAL)) {
+                    fixture.session.translation.setDisplayMode(mode)
+                    assertTrue(fixture.session.translation.googleAttributionRequired)
+                }
+                fixture.session.translation.useOriginal()
+                assertFalse(fixture.session.translation.googleTranslationActive)
+                assertFalse(fixture.session.translation.googleAttributionRequired)
+                assertTrue(fixture.components.speech.requests.isEmpty())
+            } finally { controls.close(); controller.pause().stop().destroy() }
         }
     }
 
@@ -467,8 +523,13 @@ class TranslationSessionRobolectricTest {
 
     /** Capture the real session listener at its public Player boundary. */
     private class Backend(private val delegate: PlaybackBackend) : PlaybackBackend by delegate {
+        var positionOverrideMs: Long? = null
         private val listeners = mutableListOf<Player.Listener>()
         override val player: Player = object : ForwardingPlayer(delegate.player) {
+            override fun getCurrentPosition(): Long = positionOverrideMs ?: super.getCurrentPosition()
+            override fun seekTo(positionMs: Long) {
+                if (positionOverrideMs != null) positionOverrideMs = positionMs else super.seekTo(positionMs)
+            }
             override fun addListener(listener: Player.Listener) { listeners += listener; super.addListener(listener) }
             override fun removeListener(listener: Player.Listener) { listeners -= listener; super.removeListener(listener) }
         }
@@ -620,6 +681,124 @@ class TranslationSessionRobolectricTest {
             assertFalse(fixture.session.translation.ready)
             assertFalse(fixture.session.translation.allowPlayback())
             assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+        }
+    }
+
+    private fun progressiveSubtitles(): String {
+        fun time(seconds: Int): String = "0:%02d:%02d.00".format(java.util.Locale.ROOT, seconds / 60, seconds % 60)
+        val lines = (0 until 43).joinToString("\n") { i ->
+            "Dialogue: 1,${time(i * 5 + 1)},${time(i * 5 + 3)},Dialogue,ALICE,0,0,0,,Text $i"
+        }
+        return assText().substringBefore("[Events]") + "[Events]\n" +
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n" + lines + "\n"
+    }
+
+    private fun Fixture.startPausedProgressive(release: CountDownLatch, entered: CountDownLatch,
+        providerId: String = "progressive-recovery") {
+        var preview: SubtitleTranslationSession.Preview? = null
+        session.translation.prepareWithOptions("en", providerId, progressive = true, bufferSeconds = 10) { preview = it }
+        await("Progressive source not indexed") { preview != null }
+        var calls = 0
+        session.translation.start(requireNotNull(preview)) {
+            Engine(id = providerId) { texts ->
+                if (++calls == 2) { entered.countDown(); assertTrue(release.await(15, TimeUnit.SECONDS)) }
+                texts.map { "Traduit $it" }
+            }
+        }
+        await("Validated prefix not available") { entered.count == 0L && session.translation.ready }
+        assertFalse(session.translation.complete)
+        assertFalse(session.machine.snapshot().wantsPlayback)
+        session.play()
+        assertTrue(session.machine.snapshot().wantsPlayback)
+        components.backend.positionOverrideMs = 101_090
+        assertFalse(session.translation.onPlaybackPosition(101_090_000))
+        assertEquals("A short missing occurrence must remain replayable", 101_000L, session.player.currentPosition)
+        assertTrue(session.translation.waitingForTranslation)
+        assertFalse(session.machine.snapshot().wantsPlayback)
+    }
+
+    @Test fun progressiveHoldRewindsAndRecoversOnlyItsOwnPlaybackIntentWithoutLosingAnyOccurrence() {
+        Fixture(progressiveSubtitles()).use { fixture ->
+            val release = CountDownLatch(1); val entered = CountDownLatch(1)
+            try {
+                fixture.startPausedProgressive(release, entered)
+                val source = fixture.session.ahead.selected("external-subtitle")
+                val journalBefore = fixture.session.machine.journalSnapshot()
+                val prefixFingerprint = fixture.session.translation.fingerprint
+                assertEquals("Traduit Text 19", fixture.session.translation.textFor(source[19]))
+                assertNull("No original-language substitution", fixture.session.translation.textFor(source[20]))
+                release.countDown()
+                await("Buffered playback intent did not recover") {
+                    fixture.session.translation.complete && fixture.session.machine.snapshot().wantsPlayback
+                }
+                assertFalse(fixture.session.translation.waitingForTranslation)
+                assertNotEquals(prefixFingerprint, fixture.session.translation.fingerprint)
+                val journalAfter = fixture.session.machine.journalSnapshot()
+                assertEquals("A growing translation cannot reset source occurrence tracking", journalBefore.contextHash, journalAfter.contextHash)
+                assertEquals(journalBefore.generation, journalAfter.generation)
+                fixture.playFrames()
+                assertEquals((0 until 43).map { "Traduit Text $it" }, fixture.components.speech.requests.map { it.second })
+            } finally { release.countDown() }
+        }
+    }
+
+    @Test fun explicitPauseSeekCancellationAndUnavailableVoicePreventLateProgressiveAutoplay() {
+        for (interruption in listOf("pause", "seek", "cancel", "voice")) {
+            Fixture(progressiveSubtitles()).use { fixture ->
+                val release = CountDownLatch(1); val entered = CountDownLatch(1)
+                try {
+                    // Each case must exercise a waiting worker, not the complete cache from the previous case.
+                    fixture.startPausedProgressive(release, entered, "progressive-recovery-$interruption")
+                    when (interruption) {
+                        "pause" -> fixture.session.pause()
+                        "seek" -> fixture.session.seek(10_000)
+                        "cancel" -> fixture.session.translation.cancel()
+                        "voice" -> fixture.components.speech.ready(false)
+                    }
+                    release.countDown()
+                    await("Worker remained active after $interruption") { !fixture.session.translation.busy }
+                    shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(100))
+                    assertFalse(interruption, fixture.session.machine.snapshot().wantsPlayback)
+                    assertFalse(interruption, fixture.session.player.playWhenReady)
+                    assertFalse(interruption, fixture.session.translation.waitingForTranslation)
+                    if (interruption == "voice") {
+                        fixture.components.speech.ready(true)
+                        assertFalse("A voice callback cannot revive the consumed intent", fixture.session.machine.snapshot().wantsPlayback)
+                    }
+                } finally { release.countDown() }
+            }
+        }
+    }
+
+    @Test fun progressiveTerminalFailureKeepsPlayablePrefixAndStopsAtItsExactEnd() {
+        Fixture(progressiveSubtitles()).use { fixture ->
+            val release = CountDownLatch(1); val entered = CountDownLatch(1)
+            var prepared: SubtitleTranslationSession.Preview? = null
+            fixture.session.translation.prepareWithOptions("en", "progressive-error", progressive = true, bufferSeconds = 10) { prepared = it }
+            await("Progressive source not indexed") { prepared != null }
+            var calls = 0
+            fixture.session.translation.start(requireNotNull(prepared)) {
+                Engine(id = "progressive-error") { texts ->
+                    if (++calls == 2) {
+                        entered.countDown(); assertTrue(release.await(15, TimeUnit.SECONDS))
+                        throw TranslationFailure(TranslationFailure.Reason.NETWORK)
+                    }
+                    texts.map { "Traduit $it" }
+                }
+            }
+            try {
+                await("First prefix not available") { entered.count == 0L && fixture.session.translation.ready }
+                fixture.session.play()
+                release.countDown()
+                await("Network failure not reported") { !fixture.session.translation.busy }
+                assertTrue("Valid translated footage remains playable", fixture.session.machine.snapshot().wantsPlayback)
+                fixture.components.backend.positionOverrideMs = 101_090
+                assertFalse(fixture.session.translation.onPlaybackPosition(101_090_000))
+                assertEquals(101_000L, fixture.session.player.currentPosition)
+                assertFalse(fixture.session.translation.waitingForTranslation)
+                assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+                assertNull(fixture.session.translation.textFor(fixture.session.ahead.selected("external-subtitle")[20]))
+            } finally { release.countDown() }
         }
     }
 

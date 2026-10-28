@@ -17,6 +17,7 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 enum class TranslationDisplayMode { ORIGINAL, TRANSLATED, BILINGUAL, HIDDEN }
 
@@ -39,8 +40,14 @@ class SubtitleTranslationSession(
         val maximumNewCharacters: Long = Long.MAX_VALUE,
         val resumedOccurrences: Int = 0,
         val uncertainRequest: Boolean = false,
-        val cachedComplete: Boolean = false
+        val cachedComplete: Boolean = false,
+        val bufferSeconds: Int = 30
     ) {
+        internal val cueOrdinals = plan.cues.withIndex().associate { it.value.id to it.index }
+        /** One suffix scan per plan; no repeated full scan for each single-text response. */
+        internal val missingTimesUs = LongArray(plan.cues.size + 1) { Long.MAX_VALUE }.also { times ->
+            for (i in plan.cues.indices.reversed()) times[i] = minOf(plan.cues[i].startUs, times[i + 1])
+        }
         val estimatedNewCharacters: Long get() = if (cachedComplete) 0 else plan.cues.drop(resumedOccurrences).sumOf { it.text.length.toLong() }
     }
     private class Job(val cancelled: AtomicBoolean = AtomicBoolean(false)) {
@@ -56,7 +63,16 @@ class SubtitleTranslationSession(
         private set
     private var activePlan: TranslationPlan? = null
     private var progressive = false
+    private var bufferSeconds = 30
+    private var resumeAfterBuffer = false
+    val waitingForTranslation: Boolean get() = resumeAfterBuffer
+    private var partialTexts: List<String> = emptyList()
+    private var partialFingerprint: String? = null
+    private var cueOrdinals: Map<String, Int> = emptyMap()
     val progressiveEnabled: Boolean get() = progressive
+    val googleTranslationActive: Boolean get() = required && activePlan?.providerId?.startsWith("google-") == true
+    val googleAttributionRequired: Boolean get() = googleTranslationActive &&
+        displayMode in setOf(TranslationDisplayMode.TRANSLATED, TranslationDisplayMode.BILINGUAL)
     val nextMissingSourceUs: Long get() = nextUntranslatedUs
     private var nextUntranslatedUs: Long = Long.MAX_VALUE
     private var observedSourcePositionUs: Long? = null
@@ -93,8 +109,9 @@ class SubtitleTranslationSession(
     var required = false; private set
     var status = "Traduction désactivée : vocalisation de la piste originale"; private set
     val busy: Boolean get() = job != null
-    val fingerprint: String get() = active?.fingerprint ?: if (required) "translation-required" else "original"
-    val ready: Boolean get() = active != null && activeGeneration == owner.generation && activeTrack == owner.selectedTextId() &&
+    /** Result identity for reports/offline work; foreground TTS keys use voice settings and exact text. */
+    val fingerprint: String get() = active?.fingerprint ?: partialFingerprint ?: if (required) "translation-required" else "original"
+    val ready: Boolean get() = (active != null || partialTexts.isNotEmpty()) && activeGeneration == owner.generation && activeTrack == owner.selectedTextId() &&
         (complete || progressive && currentSourcePositionUs < nextUntranslatedUs)
 
     /** No network or API client is constructed at this stage. */
@@ -102,13 +119,14 @@ class SubtitleTranslationSession(
         prepareWithOptions(sourceLanguage, providerId, prepared = prepared)
 
     fun prepareWithOptions(sourceLanguage: String, providerId: String, targetLanguage: String = "fr",
-        progressive: Boolean = false, maximumNewCharacters: Long = Long.MAX_VALUE, prepared: (Preview) -> Unit) {
+        progressive: Boolean = false, maximumNewCharacters: Long = Long.MAX_VALUE, bufferSeconds: Int = 30, prepared: (Preview) -> Unit) {
         if (closed) return
+        require(bufferSeconds in 10..120) { "Le tampon doit être compris entre 10 et 120 secondes." }
         val media = owner.media ?: run { message("Ouvre d’abord une vidéo.", true); return }
         val track = owner.selectedTextId() ?: run { message("Choisis une piste de sous-titres textuelle chargée avant de traduire.", true); return }
         finishRestore(false); invalidateRetentions()
         owner.pause(); owner.cancelIndexing(); cancelJob()
-        required = true; active = null; activePlan = null; complete = false; observedSourcePositionUs = null; this.progressive = progressive; preview = null; requestedTrack = track
+        required = true; active = null; clearPartial(); activePlan = null; complete = false; observedSourcePositionUs = null; this.progressive = progressive; this.bufferSeconds = bufferSeconds; preview = null; requestedTrack = track
         owner.resetNarrationForTranslation()
         val generation = owner.generation
         val ticket = ++sequence
@@ -133,10 +151,9 @@ class SubtitleTranslationSession(
                     if (text.isBlank()) null else TranslationCue(item.identity, item.startUs, item.endUs, text)
                 }
                 val plan = TranslationPlan.create(cues, sourceLanguage, targetLanguage, providerId = providerId)
-                // Validate every batch before asking for an API call, including very long signs.
-                plan.batches(4000, 20)
+                // Exact transport limits are checked by the runner before its first request.
                 val checkpoint = runner.checkpointSummary(plan)
-                val result = Preview(plan, generation, track, index, ticket, progressive, maximumNewCharacters, checkpoint.first, checkpoint.second, runner.readExisting(plan) != null)
+                val result = Preview(plan, generation, track, index, ticket, progressive, maximumNewCharacters, checkpoint.first, checkpoint.second, runner.readExisting(plan) != null, bufferSeconds)
                 main.post {
                     if (isCurrent(current, generation, track, ticket)) {
                         job = null; preview = result
@@ -161,30 +178,52 @@ class SubtitleTranslationSession(
             message("La vidéo ou la piste a changé. Prépare à nouveau la traduction.", true); return
         }
         owner.pause(); owner.resetNarrationForTranslation()
-        val current = Job(); job = current; preview = null; activePlan = value.plan; progressive = value.progressive
-        status = if (progressive) "Traduction progressive : un tampon validé sera proposé sans reprise automatique." else "Traduction en cours. La lecture française attend la piste complète."; changed()
+        val current = Job(); job = current; preview = null; activePlan = value.plan; progressive = value.progressive; bufferSeconds = value.bufferSeconds; cueOrdinals = value.cueOrdinals
+        status = if (progressive) "Traduction progressive : la lecture sera disponible après $bufferSeconds secondes de tampon validé." else "Traduction en cours. La lecture française attend la piste complète."; changed()
         worker.execute {
             try {
                 if (current.cancelled.get()) return@execute
+                data class Prefix(val texts: List<String>, val fingerprint: String, val nextUs: Long)
+                val pendingPrefix = AtomicReference<Prefix?>(null)
+                val prefixPosted = AtomicBoolean(false)
+                val pendingProgress = AtomicReference<Pair<Int, Int>?>(null)
+                val progressPosted = AtomicBoolean(false)
+                var hashedCount = 0
+                var prefixHash = SpeechTools.key("translation-progressive-v2", value.plan.fingerprint)
                 val translated = engine().use { service ->
                     current.service = service
-                    runner.run(value.plan, service, { current.cancelled.get() || Thread.currentThread().isInterrupted }, { done, total -> main.post {
-                        if (isCurrent(current, value.generation, value.track, value.ticket)) {
-                            status = "Traduction : $done / $total occurrences validées" + if (progressive && ready) ". Tampon disponible : appuie sur Lire quand tu le souhaites." else ""
-                            changed()
+                    runner.run(value.plan, service, { current.cancelled.get() || Thread.currentThread().isInterrupted }, { done, total ->
+                        pendingProgress.set(done to total)
+                        if (progressPosted.compareAndSet(false, true)) main.post {
+                            progressPosted.set(false)
+                            val progress = pendingProgress.getAndSet(null)
+                            if (progress != null && isCurrent(current, value.generation, value.track, value.ticket)) {
+                                status = "Traduction : ${progress.first} / ${progress.second} occurrences validées" + when {
+                                    resumeAfterBuffer -> ". Lecture en attente du tampon ; Pause annule la reprise automatique."
+                                    owner.machine.snapshot().wantsPlayback -> ". La lecture continue pendant la traduction."
+                                    progressive && ready -> ". Appuie sur Lire dès que le tampon est suffisant."
+                                    else -> ""
+                                }
+                                changed()
+                            }
                         }
-                    } }, TranslationRunPolicy(value.maximumNewCharacters)) { texts ->
+                    }, TranslationRunPolicy(value.maximumNewCharacters)) { texts ->
                         if (value.progressive && texts.size < value.plan.cues.size) {
-                            val prefixPlan = TranslationPlan.create(value.plan.cues.take(texts.size), value.plan.sourceLanguage, value.plan.targetLanguage, value.plan.providerId)
-                            val prefix = prefixPlan.complete(texts)
-                            val next = value.plan.cues.drop(texts.size).minOfOrNull { it.startUs } ?: Long.MAX_VALUE
-                            main.post {
-                                if (isCurrent(current, value.generation, value.track, value.ticket)) {
-                                    val firstPrefix = active == null
-                                    active = prefix; activeGeneration = value.generation; activeTrack = value.track; nextUntranslatedUs = next
+                            // The runner already validates every returned occurrence. Hash only
+                            // additions, then coalesce fast local/cache responses on the UI loop.
+                            for (i in hashedCount until texts.size) prefixHash = SpeechTools.key(prefixHash, texts[i])
+                            hashedCount = texts.size
+                            pendingPrefix.set(Prefix(texts, prefixHash, value.missingTimesUs[texts.size]))
+                            if (prefixPosted.compareAndSet(false, true)) main.post {
+                                prefixPosted.set(false)
+                                val prefix = pendingPrefix.getAndSet(null)
+                                if (prefix != null && isCurrent(current, value.generation, value.track, value.ticket)) {
+                                    val firstPrefix = partialTexts.isEmpty()
+                                    partialTexts = prefix.texts; partialFingerprint = prefix.fingerprint
+                                    activeGeneration = value.generation; activeTrack = value.track; nextUntranslatedUs = prefix.nextUs
                                     if (firstPrefix) owner.installTranslationIndex(value.index)
-                                    // A later prefix must never reset an utterance or start playback.
                                     else if (!owner.machine.snapshot().wantsPlayback && owner.machine.snapshot().speakingId == null) owner.rearmCurrentSubtitles()
+                                    resumeWhenBuffered()
                                     changed()
                                 }
                             }
@@ -193,21 +232,25 @@ class SubtitleTranslationSession(
                 }
                 main.post {
                     if (isCurrent(current, value.generation, value.track, value.ticket)) {
-                        val hadPrefix = active != null
-                        job = null; active = translated; activePlan = value.plan; complete = true; nextUntranslatedUs = Long.MAX_VALUE; activeGeneration = value.generation; activeTrack = value.track
+                        val hadPrefix = partialTexts.isNotEmpty()
+                        job = null; active = translated; partialTexts = emptyList(); partialFingerprint = null; activePlan = value.plan; complete = true; nextUntranslatedUs = Long.MAX_VALUE; activeGeneration = value.generation; activeTrack = value.track
                         if (!hadPrefix) owner.installTranslationIndex(value.index)
                         else if (!owner.machine.snapshot().wantsPlayback && owner.machine.snapshot().speakingId == null) owner.rearmCurrentSubtitles()
-                        status = "Traduction française prête : ${translated.cues.size} occurrences. Seul le français sera vocalisé. Appuie sur Lire."
+                        status = "Traduction française prête : ${translated.cues.size} occurrences. Seul le français sera vocalisé." +
+                            if (resumeAfterBuffer || owner.machine.snapshot().wantsPlayback) "" else " Appuie sur Lire."
                         runner.cacheWarning?.let { status += "\n$it" }
                         val hints = reviewHints.size
                         if (hints > 0) status += "\n$hints occurrences à vérifier : indices linguistiques, sans preuve de contresens."
+                        resumeWhenBuffered()
                         message(status, false); changed()
                     }
                 }
             } catch (error: Exception) { main.post {
                 if (isCurrent(current, value.generation, value.track, value.ticket)) {
                     job = null
-                    if (progressive && !complete) owner.pause()
+                    // A terminal error keeps the validated prefix usable, but cannot
+                    // trigger a later automatic resume without a new user action.
+                    resumeAfterBuffer = false
                     status = when (error) {
                         is TranslationFailure -> error.message ?: "La traduction a échoué."
                         is IllegalArgumentException -> "Traduction incomplète : activation refusée."
@@ -226,8 +269,8 @@ class SubtitleTranslationSession(
     fun allowPlayback(): Boolean {
         if (!required) return true
         if (!ready) { message("La traduction française n’est pas prête pour cette piste. Termine-la ou choisis explicitement Revenir à la piste originale.", true); return false }
-        if (!complete && nextUntranslatedUs - currentSourcePositionUs < 60_000_000L) {
-            message("Le tampon traduit contient moins d’une minute. Attends d’autres lots puis appuie sur Lire ; aucune reprise automatique.", true); return false
+        if (!complete && nextUntranslatedUs - currentSourcePositionUs < bufferSeconds * 1_000_000L) {
+            message("Le tampon traduit contient moins de $bufferSeconds secondes. Attends d’autres lots puis appuie sur Lire.", true); return false
         }
         return allowNarrationVoice()
     }
@@ -245,7 +288,11 @@ class SubtitleTranslationSession(
     fun textFor(item: CueAheadIndex.Item): String? {
         if (!required) return item.raw
         if (activeGeneration != owner.generation || activeTrack != owner.selectedTextId()) return null
-        return active?.textFor(item.identity, SubtitleText.clean(item.raw))
+        active?.let { return it.textFor(item.identity, SubtitleText.clean(item.raw)) }
+        val ordinal = cueOrdinals[item.identity] ?: return null
+        val sourceCue = activePlan?.cues?.getOrNull(ordinal) ?: return null
+        if (sourceCue.text != SubtitleText.clean(item.raw)) return null
+        return partialTexts.getOrNull(ordinal)
     }
 
     fun rejectUnmapped() {
@@ -256,7 +303,7 @@ class SubtitleTranslationSession(
 
     fun cancel() {
         if (closed) return
-        finishRestore(false); invalidateRetentions(); cancelJob(); preview = null; sequence++
+        finishRestore(false); invalidateRetentions(); resumeAfterBuffer = false; cancelJob(); preview = null; sequence++
         status = if (ready) "Traduction française conservée" else "Traduction annulée. Relance-la ou reviens explicitement à la piste originale."
         changed()
     }
@@ -269,7 +316,7 @@ class SubtitleTranslationSession(
     }
     fun trackChanged() {
         if (!required) return
-        finishRestore(false); invalidateRetentions(); cancelJob(); sequence++; preview = null; active = null; activePlan = null; complete = false
+        finishRestore(false); invalidateRetentions(); cancelJob(); sequence++; preview = null; active = null; clearPartial(); activePlan = null; complete = false
         status = "Piste modifiée : une nouvelle traduction est nécessaire avant la lecture française."
         changed()
     }
@@ -279,7 +326,7 @@ class SubtitleTranslationSession(
         }
     }
     fun reset() {
-        finishRestore(false); invalidateRetentions(); cancelJob(); sequence++; preview = null; active = null; activePlan = null; complete = false; progressive = false; nextUntranslatedUs = Long.MAX_VALUE; observedSourcePositionUs = null; required = false; requestedTrack = null
+        finishRestore(false); invalidateRetentions(); cancelJob(); sequence++; preview = null; active = null; clearPartial(); activePlan = null; complete = false; progressive = false; nextUntranslatedUs = Long.MAX_VALUE; observedSourcePositionUs = null; required = false; requestedTrack = null
         status = "Traduction désactivée : vocalisation de la piste originale"
     }
     fun setDisplayMode(mode: TranslationDisplayMode) {
@@ -295,18 +342,43 @@ class SubtitleTranslationSession(
         TranslationDisplayMode.HIDDEN -> null
         }
     }
-    /** Called before advancing into an untranslated occurrence; never resumes the film. */
+    /** Explicit Pause, seek, focus loss, stop and settings changes invalidate automatic recovery. */
+    internal fun playbackInterrupted() { resumeAfterBuffer = false }
+
+    private fun clearPartial() {
+        partialTexts = emptyList(); partialFingerprint = null; cueOrdinals = emptyMap(); resumeAfterBuffer = false
+    }
+
+    private fun resumeWhenBuffered() {
+        if (!resumeAfterBuffer || !ready || (!complete && nextUntranslatedUs - currentSourcePositionUs < bufferSeconds * 1_000_000L)) return
+        // Consume the intent before play(): a rejected voice/focus request cannot
+        // turn a future unrelated callback into a playback command.
+        resumeAfterBuffer = false
+        owner.play()
+    }
+
+    /** Hold at the first missing source occurrence, including cues shorter than a player tick. */
     fun onPlaybackPosition(positionUs: Long): Boolean {
         observedSourcePositionUs = positionUs
         if (!required || complete) return true
         if (!ready || positionUs >= nextUntranslatedUs) {
-            if (owner.machine.snapshot().wantsPlayback || owner.machine.snapshot().speakingId != null) owner.pause()
-            status = "Pause : la traduction n’est pas encore prête à cette position. Attends la progression puis appuie sur Lire."
-            changed(); return false
+            val snapshot = owner.machine.snapshot()
+            if (snapshot.wantsPlayback && progressive && partialTexts.isNotEmpty()) {
+                resumeAfterBuffer = busy
+                owner.pauseForTranslationBuffer(nextUntranslatedUs)
+                // The rewind is internal, not a user seek. Keep the exact frontier
+                // for readiness even if the renderer hasn't delivered its callback.
+                observedSourcePositionUs = minOf(positionUs, nextUntranslatedUs)
+            } else if (snapshot.wantsPlayback || snapshot.speakingId != null) owner.pause()
+            val nextStatus = if (resumeAfterBuffer) "Lecture en attente de traduction. Reprise après $bufferSeconds secondes de tampon ; Pause annule cette reprise."
+                else "Pause : la traduction n’est pas encore prête à cette position. Attends la progression puis appuie sur Lire."
+            if (status != nextStatus) { status = nextStatus; changed() }
+            return false
         }
         return true
     }
-    fun editableCues(): List<TranslationCue> = active?.cues ?: emptyList()
+    fun editableCues(): List<TranslationCue> = active?.cues ?: activePlan?.cues?.take(partialTexts.size)
+        ?.mapIndexed { i, cue -> cue.copy(text = partialTexts[i]) } ?: emptyList()
     fun editCue(id: String, text: String): Boolean {
         val plan = activePlan ?: return false
         val track = active ?: return false
@@ -476,7 +548,7 @@ class SubtitleTranslationSession(
     } catch (_: Exception) {
         if (!closed) {
             owner.pause(); finishRestore(false); invalidateRetentions(); cancelJob(); sequence++
-            preview = null; active = null; activePlan = null; complete = false; required = true
+            preview = null; active = null; clearPartial(); activePlan = null; complete = false; required = true
             requestedTrack = owner.selectedTextId()
             status = "Sélection de traduction indisponible. Choisis sa réparation ou Revenir à la piste originale."
             changed()

@@ -52,8 +52,8 @@ android {
         applicationId = "fr.soustitresvoix.player.translation"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "0.5.1"
+        versionCode = 9
+        versionName = "0.5.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets.getByName("main").res.srcDir(demoResources)
@@ -99,6 +99,7 @@ dependencies {
     implementation("androidx.media3:media3-effect:1.11.1")
     // Instrumentation exercises both debug and the exact release variant.
     implementation("androidx.tracing:tracing:1.3.0")
+    implementation("com.google.mlkit:translate:17.0.3")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.17")
     testImplementation("androidx.test:core:1.7.0")

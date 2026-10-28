@@ -69,7 +69,8 @@ object TranslationSampleComparator {
     /** Caller must show and obtain an explicit confirmation naming ALL destinations and the sample. */
     fun compareConfirmedSample(configs: List<TranslationProviderConfig>, texts: List<String>, sourceLanguage: String,
         targetLanguage: String = "fr", cancelled: () -> Boolean = { false },
-        transportFactory: (TranslationProviderConfig) -> TranslationHttpTransport = { HttpsTranslationTransport() }): List<TranslationSampleResult> {
+        transportFactory: (TranslationProviderConfig) -> TranslationHttpTransport = { HttpsTranslationTransport() },
+        context: android.content.Context? = null): List<TranslationSampleResult> {
         if (configs.size !in 1..4 || texts.size !in 1..20 || texts.any { it.isBlank() } ||
             texts.sumOf { it.length.toLong() } > 4_000L)
             throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
@@ -85,7 +86,7 @@ object TranslationSampleComparator {
             if (cancelled() || Thread.currentThread().isInterrupted) throw TranslationCancelledException()
             val start = System.nanoTime()
             try {
-                val output = TranslationEngines.create(config, transportFactory(config)).use {
+                val output = TranslationEngines.create(config, transportFactory(config), context).use {
                     it.translate(safeTexts, sourceLanguage, targetLanguage, cancelled)
                 }
                 results += TranslationSampleResult(config.provider.label, identities[index], output,
