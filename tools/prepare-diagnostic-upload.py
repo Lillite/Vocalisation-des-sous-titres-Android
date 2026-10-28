@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Prepare immutable Git objects from a reviewed signed APK transport.
 
-This one-off helper never creates/updates a ref, tag or release, never signs,
-and never executes metadata. Its sole writes are Git blobs, a tree and a commit.
+This one-off helper writes only Git objects and one strictly new fixed staging
+ref. It never signs, executes metadata, creates an upload ref, tag or release.
 An OAuth tool must later create the upload branch after independent review.
 """
 from __future__ import annotations
@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tempfile
 import urllib.error
@@ -21,6 +22,9 @@ import urllib.request
 
 REPOSITORY = 'Lillite/Vocalisation-des-sous-titres-Android'
 PREPARE_BRANCH = 'release-prepare/v0.5.3-diagnostic'
+STAGING_REF = 'refs/heads/release-blob/v0.5.3-diagnostic'
+STAGING_API = '/git/ref/heads/release-blob/v0.5.3-diagnostic'
+GIT_REMOTE = 'https://github.com/Lillite/Vocalisation-des-sous-titres-Android.git'
 SOURCE = '3b68b118c3f7d21ef47a47e6eb5611ceb34f2055'
 SOURCE_TREE = '36453b4e63b219c769f2979ed73242b06dc26cb6'
 SOURCE_PARENTS = ['d5b18f7e138ff4f2869e273b32db6c40fd46a98e', 'faa0b84e157fbe408a39e1e8441c3cf2ef35e21e']
@@ -114,42 +118,41 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class GitHub:
+    """Read-only API client; all Git writes use the reviewed fixed staging ref."""
     def __init__(self):
         token = os.environ.get('GITHUB_TOKEN', '')
         require(bool(token), 'Workflow token unavailable.')
         self._token = token
         self._opener = urllib.request.build_opener(NoRedirect())
 
-    def request(self, method, path, value=None):
+    def request(self, method, path, value=None, *, absent=False):
         allowed_read = path in {
             '/git/ref/heads/main', '/git/commits/' + SOURCE, '/git/trees/' + SOURCE_TREE,
+            STAGING_API,
         } or bool(re.fullmatch(r'/git/commits/[0-9a-f]{40}', path))
-        require((method == 'GET' and allowed_read) or
-                (method == 'POST' and path in {'/git/blobs', '/git/trees', '/git/commits'}),
-                'API operation is outside preparation scope.')
-        body = None if value is None else json.dumps(value, ensure_ascii=False).encode('utf-8')
-        request = urllib.request.Request(API + path, data=body, method=method, headers={
+        require(method == 'GET' and allowed_read and value is None,
+                'Only read-only verification API operations are permitted.')
+        require(not absent or path == STAGING_API, 'Optional absence is limited to the fixed staging ref.')
+        request = urllib.request.Request(API + path, method='GET', headers={
             'Authorization': 'Bearer ' + self._token,
             'Accept': 'application/vnd.github+json',
-            'Content-Type': 'application/json',
             'X-GitHub-Api-Version': '2026-03-10',
-            'User-Agent': 'SousTitresVoix-reviewed-upload-preparation',
+            'User-Agent': 'SousTitresVoix-reviewed-git-upload-preparation',
         })
-        if method == 'POST':
-            print('Preparation stage: POST ' + path, flush=True)
         try:
-            with self._opener.open(request, timeout=180) as response:
-                require(response.status == (201 if method == 'POST' else 200), 'Unexpected API status.')
+            with self._opener.open(request, timeout=90) as response:
+                require(response.status == 200, 'Unexpected verification API status.')
                 data = response.read(MAX_RESPONSE_BYTES + 1)
-                require(len(data) <= MAX_RESPONSE_BYTES, 'API response exceeds verification limit.')
+                require(len(data) <= MAX_RESPONSE_BYTES, 'Verification response exceeds limit.')
                 return parse_json(data)
         except urllib.error.HTTPError as error:
-            # Never log a token, request body, headers, error.value or raw body.
+            if absent and error.code == 404:
+                return None
             diagnostic = safe_error_diagnostic(error.read(8193), self._token)
-            raise Refusal('GitHub refused ' + method + ' ' + path + ' with HTTP ' + str(error.code) +
+            raise Refusal('GitHub refused GET ' + path + ' with HTTP ' + str(error.code) +
                           '; ' + diagnostic + '; no retry.') from None
         except (urllib.error.URLError, TimeoutError, OSError):
-            raise Refusal('GitHub preparation interrupted; no automatic mutation retry.') from None
+            raise Refusal('GitHub verification interrupted; no automatic retry.') from None
 
 
 def assert_main(github):
@@ -210,76 +213,136 @@ def restore_apk(gzip_path, destination):
             'Restored APK differs from the reviewed signed bytes.')
 
 
+def git_command(arguments, environment, *, input_bytes=None):
+    result = subprocess.run(['git', *arguments], input=input_bytes, env=environment,
+                            capture_output=True, timeout=240, check=False)
+    # Git/curl may mention authentication in verbose failures. Never emit either stream.
+    require(result.returncode == 0, 'Fixed-scope Git operation failed: ' + arguments[0] + '; output withheld.')
+    return result.stdout.decode('utf-8').strip()
+
+
+def git_environment(index):
+    token = os.environ.get('GITHUB_TOKEN', '')
+    require(bool(token), 'Workflow token unavailable.')
+    environment = dict(os.environ)
+    for name in list(environment):
+        if name.startswith('GIT_TRACE') or name == 'GIT_CURL_VERBOSE':
+            environment.pop(name, None)
+    for name in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+                 'GIT_AUTHOR_DATE', 'GIT_COMMITTER_DATE'):
+        environment.pop(name, None)
+    # The credential exists only in this child environment, never command arguments/files/logs.
+    authorization = base64.b64encode(('x-access-token:' + token).encode('utf-8')).decode('ascii')
+    environment.update({
+        'GIT_INDEX_FILE': str(index),
+        'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_SYSTEM': '/dev/null', 'GIT_CONFIG_GLOBAL': '/dev/null',
+        'GIT_CONFIG_COUNT': '1',
+        'GIT_CONFIG_KEY_0': 'http.https://github.com/.extraheader',
+        'GIT_CONFIG_VALUE_0': 'AUTHORIZATION: basic ' + authorization,
+        'GIT_TERMINAL_PROMPT': '0', 'GCM_INTERACTIVE': 'Never',
+        'GIT_TRACE': '0', 'GIT_TRACE_CURL': '0', 'GIT_TRACE_PACKET': '0',
+        'GIT_AUTHOR_NAME': 'github-actions[bot]',
+        'GIT_AUTHOR_EMAIL': '41898282+github-actions[bot]@users.noreply.github.com',
+        'GIT_COMMITTER_NAME': 'github-actions[bot]',
+        'GIT_COMMITTER_EMAIL': '41898282+github-actions[bot]@users.noreply.github.com',
+    })
+    return environment
+
+
 def prepare():
     require(os.environ.get('GITHUB_REPOSITORY') == REPOSITORY and
             os.environ.get('GITHUB_EVENT_NAME') == 'push' and
             os.environ.get('GITHUB_REF') == 'refs/heads/' + PREPARE_BRANCH and
             HEX40.fullmatch(os.environ.get('GITHUB_SHA', '')),
             'Preparation is restricted to the reviewed repository and temporary branch.')
+    require(STAGING_REF == 'refs/heads/release-blob/v0.5.3-diagnostic' and
+            STAGING_API == '/git/ref/heads/release-blob/v0.5.3-diagnostic' and
+            GIT_REMOTE == 'https://github.com/' + REPOSITORY + '.git',
+            'Fixed staging scope changed.')
     notes_bytes = checked_bytes(TRANSPORT_DIR / 'notes.md', NOTES_BYTES, NOTES_SHA256)
     metadata_bytes = checked_bytes(TRANSPORT_DIR / 'release.json', METADATA_BYTES, METADATA_SHA256)
-    notes = notes_bytes.decode('utf-8')
-    metadata = metadata_bytes.decode('utf-8')
+    notes_bytes.decode('utf-8'); metadata_bytes.decode('utf-8')
     require(parse_json(metadata_bytes) == EXPECTED_METADATA, 'Publication metadata differs from reviewed constants.')
     github = GitHub()
     assert_main(github)
+    require(github.request('GET', STAGING_API, absent=True) is None,
+            'The fixed staging ref already exists; refusing replacement.')
     source_tree = github.request('GET', '/git/trees/' + SOURCE_TREE)
     require(source_tree.get('sha') == SOURCE_TREE and source_tree.get('truncated') is False and
             isinstance(source_tree.get('tree'), list) and
             not any(item.get('path') == 'release-upload' for item in source_tree['tree']),
             'Reviewed source already contains an upload payload or has an incomplete tree.')
-    with tempfile.TemporaryDirectory(prefix='reviewed-apk-transport-') as temporary:
-        gzip_path = Path(temporary) / (APK_NAME + '.gz')
+    with tempfile.TemporaryDirectory(prefix='reviewed-git-apk-transport-') as temporary:
+        work = Path(temporary)
+        gzip_path = work / (APK_NAME + '.gz')
         join_transport(TRANSPORT_DIR, gzip_path)
-        apk = Path(temporary) / APK_NAME
+        apk = work / APK_NAME
         restore_apk(gzip_path, apk)
-        data = apk.read_bytes()
-        require(len(data) == APK_BYTES and blob_sha(data) == APK_BLOB, 'APK changed before blob creation.')
-        created_blob = github.request('POST', '/git/blobs', {
-            'encoding': 'base64', 'content': base64.b64encode(data).decode('ascii'),
-        })
-        require(created_blob.get('sha') == APK_BLOB, 'GitHub APK blob identity mismatch.')
-    assert_main(github)
-    created_tree = github.request('POST', '/git/trees', {
-        'base_tree': SOURCE_TREE,
-        'tree': [
-            {'path': APK_PATH, 'mode': '100644', 'type': 'blob', 'sha': APK_BLOB},
-            {'path': NOTES_PATH, 'mode': '100644', 'type': 'blob', 'content': notes},
-            {'path': METADATA_PATH, 'mode': '100644', 'type': 'blob', 'content': metadata},
-        ],
-    })
-    tree = created_tree.get('sha', '')
-    require(isinstance(tree, str) and HEX40.fullmatch(tree), 'Prepared upload tree was not confirmed.')
-    assert_main(github)
-    created_commit = github.request('POST', '/git/commits', {
-        'message': 'Préparer APK 0.5.3-diagnostic signé et vérifié, sans créer de branche de publication',
-        'tree': tree, 'parents': [SOURCE],
-    })
-    commit_sha = created_commit.get('sha', '')
-    require(isinstance(commit_sha, str) and HEX40.fullmatch(commit_sha), 'Prepared upload commit was not confirmed.')
-    confirmed = github.request('GET', '/git/commits/' + commit_sha)
-    require(confirmed.get('sha') == commit_sha and confirmed.get('tree', {}).get('sha') == tree and
-            [parent.get('sha') for parent in confirmed.get('parents', [])] == [SOURCE],
-            'Prepared upload commit does not have the exact source as its sole parent.')
-    assert_main(github)
+        print('Transport restored: exact reviewed signed APK verified.', flush=True)
+        environment = git_environment(work / 'isolated-index')
+        try:
+            git_command(['fetch', '--quiet', '--no-tags', '--depth=2', GIT_REMOTE, SOURCE], environment)
+            require(git_command(['show', '-s', '--format=%T', SOURCE], environment) == SOURCE_TREE and
+                    git_command(['show', '-s', '--format=%P', SOURCE], environment).split() == SOURCE_PARENTS,
+                    'Fetched source tree or merge parents mismatch.')
+            require(not git_command(['ls-remote', '--heads', GIT_REMOTE, STAGING_REF], environment),
+                    'Fixed staging ref appeared before preparation.')
+            git_command(['read-tree', SOURCE_TREE], environment)
+            apk_blob = git_command(['hash-object', '-w', str(apk)], environment)
+            require(apk_blob == APK_BLOB, 'Local Git APK blob identity mismatch.')
+            notes_blob = git_command(['hash-object', '-w', '--stdin'], environment, input_bytes=notes_bytes)
+            metadata_blob = git_command(['hash-object', '-w', '--stdin'], environment, input_bytes=metadata_bytes)
+            require(notes_blob == blob_sha(notes_bytes) and metadata_blob == blob_sha(metadata_bytes),
+                    'Local Git public text blob mismatch.')
+            for path, sha in ((APK_PATH, apk_blob), (NOTES_PATH, notes_blob), (METADATA_PATH, metadata_blob)):
+                git_command(['update-index', '--add', '--cacheinfo', '100644,' + sha + ',' + path], environment)
+            tree = git_command(['write-tree'], environment)
+            require(HEX40.fullmatch(tree), 'Invalid prepared upload tree.')
+            expected_changes = {'A\t' + path for path in (APK_PATH, NOTES_PATH, METADATA_PATH)}
+            require(set(git_command(['diff-tree', '--no-commit-id', '--name-status', '-r',
+                                     SOURCE_TREE, tree], environment).splitlines()) == expected_changes,
+                    'Prepared tree changes more than the three allowed public files.')
+            message = 'Préparer APK 0.5.3-diagnostic signé et vérifié avec parent source unique\n'.encode('utf-8')
+            commit_sha = git_command(['commit-tree', tree, '-p', SOURCE], environment, input_bytes=message)
+            require(HEX40.fullmatch(commit_sha) and
+                    git_command(['show', '-s', '--format=%P', commit_sha], environment).split() == [SOURCE] and
+                    git_command(['show', '-s', '--format=%T', commit_sha], environment) == tree,
+                    'Prepared upload commit does not have the exact source as its sole parent.')
+            assert_main(github)
+            require(github.request('GET', STAGING_API, absent=True) is None,
+                    'The fixed staging ref appeared; no push is allowed.')
+            print('Pushing reviewed objects only to the new fixed release-blob staging ref.', flush=True)
+            git_command(['push', '--porcelain', '--force-with-lease=' + STAGING_REF + ':',
+                         GIT_REMOTE, commit_sha + ':' + STAGING_REF], environment)
+        finally:
+            environment.pop('GIT_CONFIG_VALUE_0', None)
+        staged = github.request('GET', STAGING_API)
+        require(staged.get('object', {}).get('sha') == commit_sha and
+                staged.get('object', {}).get('type') == 'commit', 'Remote staging ref identity mismatch.')
+        confirmed = github.request('GET', '/git/commits/' + commit_sha)
+        require(confirmed.get('sha') == commit_sha and confirmed.get('tree', {}).get('sha') == tree and
+                [parent.get('sha') for parent in confirmed.get('parents', [])] == [SOURCE],
+                'Remote upload commit identity, tree or sole parent mismatch.')
+        assert_main(github)
     report = {
-        'status': 'prepared-not-published', 'repository': REPOSITORY,
+        'status': 'staged-not-published', 'repository': REPOSITORY,
         'transport_commit': os.environ['GITHUB_SHA'], 'source_commit': SOURCE,
         'source_tree': SOURCE_TREE, 'source_parents': SOURCE_PARENTS,
         'apk_bytes': APK_BYTES, 'apk_sha256': APK_SHA256, 'apk_blob_sha1': APK_BLOB,
         'gzip_sha256': GZIP_SHA256, 'notes_sha256': NOTES_SHA256, 'metadata_sha256': METADATA_SHA256,
         'transport_parts': [{'name': name, 'bytes': size, 'sha256': checksum} for name, size, checksum in PARTS],
-        'notes_blob_sha1': blob_sha(notes_bytes), 'metadata_blob_sha1': blob_sha(metadata_bytes),
+        'notes_blob_sha1': notes_blob, 'metadata_blob_sha1': metadata_blob,
         'upload_tree_sha': tree, 'upload_commit_sha': commit_sha, 'upload_commit_parents': [SOURCE],
         'public_payload_paths': [APK_PATH, NOTES_PATH, METADATA_PATH],
-        'ref_created': False, 'published': False,
+        'staging_ref': STAGING_REF, 'staging_ref_created': True,
+        'upload_ref_created': False, 'published': False,
     }
     path = Path('build/release-upload-preparation.json')
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
     print('Prepared APK blob: ' + APK_BLOB)
-    print('Prepared upload commit: ' + commit_sha)
-    print('No ref, tag or release was created. OAuth review and branch creation remain separate.')
+    print('Staged upload commit: ' + commit_sha)
+    print('Only the fixed release-blob ref was created. No upload ref, tag or release was created.')
 
 
 if __name__ == '__main__':
