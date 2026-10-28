@@ -81,7 +81,7 @@ class TranslationRunner(private val directory: File,
 
     @Synchronized fun run(plan: TranslationPlan, engine: TranslationEngine,
         cancelled: () -> Boolean, progress: (done: Int, total: Int) -> Unit,
-        policy: TranslationRunPolicy, validatedPrefix: (List<String>) -> Unit = {}): TranslatedTrack {
+        policy: TranslationRunPolicy, validatedPrefix: (List<String>) -> Unit = NO_VALIDATED_PREFIX): TranslatedTrack {
         cacheWarning = null
         checkCancelled(cancelled)
         if (engine.id != plan.providerId) throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
@@ -89,6 +89,10 @@ class TranslationRunner(private val directory: File,
         val batches = plan.batches(engine.maxBatchCharacters, engine.maxBatchItems)
         (readRetained(plan) ?: read(plan))?.let { track ->
             checkCancelled(cancelled)
+            // A previously evictable result must gain the same durable retention
+            // as a newly generated local track before it is offered again.
+            if (engine is ContextualTranslationEngine && engine.requiresDurableResult)
+                persistCompleted(plan, track, requireDurable = true, writeCache = false)
             progress(plan.cues.size, plan.cues.size)
             return track
         }
@@ -99,17 +103,26 @@ class TranslationRunner(private val directory: File,
         // Only whole validated batch boundaries are resumable. No partial request is guessed.
         val validBoundary = texts.size == plan.cues.size || batches.any { it.firstIndex == texts.size }
         if (!validBoundary) texts.clear()
-        if (texts.isNotEmpty()) { progress(texts.size, plan.cues.size); validatedPrefix(texts.toList()) }
+        if (texts.isNotEmpty()) {
+            progress(texts.size, plan.cues.size)
+            if (validatedPrefix !== NO_VALIDATED_PREFIX) validatedPrefix(texts.toList())
+        }
         val remainingCharacters = plan.cues.drop(texts.size).sumOf { it.text.length.toLong() }
         if (remainingCharacters > policy.maximumNewCharacters) throw TranslationFailure(TranslationFailure.Reason.BUDGET)
         var translatedCharacters = texts.sumOf { it.length.toLong() }
         for (batch in batches) {
             if (batch.firstIndex < texts.size) continue
             checkCancelled(cancelled)
-            // Mark the request before sending: a lost response may already have consumed quota.
-            checkpoints?.let { if (!it.write(plan, texts, true)) cacheWarning = "La progression n’a pas pu être enregistrée ; garde cette session ouverte." }
+            // Mark external requests before sending: a lost response may already
+            // have consumed quota. Local model interruption is always resumable.
+            checkpoints?.let { if (!it.write(plan, texts, policy.requestMayConsumeRemoteQuota)) cacheWarning = "La progression n’a pas pu être enregistrée ; garde cette session ouverte." }
             val response = try {
-                engine.translate(batch.texts, plan.sourceLanguage, plan.targetLanguage, cancelled).toList()
+                if (engine is ContextualTranslationEngine) {
+                    val contextStart = (batch.firstIndex - 2).coerceAtLeast(0)
+                    engine.translateWithContext(batch.texts, plan.sourceLanguage, plan.targetLanguage,
+                        plan.cues.subList(contextStart, batch.firstIndex).map { it.text },
+                        texts.subList(contextStart, batch.firstIndex).toList(), cancelled).toList()
+                } else engine.translate(batch.texts, plan.sourceLanguage, plan.targetLanguage, cancelled).toList()
             } catch (failure: TranslationFailure) {
                 // An explicit refusal did not produce a billable translation. Preserve
                 // the validated prefix without falsely marking the request as lost.
@@ -135,18 +148,48 @@ class TranslationRunner(private val directory: File,
             if (translatedCharacters > TranslationPlan.MAX_TRACK_CHARACTERS)
                 throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
             checkpoints?.let { if (!it.write(plan, texts, false)) cacheWarning = "Un lot validé n’a pas pu être enregistré pour la reprise." }
-            validatedPrefix(texts.toList())
+            if (validatedPrefix !== NO_VALIDATED_PREFIX) validatedPrefix(texts.toList())
             progress(texts.size, plan.cues.size)
         }
         checkCancelled(cancelled)
         val result = try { plan.complete(texts) }
             catch (_: IllegalArgumentException) { throw TranslationFailure(TranslationFailure.Reason.RESPONSE) }
         checkCancelled(cancelled)
-        write(plan, result)
-        // Preserve a fully validated journal if the evictable cache could not be committed.
-        if (read(plan)?.fingerprint == result.fingerprint) checkpoints?.remove(plan)
+        persistCompleted(plan, result,
+            requireDurable = engine is ContextualTranslationEngine && engine.requiresDurableResult)
         checkCancelled(cancelled)
         return result
+    }
+
+    /**
+     * Local work is expensive even without a billable request. Keep a durable
+     * result (or the complete validated journal) before touching an evictable
+     * cache. A cache eviction must never be the only reason to recompute a film.
+     */
+    private fun persistCompleted(plan: TranslationPlan, result: TranslatedTrack,
+        requireDurable: Boolean, writeCache: Boolean = true) {
+        var durable = false
+        if (requireDurable) {
+            val folder = retainedDirectory
+            if (folder != null) {
+                durable = read(plan, folder)?.fingerprint == result.fingerprint
+                if (!durable) {
+                    write(plan, result, folder, evict = false)
+                    durable = read(plan, folder)?.fingerprint == result.fingerprint
+                }
+            }
+            if (!durable) {
+                val saved = checkpoints?.write(plan, result.cues.map { it.text }, false) == true
+                cacheWarning = if (saved)
+                    "La traduction complète est conservée dans le journal de reprise ; sa copie durable de résultat n’a pas pu être enregistrée."
+                else "La traduction est complète, mais sa sauvegarde durable a échoué. Exporte le SRT avant de fermer cette session."
+            }
+        }
+        if (writeCache) write(plan, result)
+        // For local work, successful cache commit is insufficient: only a
+        // durable result allows deleting the non-evictable complete journal.
+        if (if (requireDurable) durable else read(plan)?.fingerprint == result.fingerprint)
+            checkpoints?.remove(plan)
     }
 
     /** Clears only files owned by this cache; imported subtitle files are untouched. */
@@ -255,5 +298,6 @@ class TranslationRunner(private val directory: File,
         private val ENTRY = Regex("[0-9a-f]{64}\\.track")
         private val WORK_KEY = Regex("[0-9a-f]{64}")
         private const val MAX_RETAINED_WORKS = 256
+        private val NO_VALIDATED_PREFIX: (List<String>) -> Unit = {}
     }
 }

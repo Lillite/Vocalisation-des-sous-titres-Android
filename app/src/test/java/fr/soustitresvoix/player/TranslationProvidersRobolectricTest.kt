@@ -71,7 +71,7 @@ class TranslationProvidersRobolectricTest {
         }
     }
     @Test fun autoDetectionIsOmittedForAzureAndDeepLButExplicitForLibre() {
-        for (provider in TranslationProvider.entries.filterNot { it.isGoogle }) {
+        for (provider in TranslationProvider.entries.filterNot { it.isGoogle || it.isLocal }) {
             val response = when (provider) {
                 TranslationProvider.AZURE -> """[{"translations":[{"text":"Bonjour","to":"fr"}]}]"""
                 TranslationProvider.LIBRE -> """{"translatedText":["Bonjour"]}"""
@@ -214,5 +214,24 @@ class TranslationProvidersRobolectricTest {
                 engine(TranslationProvider.DEEPL_FREE, transport).translate(listOf("Hello"), "en", "fr") { false }
             }
         }
+    }
+
+    @Test fun ggufFactoryIsLazyAndClosesUnusedNetworkTransport() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        // No file, service binding or native loading is needed to reuse a
+        // retained translation. Loading is deferred until the first new cue.
+        val model = LocalGgufModel(java.io.File(context.filesDir, "private-unused-model.gguf"),
+            "a".repeat(64), 24L, 0L)
+        val config = TranslationProviderConfig(TranslationProvider.LOCAL_GGUF,
+            localModel = model, localThreads = 4)
+        val transport = Transport(TranslationHttpResponse(200, "Must never be requested"))
+        TranslationEngines.create(config, transport, context).use { engine ->
+            assertTrue(engine is LocalGgufTranslationEngine)
+            assertEquals(TranslationEngines.translationIdentity(config), engine.id)
+            assertTrue(transport.closed)
+            assertTrue(transport.requests.isEmpty())
+            assertFalse(config.toString().contains("private-unused-model"))
+        }
+        assertTrue(transport.requests.isEmpty())
     }
 }

@@ -27,7 +27,10 @@ internal class PreparationDiagnosticsController(
     private val directory = File(context.filesDir, "local-diagnostic").apply { mkdirs() }
     private val model = File(directory, "model.gguf")
     private val pendingImport = File(directory, "model-import.part")
+    private val modelStore = LocalGgufModelStore(context)
+    private var modelLease: AutoCloseable? = null
     private val reports = linkedMapOf<String, String>()
+    private var measuredModelStamp: String? = null
     private var ticket = 0L
     private var cancellation = AtomicBoolean(false)
     private var busy = false
@@ -49,13 +52,23 @@ internal class PreparationDiagnosticsController(
         refresh()
     }
 
-    private fun report() = buildString {
+    private fun modelStamp() = "${model.length()}:${model.lastModified()}:${modelStore.current()?.sha256.orEmpty()}"
+
+    private fun report(): String {
+        // The translation panels can replace the same private copy too. An
+        // earlier diagnostic result belongs only to the exact measured copy.
+        if (measuredModelStamp != null && measuredModelStamp != modelStamp()) {
+            reports.remove("model")
+            measuredModelStamp = null
+        }
+        return buildString {
         append("Diagnostic local — étape 1\n")
         append("Les essais ne modifient pas la vidéo, ses sous-titres ou les réglages vocaux.\n")
         if (reports.isEmpty()) append("Aucune mesure demandée.\n")
         reports.values.forEach { append('\n'); append(it); append('\n') }
         if (model.isFile) append("\nUne copie privée de modèle est disponible (${model.length()} octets). Son import ne prouve pas sa compatibilité.\n")
         if (pendingImport.isFile) append("\nUne copie incomplète occupe ${pendingImport.length()} octets. Le bouton de suppression permet de récupérer cet espace.\n")
+        }
     }
 
     private fun refresh() {
@@ -139,20 +152,13 @@ internal class PreparationDiagnosticsController(
         worker.execute {
             var lastProgress = 0L
             val result = runCatching {
-                // Recover space after a process death during a previous import,
-                // before checking whether there is room for the new full copy.
-                if (pendingImport.exists() && !pendingImport.delete())
-                    throw java.io.IOException("Impossible de nettoyer la copie privée incomplète.")
                 val expected = runCatching {
                     context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use {
                         if (it.moveToFirst() && !it.isNull(0)) it.getLong(0).takeIf { size -> size >= 0 } else null
                     }
                 }.getOrNull()
-                val available = runCatching { android.os.StatFs(directory.absolutePath).availableBytes }.getOrNull()
-                if (expected != null && available != null && expected > available)
-                    throw IllegalStateException("Espace privé insuffisant pour copier ce modèle en conservant la copie précédente.")
                 requireNotNull(context.contentResolver.openInputStream(uri)) { "Fichier inaccessible." }.use { input ->
-                    DiagnosticModelImport.copy(input, model, expected, { cancelled.get() }) { bytes ->
+                    modelStore.importModel(input, expected, { cancelled.get() }) { bytes ->
                         val now = SystemClock.elapsedRealtime()
                         if (now - lastProgress >= 1000) {
                             lastProgress = now
@@ -168,10 +174,15 @@ internal class PreparationDiagnosticsController(
             }
             main.post {
                 result.fold(onSuccess = {
-                    finish(owner, "import", "Copie privée complète : ${it.bytes} octets ; en-tête GGUF version ${it.formatVersion}.\nLe contenu et le chargement du modèle restent à tester. Le fichier d’origine est conservé.", "Modèle importé. L’essai reste une action distincte.")
+                    // An old model's timings must never appear beside a new
+                    // import as though they measured the replacement weights.
+                    reports.remove("model")
+                    measuredModelStamp = null
+                    finish(owner, "import", "Copie privée complète : ${it.bytes} octets ; en-tête GGUF accepté.\nEmpreinte SHA-256 : ${it.sha256}.\nLe contenu et le chargement du modèle restent à tester. Le fichier d’origine est conservé.", "Modèle importé. L’ancien résultat a été retiré ; lance un nouvel essai.")
                 }, onFailure = {
                     val reason = when {
                         cancelled.get() || it is InterruptedIOException -> "Import annulé ; la copie précédente est conservée."
+                        it is LocalGgufModelBusyException -> it.message.orEmpty()
                         else -> "Import impossible (${it.javaClass.simpleName}). Vérifie le fichier choisi et l’espace disponible."
                     }
                     finish(owner, "import", reason, "Import interrompu ou refusé.")
@@ -183,6 +194,13 @@ internal class PreparationDiagnosticsController(
     private fun runModel() {
         if (!model.isFile) return
         val owner = begin(true) ?: return
+        try {
+            modelLease = modelStore.acquireMutationLease()
+        } catch (_: LocalGgufModelBusyException) {
+            finish(owner, "model", "Le modèle local est utilisé par une traduction ou un import. Attends sa fin avant cet essai.", "Modèle local déjà utilisé.")
+            return
+        }
+        reports.remove("model"); measuredModelStamp = null
         startModel(owner, model)
     }
 
@@ -217,6 +235,8 @@ internal class PreparationDiagnosticsController(
             }, onResult = { result ->
                 if (!closed && ticket == owner) {
                     client?.close(); client = null
+                    modelLease?.close(); modelLease = null
+                    if (reportKey == "model") measuredModelStamp = modelStamp()
                     val source = if (reportKey == "builtin") "Modèle miniature synthétique intégré. Cet essai ne mesure ni la qualité de traduction ni la capacité à charger un grand modèle.\n" else "Modèle importé. Essai court sur texte synthétique.\n"
                     finish(owner, reportKey, source + result.render(), "Essai de modèle terminé : ${result.status}.")
                 }
@@ -237,11 +257,15 @@ internal class PreparationDiagnosticsController(
 
     private fun clearModel() {
         if (closed || busy) return
-        val deleted = listOf(model, pendingImport, File(context.cacheDir, "model-import.part"))
-            .map { !it.exists() || it.delete() }.all { it }
+        val deleted = try {
+            modelStore.remove() && File(context.cacheDir, "model-import.part").let { !it.exists() || it.delete() }
+        } catch (_: LocalGgufModelBusyException) {
+            stage = "Le modèle local est utilisé par un autre traitement. Attends sa fin avant de supprimer sa copie."
+            refresh(); return
+        }
         stage = if (deleted) "Copie privée et import incomplet supprimés. Le fichier original est conservé."
             else "La copie privée n’a pas pu être entièrement supprimée."
-        if (deleted) { reports.remove("model"); reports.remove("import") }
+        if (deleted) { reports.remove("model"); reports.remove("import"); measuredModelStamp = null }
         refresh()
     }
 
@@ -267,6 +291,7 @@ internal class PreparationDiagnosticsController(
         cancellation.set(true); closed = true; ++ticket
         pendingModel = false; pendingVideo = false; panelOpen = false
         client?.close(); client = null; controls.dismiss()
+        modelLease?.close(); modelLease = null
         worker.shutdownNow(); main.removeCallbacksAndMessages(null)
     }
 }

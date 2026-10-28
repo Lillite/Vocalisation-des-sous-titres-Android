@@ -22,9 +22,11 @@ enum class TranslationProvider(val id: String, val label: String) {
     DEEPL_PRO("deepl-pro", "DeepL — point d’accès API payant"),
     LIBRE("libre", "LibreTranslate — serveur personnel HTTPS"),
     GOOGLE_WEB("google-web-v1", "Google Traduction — en ligne sans clé (non officiel)"),
-    GOOGLE_LOCAL("google-local-v1", "Google Traduction — sur le téléphone (ML Kit)");
+    GOOGLE_LOCAL("google-local-v1", "Google Traduction — sur le téléphone (ML Kit)"),
+    LOCAL_GGUF("local-gguf-v1", "Modèle GGUF — traduction entièrement sur le téléphone");
 
     val isGoogle: Boolean get() = this == GOOGLE_WEB || this == GOOGLE_LOCAL
+    val isLocal: Boolean get() = this == GOOGLE_LOCAL || this == LOCAL_GGUF
     val needsKey: Boolean get() = this == AZURE || this == DEEPL_FREE || this == DEEPL_PRO
 }
 
@@ -35,7 +37,10 @@ class TranslationProviderConfig(
     val region: String = "",
     val endpoint: String = "",
     val options: TranslationOptions = TranslationOptions(),
-    val execution: TranslationExecutionOptions = TranslationExecutionOptions()
+    val execution: TranslationExecutionOptions = TranslationExecutionOptions(),
+    val localModel: LocalGgufModel? = null,
+    val localThreads: Int = 4,
+    val localContext: String = ""
 ) {
     override fun toString(): String = "TranslationProviderConfig(provider=${provider.id}, credentials=hidden)"
 }
@@ -66,7 +71,12 @@ class TranslationFailure(val reason: Reason) : IOException(reason.message) {
         SERVER("Service de traduction indisponible après les éventuelles attentes bornées. Les résultats validés sont conservés."),
         GOOGLE_BLOCKED("Google limite ou bloque temporairement cet accès non officiel. Les résultats validés sont conservés. Attends avant de reprendre ou choisis explicitement un autre moteur."),
         MODEL_DOWNLOAD("Modèles Google non disponibles ou téléchargement interrompu. Connecte le téléphone au Wi-Fi ou autorise explicitement les données mobiles, puis reprends."),
-        LOCAL_TRANSLATION("Le moteur local n’a pas pu terminer ce lot. Les sous-titres validés sont conservés ; reprends ou choisis un autre moteur.")
+        LOCAL_TRANSLATION("Le moteur local n’a pas pu terminer ce lot. Les sous-titres validés sont conservés ; reprends ou choisis un autre moteur."),
+        LOCAL_MODEL("Le modèle GGUF sélectionné est absent, a changé ou n’est pas compatible avec ce moteur. Choisis à nouveau un modèle pris en charge ; les occurrences validées restent conservées."),
+        LOCAL_BUSY("Un autre calcul ou import de modèle local est en cours. Attends sa fin ou annule-le avant de reprendre cette traduction."),
+        LOCAL_CONTEXT("Cette occurrence dépasse le contexte que le modèle peut traiter. Sa traduction n’a pas été validée ; aucune partie manquante n’est ignorée."),
+        LOCAL_TRUNCATED("Le modèle a atteint sa limite de sortie avant de terminer cette occurrence. Le texte incomplet est refusé ; les occurrences déjà validées sont conservées."),
+        LOCAL_PROCESS("Le processus du modèle local s’est arrêté ou n’a pas répondu à temps. La mémoire peut être insuffisante. Les occurrences validées restent enregistrées pour une reprise explicite.")
     }
 }
 
@@ -172,6 +182,15 @@ object TranslationEngines {
                 MlKitTranslationEngine(context ?: throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION),
                     translationIdentity(config), config.execution.allowMobileModelDownload)
             }
+            TranslationProvider.LOCAL_GGUF -> {
+                // A cached track must not load its multi-gigabyte model. This
+                // adapter constructs its private runtime only at the first cue.
+                transport.close()
+                LocalGgufTranslationEngine(
+                    context ?: throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION),
+                    config.localModel ?: throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION),
+                    config.localThreads, config.localContext)
+            }
             else -> HttpEngine(config, transport, TranslationRequestPacing())
         }
 
@@ -180,6 +199,9 @@ object TranslationEngines {
 
     /** Bind reusable translations to the selected server, without exposing its URL or key. */
     fun identity(config: TranslationProviderConfig): String {
+        if (config.provider == TranslationProvider.LOCAL_GGUF) return LocalGgufTranslationEngine.identity(
+            config.localModel ?: throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION),
+            config.localThreads, config.localContext)
         if (config.provider != TranslationProvider.LIBRE) return config.provider.id
         val endpoint = libreEndpoint(config.endpoint).toASCIIString()
         val digest = MessageDigest.getInstance("SHA-256").digest(endpoint.toByteArray(Charsets.UTF_8))
@@ -200,6 +222,8 @@ object TranslationEngines {
         if (config.provider == TranslationProvider.GOOGLE_LOCAL &&
             (MlKitTranslationEngine.canonicalLanguage(source) == null || MlKitTranslationEngine.canonicalLanguage(target) == null))
             throw TranslationFailure(TranslationFailure.Reason.LANGUAGE)
+        if (config.provider == TranslationProvider.LOCAL_GGUF)
+            LocalGgufTranslationEngine.validateLanguages(source, target)
     }
 
     /** Translation settings are separate from the credential scope; secrets never enter the digest. */
@@ -325,7 +349,7 @@ object TranslationEngines {
                         if (key.isNotEmpty()) body.put("api_key", key)
                         TranslationHttpRequest(libreEndpoint(config.endpoint), headers, body.toString())
                     }
-                    TranslationProvider.GOOGLE_WEB, TranslationProvider.GOOGLE_LOCAL ->
+                    TranslationProvider.GOOGLE_WEB, TranslationProvider.GOOGLE_LOCAL, TranslationProvider.LOCAL_GGUF ->
                         throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
                 }
                 if (request.body.toByteArray(Charsets.UTF_8).size > 120 * 1024)
@@ -371,7 +395,7 @@ object TranslationEngines {
                             throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
                         List(result.length()) { i -> result.get(i) as? String ?: throw TranslationFailure(TranslationFailure.Reason.RESPONSE) }
                     }
-                    TranslationProvider.GOOGLE_WEB, TranslationProvider.GOOGLE_LOCAL ->
+                    TranslationProvider.GOOGLE_WEB, TranslationProvider.GOOGLE_LOCAL, TranslationProvider.LOCAL_GGUF ->
                         throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
                 }
                 if (output.any { it.isBlank() || it.length > 24_000 || !validText(it) })

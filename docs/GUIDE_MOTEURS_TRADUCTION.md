@@ -2,7 +2,7 @@
 
 [Accueil](../README.md) · [Documentation](README.md) · [Services gratuits et limites](TRADUCTION_GRATUITE_ET_LIMITES.md) · [Tests sur téléphone](TESTS_TELEPHONE.md)
 
-Guide d’utilisation de la **0.5.2** ; état documentaire au **28 octobre 2026**. La publication et les résultats réels figurent dans les [notes 0.5.2](releases/0.5.2.md). Les références commerciales initiales ont été vérifiées le 24 octobre, puis les offres gratuites le 27 octobre. Les conditions, langues et droits applicables restent ceux affichés dans le compte du fournisseur.
+Guide d’utilisation de la **0.5.2**, complété par le parcours GGUF de la **candidate 0.5.4-local** ; état documentaire au **28 octobre 2026**. La publication et les résultats réels figurent dans les [notes 0.5.2](releases/0.5.2.md) et les [notes de la candidate](releases/0.5.4-local.md). Les références commerciales initiales ont été vérifiées le 24 octobre, puis les offres gratuites le 27 octobre. Les conditions, langues et droits applicables restent ceux affichés dans le compte du fournisseur.
 
 ## Fonctions disponibles
 
@@ -14,12 +14,13 @@ La narration utilise les occurrences françaises validées. L’affichage propos
 | --- | --- | --- | --- |
 | Google en ligne sans clé | Serveurs Google, accès web non officiel | Langue source et confirmation ; aucune clé Cloud | Aucune |
 | Google local — ML Kit | Téléphone | Paire de langues compatible ; modèles nécessaires | Téléchargement intégré, Wi-Fi par défaut |
+| GGUF local — candidate 0.5.4 | Téléphone, CPU | Fichier GGUF compatible choisi explicitement et langue source | Copie privée depuis le sélecteur Android ; aucun téléchargement automatique |
 | Microsoft Azure Translator | Serveurs Microsoft | Clé API personnelle et région selon la ressource | Aucune |
 | DeepL — point d'accès API Free | Serveurs DeepL, endpoint `api-free.deepl.com` | Clé API autorisée pour ce point d'accès | Aucune |
 | DeepL — point d'accès API payant | Serveurs DeepL, endpoint `api.deepl.com` | Clé API autorisée pour ce point d'accès | Aucune |
 | LibreTranslate — serveur personnel HTTPS | Serveur choisi par l'utilisateur | Adresse HTTPS, clé si l'instance l'exige | Aucune dans cette application |
 
-**ML Kit est intégré pour la traduction exécutée sur le téléphone.** Les autres modèles locaux présentés plus loin restent des candidats ; aucun import Hugging Face, GGUF ou paquet Argos n’est proposé. Google Cloud Translation et Apps Script restent distincts des choix Google intégrés et ne sont pas disponibles dans le lecteur.
+**ML Kit est intégré pour la traduction exécutée sur le téléphone. La candidate 0.5.4 ajoute l’import privé et l’exécution d’un GGUF compatible avec les consignes TranslateGemma ou Hunyuan dense.** Le [guide GGUF](TRADUCTION_GGUF_054.md) décrit le SRT autonome, la reprise et l’export. L’application ne parcourt pas Hugging Face et n’importe pas de paquet Argos. Les autres architectures présentées plus loin restent des candidats ; Google Cloud Translation et Apps Script restent distincts des choix intégrés.
 
 Les résultats ont trois usages distincts :
 
@@ -27,7 +28,7 @@ Les résultats ont trois usages distincts :
 - **Progression** : lots déjà validés conservés pour reprendre avec la même piste et les mêmes paramètres. Un lot au résultat incertain demande une confirmation avant un éventuel renvoi.
 - **Conservation et export** : conservation durable explicite d’une traduction complète, ou export SRT/VTT à l’emplacement choisi. L’export peut ensuite être réimporté comme piste française.
 
-Ces trois fonctions réutilisent un texte déjà traduit ; elles restent distinctes du calcul d’une nouvelle traduction locale avec ML Kit. La conservation privée dépend du stockage de l’application ; un export constitue un fichier séparé.
+Ces trois fonctions réutilisent un texte déjà traduit ; elles restent distinctes du calcul d’une nouvelle traduction locale avec ML Kit ou le GGUF choisi. La conservation privée dépend du stockage de l’application ; un export constitue un fichier séparé. Pour un calcul GGUF interrompu, la reprise conserve les occurrences validées sans notion de facturation externe.
 
 ## Parcours depuis le téléphone
 
@@ -352,13 +353,14 @@ Sources : [téléchargement de modèles](https://huggingface.co/docs/hub/models-
 Cette sélection couvre plusieurs architectures utiles à comparer ; elle n'est
 pas un inventaire de tous les modèles existants. **Aucun résultat de débit,
 d'autonomie, de qualité ou d'accélération NPU sur OnePlus 15 n'est établi par ce
-guide.** Les candidats autres que ML Kit restent non intégrés ; aucune mesure sur ce téléphone n’est déduite de l’intégration du SDK.
+guide.** Cette sélection historique n’établit aucun classement définitif. ML Kit est intégré depuis la 0.5.2 ; la candidate 0.5.4 ajoute un runtime GGUF et des consignes pour TranslateGemma et Hunyuan dense. L’intégration ne prouve ni la compatibilité de tous les fichiers, ni la qualité linguistique ou les performances du téléphone.
 
 | Candidat et source primaire | Caractéristiques documentées | Licence / distribution | Intérêt et condition pour Android |
 | --- | --- | --- | --- |
 | [Index-Translate-2B](https://huggingface.co/IndexTeam/Index-Translate-2B), [GGUF de l'équipe](https://huggingface.co/IndexTeam/Index-Translate-2B-GGUF) | 2 milliards de paramètres, famille fondée sur Qwen3.5 ; couverture annoncée de 150 langues | Apache-2.0 annoncée ; GGUF quantifiés publiés par IndexTeam | Premier candidat spécialisé à mesurer avec un runtime natif prenant réellement en charge cette architecture et son gabarit |
 | [Google ML Kit Translation](https://developers.google.com/ml-kit/language/translation/android) | SDK Android et modèles à la demande ; plus de 50 langues | SDK et modèles soumis aux conditions Google, attribution et métriques à déclarer | **Intégré en 0.5.2** ; langues validées par le SDK, modèles à la demande et attribution Google ; vérifier la disponibilité exacte d’une langue avant préparation |
-| [TranslateGemma 4B IT](https://huggingface.co/google/translategemma-4b-it), [annonce Google](https://blog.google/innovation-and-ai/technology/developers-tools/translategemma/) | Famille Gemma 3 de traduction ; tailles 4B, 12B et 27B, 55 langues annoncées | Conditions Gemma applicables à ce modèle ; accès aux poids à accepter | 4B à comparer ; runtime et conversion mobile exacts nécessaires, ne pas confondre avec Gemini Nano ou ML Kit |
+| [TranslateGemma 4B IT](https://huggingface.co/google/translategemma-4b-it), [annonce Google](https://blog.google/innovation-and-ai/technology/developers-tools/translategemma/) | Famille Gemma 3 de traduction ; tailles 4B, 12B et 27B, 55 langues annoncées | Conditions Gemma applicables à ce modèle ; accès aux poids à accepter | Consignes intégrées dans la candidate GGUF 0.5.4 ; conversion exacte, langues, mémoire et qualité à vérifier ; distinct de Gemini Nano et ML Kit |
+| [Hy-MT2-7B](https://huggingface.co/tencent/Hy-MT2-7B-GGUF) | Famille de traduction Hunyuan dense, GGUF publiés par Tencent | Conditions du modèle à consulter dans le dépôt des poids | Consignes Hunyuan dense intégrées dans la candidate 0.5.4 ; un chargement court ne valide pas le débit d’un film ni sa fidélité |
 | [NLLB-200 distilled 600M](https://huggingface.co/facebook/nllb-200-distilled-600M) | Encodeur-décodeur de traduction multilingue ; variante distillée 600M ; codes de langue et d'écriture propres | **CC-BY-NC-4.0**, modèle présenté pour la recherche | Comparateur relativement compact ; tokenizer, jeton cible et runtime doivent être adaptés ; licence non commerciale à vérifier avant distribution/usage commercial |
 | [MADLAD-400 3B MT](https://huggingface.co/google/madlad400-3b-mt) | Modèle T5 de traduction ; large couverture annoncée, plus de 450 langues dans la description d'entraînement | Apache-2.0 annoncée ; fiche décrivant une conversion et un chargement quantifié avec Candle | Comparateur large couverture, plus volumineux ; un GGUF T5/Candle n'est pas une preuve de compatibilité avec llama.cpp |
 | [M2M100 418M](https://huggingface.co/facebook/m2m100_418M) | Encodeur-décodeur de traduction directe entre 100 langues ; langue cible forcée à la génération | MIT annoncée sur le dépôt des poids | Base compacte à évaluer, sans présumer qu'un ancien modèle bat les solutions récentes ; pas de chargement natif déjà intégré |
@@ -413,9 +415,9 @@ absent, avec un risque supplémentaire de perte de sens. Le
 montre le format `.argosmodel` dans son propre logiciel. Les menus qu'il décrit
 ne sont pas des menus de ce lecteur Android.
 
-## Futurs imports de modèles autres que ML Kit
+## Import GGUF et conditions pour d’autres familles
 
-ML Kit possède déjà son téléchargement intégré. Pour ajouter d’autres familles de modèles avec un import entièrement utilisable sur téléphone, une étape future devra fournir les éléments suivants avant de demander l’import d’un gros fichier :
+ML Kit possède son téléchargement intégré. Le [parcours GGUF de la candidate 0.5.4](TRADUCTION_GGUF_054.md) permet un choix de fichier local, avec copie privée, empreinte, progression et contrôle du moteur. Il ne fournit pas de catalogue de poids ou de téléchargement intégré. Pour une autre famille, les exigences suivantes restent à établir :
 
 1. Un moteur Android ARM64 embarqué et versionné, compatible avec l'architecture
    exacte du modèle. Le CPU, le GPU et le NPU doivent être des capacités mesurées
@@ -437,7 +439,7 @@ ML Kit possède déjà son téléchargement intégré. Pour ajouter d’autres f
    narration que pour les services en ligne. La réutilisation hors ligne doit
    être testée séparément du téléchargement initial.
 
-Ces points concernent les futurs imports, pas les commandes ML Kit déjà intégrées. Les options actuelles comprennent les adaptateurs réseau, ML Kit et la conservation locale de leurs résultats complets.
+Ces points distinguent les contrôles techniques d’import de la validation d’un modèle en utilisation réelle. Le choix définitif d’un modèle ou d’une quantification demande toujours une comparaison sur les mêmes extraits et sur le téléphone cible. Les adaptateurs réseau et ML Kit restent disponibles séparément.
 
 ## Dépannage et choix raisonnable pour démarrer
 
@@ -454,13 +456,13 @@ Ces points concernent les futurs imports, pas les commandes ML Kit déjà intég
 | Préparation impossible | Piste textuelle chargée et index complet ; des pixels ne deviennent pas du texte sans OCR |
 | Français prêt mais lecture refusée | Voix française prête dans « Voix et confort » |
 | Changement de vidéo ou de piste | Préparer une nouvelle traduction correspondant à la nouvelle sélection |
-| Fichier Hugging Face téléchargé mais inutilisable | Aucun import de poids arbitraires n’existe ; ML Kit gère ses propres modèles, distincts de ces fichiers |
+| Fichier Hugging Face téléchargé mais inutilisable | Dans la candidate 0.5.4, choisir un GGUF compatible et attendre sa préparation ; l’architecture, les langues ou la mémoire peuvent rester incompatibles. ML Kit gère ses propres modèles séparément. |
 
 Pour commencer sans achat, **Azure F0 est un premier choix en ligne cohérent si
 l'ouverture de la ressource convient**. DeepL peut servir de comparaison avec
 l'accès réellement disponible sur ton compte. Un serveur LibreTranslate contrôlé
 est pertinent quand tu en as déjà un ou souhaites administrer cette solution.
-Google en ligne sans clé constitue une option supplémentaire à disponibilité non garantie. Pour le local, **ML Kit est utilisable après téléchargement des modèles compatibles** ; Index-Translate-2B et les autres familles restent des candidats à mesurer.
+Google en ligne sans clé constitue une option supplémentaire à disponibilité non garantie. Pour le local, **ML Kit est utilisable après téléchargement des modèles compatibles** ; la candidate 0.5.4 propose aussi le GGUF choisi sur le téléphone. Index-Translate-2B et les autres familles non prises en charge par les consignes de cette intégration restent des candidats à mesurer.
 
 Le meilleur choix linguistique se décide sur les mêmes extraits et les mêmes
 langues vers le français. Il faut comparer fidélité, omissions, cohérence des

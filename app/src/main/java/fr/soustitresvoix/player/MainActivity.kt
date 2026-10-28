@@ -45,6 +45,7 @@ import kotlin.math.roundToInt
 @UnstableApi
 class MainActivity : ComponentActivity() {
     private lateinit var translationControls: SubtitleTranslationControls
+    private lateinit var localSrtTranslationControls: LocalSrtTranslationControls
     private lateinit var preparationDiagnostics: PreparationDiagnosticsController
     private lateinit var prefs: PlayerPreferences
     internal lateinit var session: PlaybackSession; private set
@@ -82,6 +83,15 @@ class MainActivity : ComponentActivity() {
     }
     private val diagnosticVideoPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (::preparationDiagnostics.isInitialized && !closed) preparationDiagnostics.selectedVideo(uri)
+    }
+    private val translationModelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (::translationControls.isInitialized && !closed) translationControls.selectedLocalModel(uri)
+    }
+    private val localSrtPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (::localSrtTranslationControls.isInitialized && !closed) localSrtTranslationControls.selectedSubtitle(uri)
+    }
+    private val localSrtModelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (::localSrtTranslationControls.isInitialized && !closed) localSrtTranslationControls.selectedModel(uri)
     }
     private val subtitleExportLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val content = pendingSubtitleExport
@@ -141,20 +151,15 @@ class MainActivity : ComponentActivity() {
                 main.post { offerSessionResume() }
             }
         }
-        translationControls = SubtitleTranslationControls(this, session) { mime, name, content ->
-            if (pendingSubtitleExport != null) {
-                showMessage("Un export attend déjà le choix de son fichier.", true)
-            } else {
-                pendingSubtitleExport = content
-                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
-                    .setType(mime).putExtra(Intent.EXTRA_TITLE, name)
-                try { subtitleExportLauncher.launch(intent) }
-                catch (_: ActivityNotFoundException) {
-                    pendingSubtitleExport = null
-                    showMessage("Aucun sélecteur Android ne permet de créer le fichier d’export.", true)
-                }
-            }
-        }
+        translationControls = SubtitleTranslationControls(this, session,
+            launchLocalModelPicker = { translationModelPicker.launch(arrayOf("*/*")) },
+            otherLocalPreparationBusy = { ::localSrtTranslationControls.isInitialized && localSrtTranslationControls.busy },
+            onExport = ::requestSubtitleExport)
+        localSrtTranslationControls = LocalSrtTranslationControls(this,
+            otherPreparationBusy = { session.isPreparing },
+            launchSubtitlePicker = { localSrtPicker.launch(arrayOf("*/*")) },
+            launchModelPicker = { localSrtModelPicker.launch(arrayOf("*/*")) },
+            onExport = ::requestSubtitleExport, onChanged = { refreshUi() })
         preparationDiagnostics = PreparationDiagnosticsController(this,
             playbackIdle = {
                 val state = session.machine.snapshot()
@@ -194,6 +199,7 @@ class MainActivity : ComponentActivity() {
         closed = true; uiRebuildPending = false; requestToken++
         cinema?.close(); repairDialog?.dismiss(); resumeDialog?.dismiss(); resumeDialog = null
         if (::translationControls.isInitialized) translationControls.close()
+        if (::localSrtTranslationControls.isInitialized) localSrtTranslationControls.close()
         if (::preparationDiagnostics.isInitialized) preparationDiagnostics.close()
         main.removeCallbacksAndMessages(null); io.shutdownNow()
         if (::playerView.isInitialized) playerView.player = null
@@ -389,6 +395,7 @@ class MainActivity : ComponentActivity() {
         })
         column.addView(button("Choisir la piste de sous-titres") { chooseTrack(C.TRACK_TYPE_TEXT) })
         column.addView(button("Traduire les sous-titres en français") { translationControls.show() })
+        column.addView(button("Traduire un fichier SRT hors ligne") { localSrtTranslationControls.show() })
         column.addView(button("Choisir la piste audio du film") { chooseTrack(C.TRACK_TYPE_AUDIO) })
         column.addView(button("Répéter la dernière phrase — met en pause") { session.repeatLast() })
         column.addView(button("Reprendre explicitement la voix") { session.resumeVoice() })
@@ -422,7 +429,8 @@ class MainActivity : ComponentActivity() {
     private fun refreshUi() {
         if (closed || !::session.isInitialized) return
         val state = session.machine.snapshot()
-        if (state.wantsPlayback || state.speakingId != null || session.isPreparing) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (state.wantsPlayback || state.speakingId != null || session.isPreparing ||
+            (::localSrtTranslationControls.isInitialized && localSrtTranslationControls.busy)) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         session.prepareTick()
         if (::translationControls.isInitialized) translationControls.refresh()
@@ -461,6 +469,20 @@ class MainActivity : ComponentActivity() {
             messageView.text = value; messageView.setTextColor(if (error) Color.rgb(255, 205, 110) else Color.LTGRAY)
         }
         if (error && fullscreen && !closed) setFullscreen(false)
+    }
+    private fun requestSubtitleExport(mime: String, name: String, content: String) {
+        if (pendingSubtitleExport != null) {
+            showMessage("Un export attend déjà le choix de son fichier.", true)
+        } else {
+            pendingSubtitleExport = content
+            val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                .setType(mime).putExtra(Intent.EXTRA_TITLE, name)
+            try { subtitleExportLauncher.launch(intent) }
+            catch (_: ActivityNotFoundException) {
+                pendingSubtitleExport = null
+                showMessage("Aucun sélecteur Android ne permet de créer le fichier d’export.", true)
+            }
+        }
     }
     @Suppress("DEPRECATION")
     private fun pickDocument(request: Int) {
@@ -727,7 +749,8 @@ class MainActivity : ComponentActivity() {
         action(SettingsSection.SUBTITLES, "Retirer le fichier de sous-titres ajouté", "externe supprimer détacher") {
             session.attachSubtitle(null, null); showMessage("Fichier ajouté retiré. Les pistes intégrées restent disponibles.", false)
         }
-        action(SettingsSection.TRANSLATION, "Traduire les sous-titres en français", "traduction fournisseur export SRT VTT quota cache DeepL Azure LibreTranslate") { translationControls.show() }
+        action(SettingsSection.TRANSLATION, "Traduire les sous-titres en français", "traduction fournisseur export SRT VTT quota cache DeepL Azure LibreTranslate GGUF local") { translationControls.show() }
+        action(SettingsSection.TRANSLATION, "Traduire un fichier SRT hors ligne", "GGUF modèle local sans vidéo export reprise") { localSrtTranslationControls.show() }
         action(SettingsSection.IMAGE, "Image, cadrage, zoom et corrections", "étirement bandes noires marges contraste luminosité Lanczos proportions") {
             pendingImageSettings = true; dialog.dismiss()
         }

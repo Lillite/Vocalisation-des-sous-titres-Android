@@ -8,7 +8,7 @@ if len(sys.argv) != 2:
 ns = '{http://schemas.android.com/apk/res/android}'
 root = ET.parse(Path(sys.argv[1])).getroot()
 assert root.get('package') == 'fr.soustitresvoix.player.translation', 'Unexpected application identity'
-assert root.get(ns + 'versionCode') == '10' and root.get(ns + 'versionName') == '0.5.3-diagnostic', 'Unexpected version'
+assert root.get(ns + 'versionCode') == '11' and root.get(ns + 'versionName') == '0.5.4-local', 'Unexpected version'
 app = root.find('application')
 assert app is not None and app.get(ns + 'allowBackup') == 'false', 'Backup must remain disabled'
 assert app.get(ns + 'usesCleartextTraffic') == 'false', 'Cleartext network traffic must remain disabled'
@@ -28,6 +28,9 @@ assert not any('Fixture' in x.get(ns + 'name', '') for x in app), 'Test service 
 diagnostic = app.findall("service[@" + ns + "name='fr.soustitresvoix.player.LocalModelProbeService']")
 assert len(diagnostic) == 1 and diagnostic[0].get(ns + 'exported') == 'false'
 assert diagnostic[0].get(ns + 'process') == ':model_diagnostic', 'Model probe must use its private process'
+translation = app.findall("service[@" + ns + "name='fr.soustitresvoix.player.LocalGgufTranslationService']")
+assert len(translation) == 1 and translation[0].get(ns + 'exported') == 'false', 'Local translation service must remain private'
+assert translation[0].get(ns + 'process') == ':model_diagnostic', 'Local translation must use its private model process'
 assert all(provider.get(ns + 'name') != 'com.google.mlkit.common.internal.MlKitInitProvider'
            for provider in app.findall('provider')), 'ML Kit must initialize only after explicit translation confirmation'
 print('PASS compiled cinema APK: identity, backup disabled, TTS query, no test service')

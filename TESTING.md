@@ -2,15 +2,49 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Essais sur téléphone](docs/TESTS_TELEPHONE.md) · [Contribution](CONTRIBUTING.md)
 
-## Candidate 0.5.3-diagnostic — validation à établir
+## Candidate 0.5.4-local — validation à établir
 
-Les sources de la candidate préparent **0.5.3-diagnostic / code 10**, avec l’identité Android conservée. Le [guide](docs/DIAGNOSTIC_LOCAL_053.md) décrit les mesures Android, l’essai vidéo limité à 8 images sur 10 secondes et l’essai réel CPU d’un GGUF par llama.cpp dans un processus distinct. La vocalisation reste indépendante. Ni OCR de film, ni traduction de sous-titres par TranslateGemma, ni exécution GPU/NPU ne sont revendiqués.
+Les sources de la candidate préparent **0.5.4-local / code 11**, avec l’identité Android conservée. Le [guide](docs/TRADUCTION_GGUF_054.md) décrit l’import et l’identification d’un GGUF, la traduction CPU d’un SRT indépendant ou de la piste choisie, la reprise et l’export. La traduction reste indépendante de l’OCR. Aucune exécution GPU/NPU ni qualité linguistique universelle n’est revendiquée.
 
-Les nouveaux contrôles doivent couvrir les rapports sans nom/URI de fichier personnel, la séparation entre capacités déclarées et essais, le décodage synthétique, les erreurs, l’import consenti, l’annulation, la fermeture et les réponses tardives. La simple construction de la bibliothèque JNI ne prouve pas son exécution : les rapports Android doivent identifier l’essai effectivement effectué et son résultat, sans transformer un échec en succès.
+Les contrôles de cette étape doivent couvrir :
 
-L’inventaire attendu dans les sources de cette candidate est de **178 tests noyau, 316 tests JVM application et 106 tests Android**, soit **600 méthodes**. Ces nombres décrivent les tests attendus, sans annoncer leur réussite : les résultats restent à rattacher au run exact avant fusion ; les **567 méthodes de la 0.5.2 ci-dessous sont historiques**. Aucun succès de compilation, de test, de TalkBack réel, de qualité linguistique ou de performance du téléphone n’est déduit de leur présence dans les sources. Les poids de production ne sont pas téléchargés automatiquement et les nouveaux essais n’envoient ni vidéo ni texte personnel à un service.
+| Groupe | Vérifications requises |
+| --- | --- |
+| Modèle | Import consenti, copie atomique, empreinte du contenu, annulation, ancienne copie conservée, exclusion d’une mutation pendant l’usage, préparation du modèle déjà importé et refus d’une identité périmée. |
+| Runtime JNI | Chargement réel une fois pour plusieurs générations, fin EOS distincte d’une limite de sortie, entrées longues et Unicode, contexte réinitialisé, annulation, fermeture, indisponibilité du service et erreur explicite. |
+| Traduction | Consignes et langues prises en charge, contexte récent borné, segmentation sans perte, source non modifiée, conservation des identifiants, répétitions et chevauchements, refus des réponses incomplètes. |
+| Progression | Sauvegarde de chaque occurrence validée, reprise après recréation sans renvoyer le préfixe, identité liée au modèle et aux options, distinction des requêtes locales et des reprises facturables en ligne. |
+| Lecteur et export | SRT autonome, export complet UTF-8 réimportable, tampon progressif, attente avant un texte manquant, Pause volontaire et déplacement prioritaires, réponses tardives sans reprise. |
+| Interface | Choix local explicite, clés et options réseau masquées lorsqu’elles ne s’appliquent pas, progression et erreurs perceptibles, grands caractères et défilement. |
 
-La distribution exige ensuite une reconstruction issue de la fusion validée, le même contenu applicatif que l’APK testé et le certificat durable `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d`. **La sauvegarde privée Traduction a été retrouvée et ce certificat vérifié localement**, sans publication de la clé ni création d’un nouveau certificat. La signature éphémère de CI ne la remplace pas et aucun APK de mise à jour n’est annoncé comme livré. La 0.5.2 publiée reste disponible.
+Le modèle miniature terminant est généré dans les **assets de l’APK d’instrumentation seulement**. Il n’est pas un modèle entraîné et n’est pas distribué dans l’APK principal. Son exécution JNI vérifie le moteur et le cycle de vie, pas la fidélité d’une traduction. Les autres réponses contrôlées des tests JVM restent distinguées d’une vraie génération native.
+
+L’inventaire de cette candidate contient **178 tests noyau, 375 tests JVM application et 109 tests Android**, soit **662 méthodes distinctes attendues**. Les lanceurs exigent ces effectifs et les identités exactes dans les XML du run concerné. Cet inventaire n’annonce pas leur réussite. Les **600 méthodes réussies de la 0.5.3** et les **567 méthodes de la 0.5.2 ci-dessous sont historiques**. Aucun succès de compilation, de test, de TalkBack réel, de qualité linguistique ou de performance du téléphone n’est déduit de la présence des tests. Les poids de production ne sont pas téléchargés automatiquement et les nouveaux essais n’envoient ni vidéo ni texte personnel à un service.
+
+La distribution exige ensuite une reconstruction issue de la fusion validée, le même contenu applicatif que l’APK testé et le certificat durable `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d`. La signature éphémère de CI ne remplace pas ce certificat et aucun APK de cette candidate n’est annoncé comme livré avant vérification. La 0.5.2 publiée reste la stable recommandée.
+
+### Contrôle local des assets de test
+
+Un premier passage local a refusé des dépendances implicites entre le générateur du modèle terminant et les tâches lint AndroidTest. Une tentative avec un fournisseur mappé a permis la compilation, mais l’inspection de l’APK de tests a révélé l’absence de la fixture : ce passage ne validait donc pas son empaquetage. Les tâches consommatrices AndroidTest possèdent désormais une dépendance explicite sur le générateur.
+
+La reprise ciblée **`:app:lintDebug :app:assembleDebugAndroidTest`** a réussi en **1 min 45 s**, sans relancer les suites JVM ou noyau déjà exécutées. Le générateur a réellement produit **51 072 octets** ; le ZIP AndroidTest contient `assets/translation_test_model.gguf`, identique au fichier généré, SHA-256 `306a4f24485ac99191335242d58fccc2e25182985b72eb86fe74b01d5f443e61`. L’APK principal debug ne contient pas cette fixture. Son manifeste compilé a aussi passé les contrôles de version, permissions et services privés. Ces constats de construction et de contenu ne remplacent pas l’exécution des tests instrumentés dans la campagne CI finale.
+
+## Préversion publiée 0.5.3-diagnostic — résultats vérifiés
+
+La [PR #19](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/19) a été validée dans le [run 40641431843](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40641431843), avec **178 tests noyau, 316 tests JVM application et 106 tests instrumentés Android**, soit **600 réussites sans échec, erreur ni test ignoré**. L’instrumentation portait sur l’APK release de test, avec un véritable essai CPU du modèle miniature synthétique.
+
+La fusion a produit `3b68b118c3f7d21ef47a47e6eb5611ceb34f2055`. Le [run après fusion 40643641925](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40643641925) a vérifié le même arbre et les mêmes parents que la fusion testée, reconstruit la release et comparé son contenu applicatif hors signature, **sans rejouer les suites**. Le [run de publication 40647450315](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40647450315) a réussi après signature durable et contrôle des fichiers téléchargés.
+
+| Repère | Valeur vérifiée |
+| --- | --- |
+| APK publié | `SousTitresVoix-0.5.3-diagnostic.apk`, **53 565 559 octets** |
+| Identité et version | `fr.soustitresvoix.player.translation`, `0.5.3-diagnostic`, code **10** |
+| SHA-256 APK | `c622d3f49bced6f1afeb8abd35060841cc2f7636f75576e5e6c1bc5af18d80d1` |
+| Certificat SHA-256 | `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d` |
+| Release / asset APK | `426350156` / `684138289` |
+| Publication | Préversion, sans remplacer la dernière stable 0.5.2 |
+
+Le [guide du diagnostic](docs/DIAGNOSTIC_LOCAL_053.md) et les [notes 0.5.3](docs/releases/0.5.3-diagnostic.md) conservent son périmètre. Les essais sur téléphone transmis par l’utilisateur ne sont pas des exécutions de CI et ne sont pas ajoutés aux effectifs ci-dessus. Leur succès de chargement court ne mesure ni la qualité linguistique, ni une accélération GPU/NPU, ni la stabilité d’un film complet.
 
 ## Version 0.5.2 — parcours de validation
 
@@ -633,7 +667,7 @@ Contrôler ensuite chaque rapport JVM contre les méthodes attendues :
 
 ```sh
 python3 tools/verify-test-results.py --reports core/build/test-results/test --expected-count 178 --sources core/src/test/kotlin --output build/verification/local-debug-core-summary.json
-python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 242 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
+python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 375 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
 ```
 
 Pour une preuve finale, fournir aussi `--not-before-ns` avec l’instant de début

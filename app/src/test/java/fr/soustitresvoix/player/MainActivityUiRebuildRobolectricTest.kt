@@ -159,4 +159,28 @@ class MainActivityUiRebuildRobolectricTest {
         shadowOf(Looper.getMainLooper()).idle()
         assertFalse("The resume dialog must leave the destroyed Activity window", dialog.isShowing)
     }
+
+    @Test fun standaloneSrtEntryWorksWithoutVideoAndPreservesTheReadersPlaybackIntent() {
+        val owner = Robolectric.buildActivity(MainActivity::class.java).setup().visible()
+        try {
+            val activity = owner.get()
+            assertNull(activity.session.media)
+            // A synthetic playWhenReady flag makes an accidental session.pause()
+            // observable without claiming real audio/video playback in this JVM test.
+            activity.session.player.playWhenReady = true
+            val intentBefore = activity.session.machine.snapshot().wantsPlayback
+            descendants(activity.findViewById<ViewGroup>(android.R.id.content))
+                .filterIsInstance<android.widget.Button>().single { it.text.toString() == "Traduire un fichier SRT hors ligne" }
+                .performClick()
+            val dialog = ShadowAlertDialog.getLatestAlertDialog()
+            assertTrue(dialog.isShowing)
+            assertEquals(intentBefore, activity.session.machine.snapshot().wantsPlayback)
+            assertTrue(activity.session.player.playWhenReady)
+            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertFalse(dialog.isShowing)
+            assertTrue(activity.session.player.playWhenReady)
+            assertNull(activity.session.media)
+        } finally { owner.pause().stop().destroy() }
+    }
 }
