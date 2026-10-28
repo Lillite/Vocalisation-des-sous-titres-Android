@@ -22,7 +22,8 @@ data class LocalTranslationPerformance(
     val availableRamBytes: Long = 0,
     val gpuGraphNodes: Long = 0,
     val fallbackReason: String = "",
-    val diagnostic: LocalGgufDiagnostic? = null
+    val diagnostic: LocalGgufDiagnostic? = null,
+    val openClTransport: String = ""
 ) {
     /** Throughput of the last native call, not an aggregate of split/retried fragments. */
     val tokensPerSecond: Double get() = if (generationMs > 0) generatedTokens * 1000.0 / generationMs else 0.0
@@ -31,6 +32,8 @@ data class LocalTranslationPerformance(
         append("Calcul demandé : "); append(requestedMode)
         if (backend.isNotEmpty()) { append(" ; moteur sélectionné : "); append(backend) }
         if (device.isNotEmpty()) { append(" ; appareil de calcul : "); append(safe(device)) }
+        if (backend == "OPENCL" && openClTransport == "DIRECT")
+            append(".\nAccès au pilote OpenCL : direct, sans chargeur ICD")
         append(".\nGPU réellement observé : "); append(if (gpuObserved) "oui" else "non établi")
         if (gpuObserved && gpuGraphNodes > 0) { append(" ("); append(gpuGraphNodes); append(" nœuds du graphe)") }
         if (phase == "load") { append(".\nChargement : "); append(loadMs); append(" ms") }

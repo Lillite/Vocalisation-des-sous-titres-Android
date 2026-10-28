@@ -20,6 +20,7 @@ struct Response {
     std::string output;
     std::string stop_reason = "error";
     std::string backend = "CPU";
+    std::string opencl_transport;
     std::string device = "CPU";
     std::string requested_mode = "CPU";
     std::string fallback_reason;

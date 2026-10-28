@@ -16,6 +16,7 @@ void check_output(const subtitle_local::Response & response) {
     assert(response.prompt_tokens == response.cached_prompt_tokens + response.prompt_evaluated_tokens);
     assert(response.prompt_evaluated_tokens >= 1);
     assert(response.backend == "CPU" && !response.gpu_observed && response.gpu_graph_nodes == 0);
+    assert(response.opencl_transport.empty());
 }
 float difference(const std::vector<float> & left, const std::vector<float> & right) {
     assert(!left.empty() && left.size() == right.size());
@@ -33,6 +34,7 @@ int main(int argc, char ** argv) {
         assert(info.architecture == "llama" && info.model_bytes > 0 && info.model_parameters > 0);
         assert(info.context_tokens == 512 && info.process_id > 0);
         assert(info.backend == "CPU" && !info.gpu_observed && info.actual_gpu_layers == 0);
+        assert(info.opencl_transport.empty());
         assert(!info.diagnostic.present() && info.json().find("\"diagnostic\"") == std::string::npos);
         subtitle_local::Session second;
         assert(second.open(argv[1], 1, 512).code == "BUSY");

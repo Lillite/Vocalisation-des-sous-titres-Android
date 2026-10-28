@@ -4,7 +4,7 @@ Lecteur vidéo Android destiné d’abord à **vocaliser intégralement les occu
 
 **Version publiée recommandée : 0.5.2 — Google et traduction pendant la lecture.** [Notes 0.5.2](docs/releases/0.5.2.md) · [Guide Google](docs/TRADUCTION_GOOGLE_052.md) · [Validation GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml).
 
-**Candidate en préparation : 0.5.6-opencl / code 13.** Correction de la remontée des causes d’échec OpenCL et clarification des durées du comparatif. [Guide du diagnostic GPU](docs/DIAGNOSTIC_OPENCL_056.md) · [Notes et limites](docs/releases/0.5.6-opencl.md). La [0.5.5-perf publiée](docs/releases/0.5.5-perf.md) apporte déjà les optimisations CPU, le cache de préfixe exact et le correctif Hy-MT2 ; son calcul GPU reste à valider sur le téléphone.
+**Candidate en préparation : 0.5.7-directcl / code 14.** Accès direct au pilote OpenCL du téléphone, sans imposer son extension ICD. [Guide de l’accès direct](docs/OPENCL_DIRECT_057.md) · [Notes et limites](docs/releases/0.5.7-directcl.md). La [0.5.6-opencl publiée](docs/releases/0.5.6-opencl.md) a réussi 706 tests, dont 110 sur émulateur Android 17 ; son rapport a permis d’identifier le blocage ICD sur le téléphone. Le calcul GPU réel et son débit restent à mesurer.
 
 **[Télécharger SousTitresVoix-0.5.2-google.apk](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.2/SousTitresVoix-0.5.2-google.apk)** · [Release et sommes de contrôle](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.2). Les archives « Source code » ne sont pas des APK.
 
@@ -26,7 +26,7 @@ Les [attributions du calcul GGUF natif](ATTRIBUTIONS.md) regroupent les versions
 
 ## Traduction GGUF locale et diagnostic GPU
 
-Le moteur GGUF local s’intègre au parcours **Traduire les sous-titres en français**. Le modèle est choisi explicitement, copié dans l’espace privé et identifié par son contenu. Il est chargé directement par llama.cpp ; PocketPal, une clé API et un serveur ne sont pas nécessaires. Le calcul CPU reste disponible. La 0.5.5 publiée ajoute un GPU facultatif et des mesures explicites du backend réellement utilisé ; la candidate 0.5.6 précise ses causes d’échec. Les poids ne sont pas inclus ni téléchargés automatiquement.
+Le moteur GGUF local s’intègre au parcours **Traduire les sous-titres en français**. Le modèle est choisi explicitement, copié dans l’espace privé et identifié par son contenu. Il est chargé directement par llama.cpp ; PocketPal, une clé API et un serveur ne sont pas nécessaires. Le calcul CPU reste disponible. La 0.5.5 publiée ajoute un GPU facultatif et des mesures explicites du backend réellement utilisé ; la 0.5.6 publiée précise ses causes d’échec. La candidate 0.5.7 remplace le chargeur ICD par un accès direct facultatif au pilote du téléphone. Les poids ne sont pas inclus ni téléchargés automatiquement.
 
 La préparation conserve les identifiants et minutages de chaque occurrence. Les résultats validés sont enregistrés pour reprise ; une sortie interrompue ou tronquée ne devient pas une traduction complète. L’export produit un nouveau SRT ou VTT sans remplacer l’original. Le mode progressif utilise les mêmes protections d’attente, de Pause et de déplacement que les moteurs existants.
 

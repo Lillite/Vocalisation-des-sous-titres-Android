@@ -6,6 +6,7 @@ namespace subtitle_native {
 struct ExecutionDiagnostic {
     const char * stage = "BACKEND";
     const char * reason = nullptr;
+    const char * missing_symbol = nullptr;
     long long elapsed_ms = 0;
     bool has_opencl_status = false;
     int opencl_status = 0;

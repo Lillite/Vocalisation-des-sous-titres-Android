@@ -37,6 +37,7 @@ class LocalGgufRuntimeRobolectricTest {
     }
     @Test fun gpuEvidenceAndPrefixAccountingCannotBeInventedByMetadataAlone() {
         val valid = JSONObject(generation()).put("backend", "OPENCL").put("requestedMode", "OPENCL")
+            .put("openClTransport", "DIRECT")
             .put("gpuObserved", true).put("gpuGraphNodes", 3).put("cachedPromptTokens", 15).put("promptEvaluatedTokens", 5)
         val observed = LocalGgufRuntime.generation(valid.toString())
         assertTrue(observed.gpuObserved)
@@ -50,6 +51,56 @@ class LocalGgufRuntimeRobolectricTest {
             try { LocalGgufRuntime.generation(invalid.toString()); fail("Unproven GPU or prefix statistics accepted") }
             catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.RESPONSE, failure.code) }
         }
+    }
+    @Test fun directTransportIsValidatedAndNeverSubstitutesForActualGpuEvidence() {
+        val cpuInfo = JSONObject().put("code", "OK").put("name", "Synthetic model")
+            .put("architecture", "gemma3").put("fileType", "Q4_0").put("contextTokens", 512)
+            .put("modelBytes", 1024).put("modelParameters", 100).put("loadMs", 5).put("peakRssBytes", 1000)
+        val directInfo = JSONObject(cpuInfo.toString()).put("backend", "OPENCL").put("requestedMode", "OPENCL")
+            .put("openClTransport", "DIRECT")
+        val loaded = LocalGgufRuntime.info(directInfo.toString())
+        assertEquals("DIRECT", loaded.openClTransport)
+        assertFalse(loaded.gpuObserved)
+        val report = LocalTranslationPerformance(phase = "load", backend = loaded.backend,
+            openClTransport = loaded.openClTransport, gpuObserved = loaded.gpuObserved).render()
+        assertTrue(report.contains("direct, sans chargeur ICD"))
+        assertTrue(report.contains("GPU réellement observé : non établi"))
+        assertEquals("", LocalGgufRuntime.info(cpuInfo.toString()).openClTransport)
+
+        val directGeneration = JSONObject(generation()).put("backend", "OPENCL").put("requestedMode", "OPENCL")
+            .put("openClTransport", "DIRECT").put("gpuObserved", true).put("gpuGraphNodes", 3)
+        val generated = LocalGgufRuntime.generation(directGeneration.toString())
+        assertEquals("DIRECT", generated.openClTransport)
+        assertTrue(generated.gpuObserved)
+        assertEquals(3L, generated.gpuGraphNodes)
+        assertEquals("", LocalGgufRuntime.generation(generation()).openClTransport)
+
+        val invalidInfo = mutableListOf<JSONObject>()
+        val invalidGeneration = mutableListOf<JSONObject>()
+        for (value in listOf(JSONObject.NULL, 7, true, "ICD", "/private/not-a-transport.so")) {
+            invalidInfo += JSONObject(cpuInfo.toString()).put("openClTransport", value)
+            invalidGeneration += JSONObject(generation()).put("openClTransport", value)
+        }
+        invalidInfo += JSONObject(cpuInfo.toString()).put("openClTransport", "DIRECT")
+        invalidGeneration += JSONObject(generation()).put("openClTransport", "DIRECT")
+        for (value in listOf("", null)) {
+            invalidInfo += JSONObject(directInfo.toString()).apply {
+                if (value == null) remove("openClTransport") else put("openClTransport", value)
+            }
+            invalidGeneration += JSONObject(directGeneration.toString()).apply {
+                if (value == null) remove("openClTransport") else put("openClTransport", value)
+            }
+        }
+        for (value in invalidInfo) {
+            try { LocalGgufRuntime.info(value.toString()); fail("An invalid or contradictory transport was accepted") }
+            catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.RESPONSE, failure.code) }
+        }
+        for (value in invalidGeneration) {
+            try { LocalGgufRuntime.generation(value.toString()); fail("An invalid or contradictory transport was accepted") }
+            catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.RESPONSE, failure.code) }
+        }
+        assertFalse(LocalTranslationPerformance(backend = "CPU", openClTransport = "/private/not-a-transport.so")
+            .render().contains("not-a-transport"))
     }
     @Test fun malformedAndInventedResponseCannotSucceed() {
         for (json in listOf("", "{}", "not json", generation(code = "INVENTED"))) {
@@ -78,6 +129,19 @@ class LocalGgufRuntimeRobolectricTest {
                 assertEquals(LocalGgufDiagnostic.Stage.OPENCL_DRIVER, clientFailure.diagnostic?.stage)
                 assertEquals(LocalGgufDiagnostic.Reason.DRIVER_NOT_ACCESSIBLE, clientFailure.diagnostic?.reason)
                 assertEquals(17L, clientFailure.diagnostic?.elapsedMs)
+            }
+            val direct = JSONObject(native).apply {
+                getJSONObject("diagnostic").put("stage", "OPENCL_DIRECT").put("reason", "DIRECT_SYMBOLS_MISSING")
+                    .put("missingSymbol", "clCreateBuffer")
+            }
+            val directFailure = try { LocalGgufRuntime.response(direct.toString()); throw AssertionError("Expected direct API error") }
+                catch (failure: LocalGgufRuntime.Failure) { failure }
+            val directEncoded = error.invoke(host.get(), directFailure.code, directFailure.diagnostic) as String
+            assertFalse(directEncoded.contains("not-for-the-report"))
+            try { LocalGgufRuntime.response(directEncoded); fail("Direct API error was lost") }
+            catch (clientFailure: LocalGgufRuntime.Failure) {
+                assertEquals(LocalGgufDiagnostic.Reason.DIRECT_SYMBOLS_MISSING, clientFailure.diagnostic?.reason)
+                assertEquals("clCreateBuffer", clientFailure.diagnostic?.missingSymbol)
             }
         } finally { host.destroy(); shadowOf(Looper.getMainLooper()).idle() }
     }

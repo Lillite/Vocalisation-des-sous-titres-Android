@@ -28,7 +28,7 @@ private class NativeTranslationBackend(context: Context) : LocalGgufBackend {
                 requestedMode = it.requestedMode, backend = it.backend, device = it.device,
                 gpuObserved = false, loadMs = it.loadMs, peakRssBytes = it.peakRssBytes,
                 currentRssBytes = it.residentBytes, availableRamBytes = it.availableRamBytes, fallbackReason = it.fallbackReason,
-                diagnostic = it.diagnostic))
+                diagnostic = it.diagnostic, openClTransport = it.openClTransport))
         }
     override fun generate(prompt: String, maxOutputTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Generation =
         client.generate(prompt, maxOutputTokens, addSpecialTokens = false, cancelled = cancelled)
@@ -39,7 +39,8 @@ private class NativeTranslationBackend(context: Context) : LocalGgufBackend {
                     generatedTokens = it.generatedTokens, cachedPromptTokens = it.cachedPromptTokens,
                     promptEvaluatedTokens = it.promptEvaluatedTokens, peakRssBytes = it.peakRssBytes,
                     currentRssBytes = it.residentBytes, availableRamBytes = it.availableRamBytes,
-                    gpuGraphNodes = it.gpuGraphNodes, fallbackReason = it.fallbackReason, diagnostic = it.diagnostic))
+                    gpuGraphNodes = it.gpuGraphNodes, fallbackReason = it.fallbackReason, diagnostic = it.diagnostic,
+                    openClTransport = it.openClTransport))
             }
     override fun cancel() = client.cancel()
     override fun close() = client.close()

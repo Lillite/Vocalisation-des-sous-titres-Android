@@ -276,7 +276,7 @@ class LocalGgufTranslationEngineTest {
             .put("openClStatus", JSONObject.NULL).put("directPlatforms", 1).put("icdPlatforms", 1)
             .put("gpuDevices", 1).put("probeCached", false)))
         val gpu = Backend(LocalGgufBackend.Info("TranslateGemma 4B", "gemma3",
-            LocalTranslationPerformance(phase = "load", backend = "OPENCL"))).apply {
+            LocalTranslationPerformance(phase = "load", backend = "OPENCL", openClTransport = "DIRECT"))).apply {
             generate = { _, _ -> throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.BACKEND, diagnostic) }
             onAwaitedClose = { gpuReleased.set(true) }
         }
@@ -293,6 +293,7 @@ class LocalGgufTranslationEngineTest {
         assertTrue(reports.any { it.phase == "fallback" && it.fallbackReason.isNotBlank() })
         assertEquals("AUTO", reports.last().requestedMode)
         assertEquals("CPU", reports.last().backend)
+        assertEquals("", reports.last().openClTransport)
         assertSame(diagnostic, reports.last().diagnostic)
         assertTrue(reports.last().render().contains("NO_GPU_EXECUTION"))
         engine.close()
@@ -379,13 +380,15 @@ class LocalGgufTranslationEngineTest {
             LocalTranslationPerformance(backend = "OPENCL", device = "Synthetic GPU", gpuObserved = true,
                 promptMs = 40, generationMs = 60, promptTokens = 50, generatedTokens = 6,
                 cachedPromptTokens = 30, promptEvaluatedTokens = 20, gpuGraphNodes = 4,
-                currentRssBytes = 1024, availableRamBytes = 4096)) } }
+                currentRssBytes = 1024, availableRamBytes = 4096, openClTransport = "DIRECT")) } }
         val engine = engine(fixture, backend)
         val reports = mutableListOf<LocalTranslationPerformance>()
         engine.setPerformanceListener { reports += it; throw IllegalStateException("Observer failure") }
         assertEquals(listOf("Bonjour."), engine.translate(listOf("Hello."), "en", "fr") { false })
         val report = reports.last()
         assertTrue(report.gpuObserved)
+        assertEquals("DIRECT", report.openClTransport)
+        assertTrue(report.render().contains("direct, sans chargeur ICD"))
         assertEquals(30, report.cachedPromptTokens)
         assertEquals(20, report.promptEvaluatedTokens)
         assertEquals(100.0, report.tokensPerSecond, 0.0)

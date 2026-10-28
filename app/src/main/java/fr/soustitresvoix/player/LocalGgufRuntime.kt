@@ -30,7 +30,7 @@ internal object LocalGgufRuntime {
         val backend: String = "CPU", val device: String = "CPU", val requestedMode: String = "CPU",
         val fallbackReason: String = "", val requestedGpuLayers: Int = 0, val actualGpuLayers: Int = 0,
         val gpuObserved: Boolean = false, val residentBytes: Long = -1, val availableRamBytes: Long = -1,
-        val diagnostic: LocalGgufDiagnostic? = null)
+        val diagnostic: LocalGgufDiagnostic? = null, val openClTransport: String = "")
     data class Generation(val output: String, val promptTokens: Int, val generatedTokens: Int,
         val stopReason: String, val promptMs: Long, val generationMs: Long, val peakRssBytes: Long,
         val backend: String = "CPU", val device: String = "CPU", val requestedMode: String = "CPU",
@@ -38,7 +38,7 @@ internal object LocalGgufRuntime {
         val gpuObserved: Boolean = false, val gpuGraphNodes: Long = 0,
         val cachedPromptTokens: Int = 0, val promptEvaluatedTokens: Int = 0,
         val residentBytes: Long = -1, val availableRamBytes: Long = -1,
-        val diagnostic: LocalGgufDiagnostic? = null)
+        val diagnostic: LocalGgufDiagnostic? = null, val openClTransport: String = "")
     private val loaded by lazy {
         try { System.loadLibrary("subtitle_model_probe"); true }
         catch (_: LinkageError) { false }
@@ -62,11 +62,11 @@ internal object LocalGgufRuntime {
                 x.optString("backend", "CPU"), x.optString("device", "CPU").take(256), x.optString("requestedMode", "CPU"),
                 x.optString("fallbackReason").take(128), x.optInt("requestedGpuLayers"), x.optInt("actualGpuLayers"),
                 x.optBoolean("gpuObserved"), x.optLong("residentBytes", -1), x.optLong("availableRamBytes", -1),
-                LocalGgufDiagnostic.parse(x.optJSONObject("diagnostic"))).also {
+                LocalGgufDiagnostic.parse(x.optJSONObject("diagnostic")), openClTransport(x)).also {
                 if (it.contextTokens !in 128..2048 || it.modelBytes <= 0 || it.modelParameters <= 0 ||
                     it.loadMs < 0 || it.peakRssBytes < 0 || !validBackend(it.backend, it.requestedMode) ||
                     it.gpuObserved || it.actualGpuLayers !in -1..1024 || it.requestedGpuLayers !in -1..1024 ||
-                    it.residentBytes < -1 || it.availableRamBytes < -1)
+                    it.residentBytes < -1 || it.availableRamBytes < -1 || !validTransport(it.backend, it.openClTransport))
                     throw Failure(Code.RESPONSE)
             }
         } catch (failure: Failure) { throw failure }
@@ -81,7 +81,7 @@ internal object LocalGgufRuntime {
                 x.optString("fallbackReason").take(128), x.optInt("requestedGpuLayers"), x.optInt("actualGpuLayers"),
                 x.optBoolean("gpuObserved"), x.optLong("gpuGraphNodes"), x.optInt("cachedPromptTokens"),
                 x.optInt("promptEvaluatedTokens", x.getInt("promptTokens")), x.optLong("residentBytes", -1),
-                x.optLong("availableRamBytes", -1), LocalGgufDiagnostic.parse(x.optJSONObject("diagnostic"))).also {
+                x.optLong("availableRamBytes", -1), LocalGgufDiagnostic.parse(x.optJSONObject("diagnostic")), openClTransport(x)).also {
                 if (it.stopReason != "end_of_generation" || it.output.toByteArray(Charsets.UTF_8).size > 65536 ||
                     it.promptTokens !in 1..2048 || it.generatedTokens !in 0..1024 ||
                     it.promptMs < 0 || it.generationMs < 0 || it.peakRssBytes < 0 || !validBackend(it.backend, it.requestedMode) ||
@@ -90,12 +90,20 @@ internal object LocalGgufRuntime {
                     it.cachedPromptTokens < 0 || it.promptEvaluatedTokens < 1 ||
                     it.cachedPromptTokens + it.promptEvaluatedTokens != it.promptTokens ||
                     it.actualGpuLayers !in -1..1024 || it.requestedGpuLayers !in -1..1024 ||
-                    it.residentBytes < -1 || it.availableRamBytes < -1) throw Failure(Code.RESPONSE)
+                    it.residentBytes < -1 || it.availableRamBytes < -1 || !validTransport(it.backend, it.openClTransport))
+                    throw Failure(Code.RESPONSE)
             }
         } catch (failure: Failure) { throw failure }
           catch (_: Exception) { throw Failure(Code.RESPONSE) }
     }
     private fun validBackend(backend: String, mode: String) = backend in setOf("CPU", "OPENCL") && mode in setOf("AUTO", "CPU", "OPENCL")
+    private fun openClTransport(value: JSONObject): String {
+        if (!value.has("openClTransport")) return ""
+        return (value.get("openClTransport") as? String)?.takeIf { it.isEmpty() || it == "DIRECT" }
+            ?: throw Failure(Code.RESPONSE)
+    }
+    private fun validTransport(backend: String, transport: String) =
+        if (backend == "OPENCL") transport == "DIRECT" else transport.isEmpty()
     internal class NativeSession : AutoCloseable {
         private val handle = AtomicLong(0)
         init {

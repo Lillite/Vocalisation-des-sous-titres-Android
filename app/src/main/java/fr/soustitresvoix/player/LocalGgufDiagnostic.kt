@@ -11,7 +11,8 @@ class LocalGgufDiagnostic private constructor(
     val directPlatforms: Int,
     val icdPlatforms: Int,
     val gpuDevices: Int,
-    val probeCached: Boolean
+    val probeCached: Boolean,
+    val missingSymbol: String? = null
 ) {
     enum class Stage(val label: String) {
         BACKEND("préparation du moteur"),
@@ -29,6 +30,7 @@ class LocalGgufDiagnostic private constructor(
         CPU_BACKEND_MISSING("Le backend CPU requis n’a pas été trouvé."),
         DRIVER_NOT_ACCESSIBLE("La bibliothèque du pilote OpenCL n’est pas accessible à l’application."),
         ENTRY_POINTS_MISSING("Les fonctions requises du pilote OpenCL sont absentes."),
+        DIRECT_SYMBOLS_MISSING("Une ou plusieurs fonctions OpenCL nécessaires au calcul direct sont absentes du pilote."),
         DIRECT_QUERY_FAILED("L’interrogation directe des plateformes du pilote a échoué."),
         DIRECT_NO_PLATFORM("L’interrogation directe du pilote n’a trouvé aucune plateforme OpenCL."),
         ICD_ENTRY_POINT_MISSING("Le pilote ne fournit pas la fonction de plateforme attendue par le chargeur ICD."),
@@ -49,6 +51,9 @@ class LocalGgufDiagnostic private constructor(
         append("Diagnostic local — étape : "); append(stage.label)
         append(" ["); append(stage.name); append("]\n")
         append(reason.label); append(" ["); append(reason.name); append("]\n")
+        if (reason == Reason.DIRECT_SYMBOLS_MISSING) missingSymbol?.let {
+            append("Fonction OpenCL requise absente : "); append(it); append(".\n")
+        }
         append("Temps natif observé avant ce diagnostic : "); append(elapsedMs); append(" ms.")
         openClStatus?.let { append("\nCode OpenCL observé : "); append(it); append('.') }
         if (directPlatforms >= 0) { append("\nPlateformes du pilote, accès direct : "); append(directPlatforms); append('.') }
@@ -62,10 +67,22 @@ class LocalGgufDiagnostic private constructor(
         .put("openClStatus", openClStatus ?: JSONObject.NULL)
         .put("directPlatforms", directPlatforms).put("icdPlatforms", icdPlatforms)
         .put("gpuDevices", gpuDevices).put("probeCached", probeCached)
+        .apply { if (reason == Reason.DIRECT_SYMBOLS_MISSING) missingSymbol?.let { put("missingSymbol", it) } }
 
     override fun toString(): String = "LocalGgufDiagnostic(stage=${stage.name}, reason=${reason.name})"
 
     companion object {
+        // Exact required subset of generate_direct_opencl.py's pinned table.
+        // Optional functions do not fail binding and cannot be a missing-symbol diagnosis.
+        private val REQUIRED_DIRECT_SYMBOLS = setOf(
+            "clBuildProgram", "clCreateBuffer", "clCreateCommandQueue", "clCreateContext", "clCreateImage",
+            "clCreateKernel", "clCreateProgramWithSource", "clCreateSubBuffer", "clEnqueueBarrierWithWaitList",
+            "clEnqueueCopyBuffer", "clEnqueueFillBuffer", "clEnqueueMapBuffer", "clEnqueueMarkerWithWaitList",
+            "clEnqueueNDRangeKernel", "clEnqueueReadBuffer", "clEnqueueUnmapMemObject", "clEnqueueWriteBuffer",
+            "clFinish", "clFlush", "clGetDeviceIDs", "clGetDeviceInfo", "clGetKernelWorkGroupInfo",
+            "clGetPlatformIDs", "clGetPlatformInfo", "clGetProgramBuildInfo", "clReleaseEvent",
+            "clReleaseKernel", "clReleaseMemObject", "clReleaseProgram", "clSetKernelArg", "clWaitForEvents")
+
         /** A malformed optional diagnostic is discarded; its untrusted contents never reach an error message. */
         internal fun parse(value: JSONObject?): LocalGgufDiagnostic? {
             value ?: return null
@@ -79,7 +96,11 @@ class LocalGgufDiagnostic private constructor(
                 val icd = integer(value, "icdPlatforms", -1, 65_535) ?: return null
                 val devices = integer(value, "gpuDevices", -1, 65_535) ?: return null
                 val cached = value.get("probeCached") as? Boolean ?: return null
-                LocalGgufDiagnostic(stage, reason, elapsed, status, direct.toInt(), icd.toInt(), devices.toInt(), cached)
+                val missing = if (reason == Reason.DIRECT_SYMBOLS_MISSING && value.has("missingSymbol") &&
+                    !value.isNull("missingSymbol")) {
+                    (value.get("missingSymbol") as? String)?.takeIf { it in REQUIRED_DIRECT_SYMBOLS } ?: return null
+                } else null
+                LocalGgufDiagnostic(stage, reason, elapsed, status, direct.toInt(), icd.toInt(), devices.toInt(), cached, missing)
             }.getOrNull()
         }
 
