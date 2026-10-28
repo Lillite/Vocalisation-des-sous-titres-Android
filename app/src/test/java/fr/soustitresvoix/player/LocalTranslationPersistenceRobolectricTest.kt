@@ -80,11 +80,33 @@ class LocalTranslationPersistenceRobolectricTest {
         val result = runner.run(original, Engine(), { false }, { _, _ -> }, TranslationRunPolicy(requestMayConsumeRemoteQuota = false))
         assertNull(runner.cacheWarning)
         assertTrue(retained.listFiles().orEmpty().isNotEmpty())
+        assertTrue("A durable local result must not need a duplicate cache copy", cache.listFiles().orEmpty().isEmpty())
         runner.clear()
         val engine = Engine(action = { _, _ -> throw AssertionError("Durable result must not recompute") })
         val restored = TranslationRunner(cache, progress, retained).run(original, engine, { false }) { _, _ -> }
         assertEquals(result.fingerprint, restored.fingerprint)
         assertTrue(engine.inputs.isEmpty())
+    }
+
+    @Test fun eachLocalOccurrenceIsDurableBeforePublicationWithoutWritingAnEmptyUncertainRequest() {
+        val cache = temporary.newFolder(); val progress = temporary.newFolder(); val retained = temporary.newFolder()
+        val original = plan()
+        val checkpoint = TranslationRunner(cache, progress, retained)
+        var published = 0
+        val engine = Engine(action = { call, texts ->
+            if (call == 1) assertTrue("No unvalidated local request needs a disk record", progress.listFiles().orEmpty().isEmpty())
+            assertEquals(call - 1 to false, checkpoint.checkpointSummary(original))
+            texts.map { "Traduit $it" }
+        })
+        checkpoint.run(original, engine, { false }, { _, _ -> },
+            TranslationRunPolicy(requestMayConsumeRemoteQuota = false)) { texts ->
+            published++
+            assertEquals(published, texts.size)
+            assertEquals(published to false, TranslationRunner(cache, progress, retained).checkpointSummary(original))
+        }
+        assertEquals(original.cues.size, published)
+        assertEquals(0 to false, checkpoint.checkpointSummary(original))
+        assertTrue(retained.listFiles().orEmpty().isNotEmpty())
     }
 
     @Test fun aCachedLocalResultIsPromotedBeforeItCanBeEvicted() {

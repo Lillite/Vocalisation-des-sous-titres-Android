@@ -4,30 +4,52 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <cmath>
 #include <iostream>
+#include <vector>
 
+namespace {
+void check_output(const subtitle_local::Response & response) {
+    if (response.code != "OK") { std::cerr << response.json() << '\n'; std::abort(); }
+    assert(response.output == " probe" && response.generated_tokens == 1);
+    assert(response.stop_reason == "end_of_generation");
+    assert(response.prompt_tokens == response.cached_prompt_tokens + response.prompt_evaluated_tokens);
+    assert(response.prompt_evaluated_tokens >= 1);
+    assert(response.backend == "CPU" && !response.gpu_observed && response.gpu_graph_nodes == 0);
+}
+float difference(const std::vector<float> & left, const std::vector<float> & right) {
+    assert(!left.empty() && left.size() == right.size());
+    float maximum = 0;
+    for (size_t i = 0; i < left.size(); ++i) maximum = std::max(maximum, std::abs(left[i] - right[i]));
+    return maximum;
+}
+}
 int main(int argc, char ** argv) {
-    assert(argc == 3);
+    assert(argc == 3 || argc == 4);
     {
-    subtitle_local::Session first;
-    const auto info = first.open(argv[1], 1, 512);
-    if (info.code != "OK") { std::cerr << info.json() << '\n'; return 1; }
-    assert(info.architecture == "llama" && info.model_bytes > 0 && info.model_parameters > 0);
-    assert(info.context_tokens == 512 && info.process_id > 0);
-    subtitle_local::Session second;
-    assert(second.open(argv[1], 1, 512).code == "BUSY");
-    subtitle_probe::Cancellation probe_cancel;
-    assert(subtitle_probe::run(argv[1], probe_cancel, 1, 4).status == "BUSY");
-    const auto generated = first.generate("The train leaves at seven.", 1, true);
-    if (generated.code != "OK") { std::cerr << generated.json() << '\n'; return 1; }
-    assert(generated.output == " probe" && generated.generated_tokens == 1 && generated.stop_reason == "end_of_generation");
-    const auto again = first.generate("A different synthetic sentence.", 1, true);
-    assert(again.code == "OK" && again.output == " probe" && again.generated_tokens == 1);
-    const auto too_long = first.generate(std::string(8192, 'a'), 32, true);
-    assert(too_long.code == "INPUT_TOO_LONG" && too_long.output.empty());
-    assert(first.generate("retry after rejected input", 1, true).code == "OK");
-    first.cancel();
-    assert(first.generate("cancelled", 32, true).code == "CANCELLED");
+        subtitle_local::Session first;
+        const auto info = first.open(argv[1], 1, 512);
+        if (info.code != "OK") { std::cerr << info.json() << '\n'; return 1; }
+        assert(info.architecture == "llama" && info.model_bytes > 0 && info.model_parameters > 0);
+        assert(info.context_tokens == 512 && info.process_id > 0);
+        assert(info.backend == "CPU" && !info.gpu_observed && info.actual_gpu_layers == 0);
+        subtitle_local::Session second;
+        assert(second.open(argv[1], 1, 512).code == "BUSY");
+        subtitle_probe::Cancellation probe_cancel;
+        assert(subtitle_probe::run(argv[1], probe_cancel, 1, 4).status == "BUSY");
+        const auto generated = first.generate("The train leaves at seven.", 1, true);
+        check_output(generated);
+        assert(generated.cached_prompt_tokens == 0);
+        const auto cached = first.generate("The train leaves at seven.", 1, true);
+        check_output(cached);
+        assert(cached.cached_prompt_tokens == cached.prompt_tokens - 1 && cached.prompt_evaluated_tokens == 1);
+        check_output(first.generate("A different synthetic sentence.", 1, true));
+        const auto too_long = first.generate(std::string(8192, 'a'), 32, true);
+        assert(too_long.code == "INPUT_TOO_LONG" && too_long.output.empty());
+        const auto retried = first.generate("retry after rejected input", 1, true);
+        check_output(retried); assert(retried.cached_prompt_tokens == 0);
+        first.cancel();
+        assert(first.generate("cancelled", 32, true).code == "CANCELLED");
     }
     {
         subtitle_local::Session repeating;
@@ -40,8 +62,59 @@ int main(int argc, char ** argv) {
         subtitle_local::Session retry;
         assert(retry.open("/missing/model.gguf", 1, 512).code == "MODEL");
         assert(retry.open(argv[1], 1, 512).code == "OK");
-        assert(retry.generate("model is released after failure", 1, true).code == "OK");
+        check_output(retry.generate("model is released after failure", 1, true));
     }
-    std::cout << "Persistent native session: metadata, true EOS, repeated generation/reset, input rejection, cancellation and probe exclusion passed.\n";
+    {
+        subtitle_local::Session auto_mode;
+        const auto info = auto_mode.open(argv[1], 1, 512, "AUTO");
+        assert(info.code == "OK" && info.requested_mode == "AUTO");
+        assert(info.backend == "CPU" && !info.fallback_reason.empty());
+        check_output(auto_mode.generate("CPU fallback still computes", 1, true));
+    }
+    {
+        subtitle_local::Session strict;
+        assert(strict.open(argv[1], 1, 512, "OPENCL").code == "BACKEND");
+    }
+#ifdef SUBTITLE_NATIVE_TESTING
+    if (argc == 4) {
+        const std::vector<std::string> prompts = {
+            "Prefix common context: Alpha. The train leaves.",
+            "Prefix common context: Alpha. The train leaves.",
+            "Prefix common context: Beta. The train leaves.",
+            "Prefix common context: Beta.",
+            "Prefix common context: Alpha. The train leaves."
+        };
+        std::vector<std::vector<float>> warm_logits;
+        {
+            subtitle_local::Session warm;
+            assert(warm.open(argv[3], 1, 512).code == "OK");
+            for (size_t i = 0; i < prompts.size(); ++i) {
+                const auto response = warm.generate(prompts[i], 1, true);
+                check_output(response);
+                assert(i == 0 ? response.cached_prompt_tokens == 0 : response.cached_prompt_tokens > 0);
+                warm_logits.push_back(warm.test_logits());
+            }
+            assert(warm.generate(std::string(8192, 'x'), 32, true).code == "INPUT_TOO_LONG");
+            const auto after_error = warm.generate(prompts[0], 1, true);
+            check_output(after_error); assert(after_error.cached_prompt_tokens == 0);
+            assert(difference(warm_logits[0], warm.test_logits()) < 0.00002f);
+        }
+        float max_error = 0;
+        for (size_t i = 0; i < prompts.size(); ++i) {
+            subtitle_local::Session fresh;
+            assert(fresh.open(argv[3], 1, 512).code == "OK");
+            check_output(fresh.generate(prompts[i], 1, true));
+            max_error = std::max(max_error, difference(warm_logits[i], fresh.test_logits()));
+        }
+        assert(max_error < 0.00002f);
+        // The fixture is not a constant-logit model: changing earlier context
+        // while keeping the ending fixed must affect real computed logits.
+        const auto context_difference = difference(warm_logits[0], warm_logits[2]);
+        assert(context_difference > 0.000001f);
+        std::cout << "Context-sensitive logits: cached-vs-fresh maximum error " << max_error
+                  << ", changed-context delta " << context_difference << ".\n";
+    }
+#endif
+    std::cout << "Persistent native session: EOS, exact prefix reuse, context isolation, failure reset, cancellation, CPU fallback, strict GPU rejection and probe exclusion passed.\n";
     return 0;
 }

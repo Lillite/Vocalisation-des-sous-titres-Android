@@ -420,7 +420,7 @@ class SubtitleTranslationAndroidTest {
                     await("Actual translation dialog was not laid out") {
                         val root = WindowInspector.getGlobalWindowViews().firstOrNull { window ->
                             val views = descendants(window)
-                            views.filterIsInstance<Spinner>().size == 1 &&
+                            views.filterIsInstance<Spinner>().any { it.contentDescription == "Moteur de traduction" } &&
                                 views.filterIsInstance<TextView>().any { it.text.toString() == "Traduire les sous-titres en français" }
                         }
                         if (root != null && root.width > 0) panel.set(root)
@@ -463,7 +463,7 @@ class SubtitleTranslationAndroidTest {
                     assertEquals(listOf("azure", "deepl-free", "deepl-pro", "libre", "google-web-v1", "google-local-v1", "local-gguf-v1"), providers.map { it.id })
                     for ((index, provider) in providers.withIndex()) {
                         scenario.onActivity {
-                            descendants(panel.get()).filterIsInstance<Spinner>().single().setSelection(index)
+                            descendants(panel.get()).filterIsInstance<Spinner>().single { it.contentDescription == "Moteur de traduction" }.setSelection(index)
                         }
                         await("Specific provider help was not displayed for ${provider.id}") {
                             descendants(panel.get()).filterIsInstance<TextView>()

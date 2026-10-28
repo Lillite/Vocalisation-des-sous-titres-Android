@@ -77,7 +77,8 @@ internal class LocalSrtTranslationControls(
         val state = job.state
         statusView?.text = (localStatus ?: state.status) +
             (state.sourceName?.let { "\nFichier source actif : $it" } ?: "") +
-            if (state.total > 0) "\nOccurrences validées : ${state.done} / ${state.total}." else ""
+            (if (state.total > 0) "\nOccurrences validées : ${state.done} / ${state.total}." else "") +
+            (state.performance?.let { "\n\nDernières mesures reçues du moteur local :\n$it" } ?: "")
         exampleButton?.isEnabled = !state.busy && !readingMetadata
     }
 
@@ -148,19 +149,21 @@ internal class LocalSrtTranslationControls(
             if (count == null || count !in 1..8) { message("Nombre de threads invalide : indique un entier de 1 à 8."); return@button }
             val language = source.text.toString().trim()
             val config = TranslationProviderConfig(TranslationProvider.LOCAL_GGUF,
-                localModel = model, localThreads = count, localContext = context.text.toString())
+                localModel = model, localThreads = count, localContext = context.text.toString(),
+                localExecution = models.execution, localProfile = models.profile)
             val sourceOwner = sourceSelection
             try { TranslationEngines.validateForRequest(config, language, "fr") }
             catch (failure: TranslationFailure) { message(failure.message ?: "Configuration locale invalide."); return@button }
             catch (_: Exception) { message("Configuration locale invalide. Vérifie le modèle et la langue source."); return@button }
             childDialog?.dismiss()
             childDialog = AlertDialog.Builder(activity).setTitle("Confirmer la traduction locale du SRT")
-                .setMessage("Le texte et le contexte seront traduits sur ce téléphone avec le modèle GGUF préparé. Aucun réseau ni téléchargement de modèle n’est utilisé. Chaque occurrence et son minutage sont conservés. La progression validée est sauvegardée pour reprise. Garde l’application ouverte ; tu peux fermer ce panneau et utiliser le lecteur pendant la préparation. Une vidéo déjà ouverte garde sa piste actuelle tant que tu n’importes pas le SRT traduit.")
+                .setMessage("Le texte et le contexte seront traduits sur ce téléphone avec le modèle GGUF préparé. Exécution demandée : ${config.localExecution}. Les mesures afficheront le moteur réellement utilisé et un éventuel repli CPU. Aucun réseau ni téléchargement de modèle n’est utilisé. Chaque occurrence et son minutage sont conservés. La progression validée est sauvegardée pour reprise. Garde l’application ouverte ; tu peux fermer ce panneau et utiliser le lecteur pendant la préparation. Une vidéo déjà ouverte garde sa piste actuelle tant que tu n’importes pas le SRT traduit.")
                 .setPositiveButton("Traduire localement avec le GGUF") { _, _ ->
                     if (closed || owner != panelGeneration || sourceOwner != sourceSelection || models.model !== model ||
                         panel?.isShowing != true || busy || models.busy || readingMetadata || otherPreparationBusy()) return@setPositiveButton
                     preferences.edit().putString("language", language).putInt("local-threads", count)
                         .putString("local-context", config.localContext).apply()
+                    models.saveChoices(config.localExecution, config.localProfile)
                     localStatus = null; job.start(language, config)
                 }.setNegativeButton("Annuler", null).show()
         })

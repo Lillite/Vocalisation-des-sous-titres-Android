@@ -6,8 +6,12 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
+import android.widget.ArrayAdapter
+import android.widget.AdapterView
 import android.widget.LinearLayout
+import android.widget.Spinner
 import android.widget.TextView
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -24,6 +28,7 @@ internal class LocalGgufModelControls(
     private val store = LocalGgufModelStore(activity.applicationContext)
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
+    private val preferences = activity.getSharedPreferences("translation-choices-v1", Activity.MODE_PRIVATE)
     private var cancellation = AtomicBoolean(false)
     private var generation = 0L
     private var closed = false
@@ -33,10 +38,20 @@ internal class LocalGgufModelControls(
         private set
     var model: LocalGgufModel? = store.current()
         private set
+    var execution: String = preferences.getString("local-execution", "AUTO")?.takeIf { it in EXECUTION_MODES } ?: "AUTO"
+        get() = executionSpinner?.selectedItemPosition?.takeIf { it in EXECUTION_MODES.indices }?.let { EXECUTION_MODES[it] } ?: field
+        private set
+    var profile: LocalGgufProfile = runCatching {
+        LocalGgufProfile.valueOf(preferences.getString("local-profile", "AUTO") ?: "AUTO")
+    }.getOrDefault(LocalGgufProfile.AUTO)
+        get() = profileSpinner?.selectedItemPosition?.takeIf { it in PROFILES.indices }?.let { PROFILES[it] } ?: field
+        private set
     private var status: TextView? = null
     private var chooseButton: Button? = null
     private var existingButton: Button? = null
     private var cancelButton: Button? = null
+    private var executionSpinner: Spinner? = null
+    private var profileSpinner: Spinner? = null
 
     private fun dp(value: Int) = (value * activity.resources.displayMetrics.density).toInt()
     private fun label(value: String) = TextView(activity).apply {
@@ -46,7 +61,17 @@ internal class LocalGgufModelControls(
         text = value; textSize = 18f; isAllCaps = false; minimumHeight = dp(64); minHeight = dp(64)
         setOnClickListener { block() }
     }
-    fun view(): View = LinearLayout(activity).apply {
+    private fun choices(labels: List<String>) = object : ArrayAdapter<String>(activity, android.R.layout.simple_spinner_dropdown_item, labels) {
+        private fun readable(view: View): View = view.apply {
+            (this as? TextView)?.apply {
+                textSize = 18f; isSingleLine = false; maxLines = Int.MAX_VALUE; ellipsize = null
+                minimumHeight = dp(64); minHeight = dp(64)
+            }
+        }
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View = readable(super.getView(position, convertView, parent))
+        override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View = readable(super.getDropDownView(position, convertView, parent))
+    }
+    fun view(showExecutionChoice: Boolean = true): View = LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
         addView(label("Modèle GGUF local : choisis son fichier avec Android ou réutilise celui du diagnostic. L’import crée une copie privée et conserve l’original. Aucun téléchargement de modèle et aucun envoi de sous-titres ne sont effectués ici."))
         status = label(modelDescription()).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
@@ -57,6 +82,40 @@ internal class LocalGgufModelControls(
         }.also { addView(it) }
         cancelButton = action("Annuler l’import ou la préparation du modèle GGUF") { cancel() }.also { addView(it) }
         addView(label("Le moteur local reste indépendant de l’OCR. Sa vitesse et sa mémoire dépendent du modèle choisi. Garde l’application ouverte pendant l’import et le traitement."))
+        if (showExecutionChoice) {
+            executionSpinner = Spinner(activity).apply {
+                id = View.generateViewId(); contentDescription = "Exécution du modèle GGUF"
+                minimumHeight = dp(64)
+                adapter = choices(listOf("Automatique (recommandé)", "CPU uniquement", "GPU OpenCL uniquement — sans repli CPU"))
+                setSelection(EXECUTION_MODES.indexOf(execution).coerceAtLeast(0))
+                onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                    override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                        execution = EXECUTION_MODES[position]
+                    }
+                    override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+                }
+            }.also { spinner ->
+                addView(label("Exécution du modèle GGUF").apply { labelFor = spinner.id })
+                addView(spinner)
+            }
+            addView(label("Automatique essaie le GPU OpenCL disponible et peut revenir au CPU avec une raison affichée. Le choix GPU seul refuse un GPU indisponible. Les mesures indiquent le moteur réellement utilisé ; choisir GPU ne prouve pas son exécution. Aucun calcul NPU n’est annoncé."))
+        }
+        profileSpinner = Spinner(activity).apply {
+            id = View.generateViewId(); contentDescription = "Profil de traduction du modèle GGUF"
+            minimumHeight = dp(64)
+            adapter = choices(listOf("Automatique (recommandé)", "TranslateGemma", "Hy-MT / Hy-MT2"))
+            setSelection(PROFILES.indexOf(profile).coerceAtLeast(0))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    profile = PROFILES[position]
+                }
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
+        }.also { spinner ->
+            addView(label("Profil de traduction du modèle GGUF").apply { labelFor = spinner.id })
+            addView(spinner)
+        }
+        addView(label("Le profil automatique reconnaît les modèles pris en charge. Si les métadonnées d’un GGUF ne permettent pas sa reconnaissance, choisis explicitement sa famille. Ce choix adapte la demande de traduction ; il ne change pas les poids du fichier."))
         updateButtons()
     }
 
@@ -70,6 +129,13 @@ internal class LocalGgufModelControls(
         chooseButton?.isEnabled = active && !busy
         existingButton?.isEnabled = active && !busy && store.exists()
         cancelButton?.isEnabled = active && busy
+        executionSpinner?.isEnabled = active && !busy
+        profileSpinner?.isEnabled = active && !busy
+    }
+    fun saveChoices(selectedExecution: String = execution, selectedProfile: LocalGgufProfile = profile) {
+        require(selectedExecution in EXECUTION_MODES)
+        preferences.edit().putString("local-execution", selectedExecution)
+            .putString("local-profile", selectedProfile.name).apply()
     }
     fun setActive(value: Boolean) {
         active = value
@@ -127,12 +193,18 @@ internal class LocalGgufModelControls(
                 if (!closed && owner == generation) {
                     busy = false
                     result.fold(onSuccess = {
-                        if (!token.get()) {
-                            model = it
-                            status?.text = modelDescription()
+                        // Returning a descriptor proves the private copy and
+                        // its identity were committed. A later UI cancellation
+                        // cannot restore or truthfully display the old model.
+                        model = it
+                        val message = if (token.get())
+                            "Le modèle GGUF a été préparé avant l’annulation. La copie actuelle est prête ; l’original est conservé."
+                        else "Modèle GGUF prêt. Indexe la piste puis confirme la traduction locale."
+                        status?.text = message + "\n" + modelDescription()
+                        if (active) {
                             onChanged()
-                            onMessage("Modèle GGUF prêt. Indexe la piste puis confirme la traduction locale.")
-                        } else status?.text = "Préparation annulée. " + modelDescription()
+                            onMessage(message)
+                        }
                     }, onFailure = {
                         val message = when {
                             token.get() -> "Préparation annulée ; le fichier original est conservé."
@@ -158,5 +230,10 @@ internal class LocalGgufModelControls(
         closed = true; waitingPicker = false; generation++; cancellation.set(true)
         worker.shutdownNow(); main.removeCallbacksAndMessages(null)
         status = null; chooseButton = null; existingButton = null; cancelButton = null
+        executionSpinner = null; profileSpinner = null
+    }
+    companion object {
+        private val EXECUTION_MODES = listOf("AUTO", "CPU", "OPENCL")
+        private val PROFILES = listOf(LocalGgufProfile.AUTO, LocalGgufProfile.TRANSLATE_GEMMA, LocalGgufProfile.HY_MT)
     }
 }

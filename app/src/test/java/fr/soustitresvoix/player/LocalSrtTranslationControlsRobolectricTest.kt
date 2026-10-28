@@ -11,6 +11,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Spinner
 import androidx.media3.common.util.UnstableApi
 import org.junit.Assert.*
 import org.junit.Test
@@ -162,6 +163,9 @@ class LocalSrtTranslationControlsRobolectricTest {
             val context = "Jean et Zoé sont frère et sœur. Conserver leurs noms."
             field(panel, "GGUF local : contexte de l’œuvre").setText(context)
             field(panel, "GGUF local : threads de calcul").setText("3")
+            views(panel).filterIsInstance<Spinner>().single { it.contentDescription == "Exécution du modèle GGUF" }.setSelection(1)
+            views(panel).filterIsInstance<Spinner>().single { it.contentDescription == "Profil de traduction du modèle GGUF" }.setSelection(2)
+            shadowOf(Looper.getMainLooper()).idle()
             button(panel, "Traduire le SRT hors ligne / reprendre").performClick()
             val confirmation = requireNotNull(ShadowAlertDialog.getLatestAlertDialog())
             assertNotSame(panel, confirmation)
@@ -173,6 +177,8 @@ class LocalSrtTranslationControlsRobolectricTest {
             val used = configurations.single()
             assertEquals(context, used.localContext)
             assertEquals(3, used.localThreads)
+            assertEquals("CPU", used.localExecution)
+            assertEquals(LocalGgufProfile.HY_MT, used.localProfile)
             assertEquals(model.sha256, used.localModel?.sha256)
             assertTrue(text(panel).contains("Occurrences validées : 8 / 8"))
             assertEquals(context, f.activity.getSharedPreferences("translation-choices-v1", Context.MODE_PRIVATE).getString("local-context", null))
@@ -185,7 +191,10 @@ class LocalSrtTranslationControlsRobolectricTest {
             val restored = TranslationProviderConfig(TranslationProvider.LOCAL_GGUF,
                 localModel = LocalGgufModelStore(f.activity).current(),
                 localThreads = field(reopened, "GGUF local : threads de calcul").text.toString().toInt(),
-                localContext = field(reopened, "GGUF local : contexte de l’œuvre").text.toString())
+                localContext = field(reopened, "GGUF local : contexte de l’œuvre").text.toString(),
+                localExecution = "CPU", localProfile = LocalGgufProfile.HY_MT)
+            assertEquals(1, views(reopened).filterIsInstance<Spinner>().single { it.contentDescription == "Exécution du modèle GGUF" }.selectedItemPosition)
+            assertEquals(2, views(reopened).filterIsInstance<Spinner>().single { it.contentDescription == "Profil de traduction du modèle GGUF" }.selectedItemPosition)
             assertEquals(TranslationEngines.translationIdentity(used), TranslationEngines.translationIdentity(restored))
             reopened.dismiss()
 
@@ -196,6 +205,8 @@ class LocalSrtTranslationControlsRobolectricTest {
                 val reader = requireNotNull(ShadowAlertDialog.getLatestAlertDialog())
                 assertEquals(context, field(reader, "GGUF local : contexte de l’œuvre").text.toString())
                 assertEquals("3", field(reader, "GGUF local : threads de calcul").text.toString())
+                assertEquals(1, views(reader).filterIsInstance<Spinner>().single { it.contentDescription == "Exécution du modèle GGUF" }.selectedItemPosition)
+                assertEquals(2, views(reader).filterIsInstance<Spinner>().single { it.contentDescription == "Profil de traduction du modèle GGUF" }.selectedItemPosition)
             } finally { readerControls.close(); playback.close() }
         }
     }

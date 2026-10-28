@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish only the signed 0.5.4-local candidate already validated on main.
+"""Publish only the signed 0.5.5-perf candidate already validated on main.
 
 The temporary branch contains three data files, never a signing key. This script
 does not compile or sign an APK, delete a release/tag, replace an asset, execute a
@@ -32,15 +32,15 @@ import zipfile
 
 
 REPOSITORY = "Lillite/Vocalisation-des-sous-titres-Android"
-BRANCH = "release-upload/v0.5.4-local"
-TAG = "v0.5.4-local"
-TITLE = "Sous-titres en voix 0.5.4 — Traduction GGUF locale (préversion)"
+BRANCH = "release-upload/v0.5.5-perf"
+TAG = "v0.5.5-perf"
+TITLE = "Sous-titres en voix 0.5.5 — Performances GGUF locales (préversion)"
 PRERELEASE = True
 APPLICATION_ID = "fr.soustitresvoix.player.translation"
-VERSION_NAME = "0.5.4-local"
-VERSION_CODE = "11"
+VERSION_NAME = "0.5.5-perf"
+VERSION_CODE = "12"
 EXPECTED_SIGNER_SHA256 = "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d"
-APK_PATH = "release-upload/SousTitresVoix-0.5.4-local.apk"
+APK_PATH = "release-upload/SousTitresVoix-0.5.5-perf.apk"
 NOTES_PATH = "release-upload/notes.md"
 METADATA_PATH = "release-upload/release.json"
 VALIDATION_ARTIFACT = "SousTitresVoix-release-main"

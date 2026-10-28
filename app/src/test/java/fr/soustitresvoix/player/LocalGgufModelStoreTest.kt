@@ -1,12 +1,15 @@
 package fr.soustitresvoix.player
 
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
 import java.io.File
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -23,6 +26,17 @@ class LocalGgufModelStoreTest {
         .put(byteArrayOf(71, 71, 85, 70)).putInt(3).putLong(0).putLong(0).array() + ByteArray(600) { (it + seed).toByte() }
     private fun sha(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes)
         .joinToString("") { "%02x".format(it.toInt() and 255) }
+    private fun namedHeader(): ByteArray {
+        val output = ByteArrayOutputStream()
+        fun number(value: Long, width: Int) { output.write(ByteBuffer.allocate(width).order(ByteOrder.LITTLE_ENDIAN)
+            .also { if (width == 4) it.putInt(value.toInt()) else it.putLong(value) }.array()) }
+        fun text(value: String) { val encoded = value.toByteArray(Charsets.UTF_8); number(encoded.size.toLong(), 8); output.write(encoded) }
+        output.write(byteArrayOf(71, 71, 85, 70)); number(3, 4); number(354, 8); number(2, 8)
+        listOf("general.architecture" to "hunyuan-dense", "general.name" to "Global_Step_560").forEach { (key, value) ->
+            text(key); number(8, 4); text(value)
+        }
+        return output.toByteArray()
+    }
     private inline fun <reified T : Throwable> fails(block: () -> Unit): T {
         try { block() } catch (failure: Throwable) {
             if (failure is T) return failure
@@ -152,5 +166,62 @@ class LocalGgufModelStoreTest {
         File(folder, "model.gguf").appendBytes(byteArrayOf(1))
         assertNull(store.current())
         fails<IOException> { store.acquire(rebuilt) }
+    }
+
+    @Test fun importedPublisherMetadataIsPersistedWithoutChangingTheSourceOrDigest() {
+        val folder = temporary.newFolder()
+        val original = namedHeader() + ByteArray(72)
+        val store = LocalGgufModelStore(folder)
+        val model = store.importModel(ByteArrayInputStream(original))
+        assertEquals("Global_Step_560", model.metadata.name)
+        assertEquals("hunyuan-dense", model.metadata.architecture)
+        assertEquals(sha(original), model.sha256)
+        assertArrayEquals(original, File(folder, "model.gguf").readBytes())
+        assertEquals(model.metadata, LocalGgufModelStore(folder).current()?.metadata)
+        assertFalse(model.toString().contains("Global_Step"))
+    }
+
+    @Test fun oldVersionOneIdentityUpgradesHeaderHintsWithoutHashingAllWeightsAgain() {
+        val folder = temporary.newFolder()
+        val original = namedHeader() + ByteArray(512 * 1024)
+        val file = File(folder, "model.gguf").apply { writeBytes(original) }
+        val digest = sha(original)
+        DataOutputStream(File(folder, "model.sha256").outputStream()).use {
+            it.writeInt(0x4c474746); it.writeInt(1); it.writeUTF(digest)
+            it.writeLong(file.length()); it.writeLong(file.lastModified())
+        }
+        val store = LocalGgufModelStore(folder)
+        val previous = requireNotNull(store.current())
+        assertEquals(LocalGgufMetadata(), previous.metadata)
+        val upgraded = store.prepareExisting(onProgress = { fail("An existing valid SHA must not require reading the weights again") })
+        assertEquals(previous.identity, upgraded.identity)
+        assertEquals("Global_Step_560", upgraded.metadata.name)
+        assertEquals(upgraded.metadata, LocalGgufModelStore(folder).current()?.metadata)
+        store.acquire(previous).close()
+        assertArrayEquals(original, file.readBytes())
+    }
+
+    @Test fun interruptionArrivingAfterAtomicReplacementStillCompletesTheNewIdentity() {
+        val folder = temporary.newFolder()
+        val store = LocalGgufModelStore(folder)
+        val previous = store.importModel(ByteArrayInputStream(bytes()))
+        val replacement = namedHeader() + ByteArray(100)
+        val lateCancellation = AtomicBoolean(false)
+        val input = object : ByteArrayInputStream(replacement) {
+            override fun close() {
+                // DigestInputStream closes after DiagnosticModelImport has
+                // returned, therefore after its atomic replacement committed.
+                lateCancellation.set(true)
+                Thread.currentThread().interrupt()
+            }
+        }
+        try {
+            val imported = store.importModel(input, cancelled = lateCancellation::get)
+            assertTrue(lateCancellation.get())
+            assertEquals(sha(replacement), imported.sha256)
+            assertNotEquals(previous.sha256, imported.sha256)
+            assertEquals(imported.identity, store.current()?.identity)
+            assertEquals("Global_Step_560", imported.metadata.name)
+        } finally { Thread.interrupted() }
     }
 }

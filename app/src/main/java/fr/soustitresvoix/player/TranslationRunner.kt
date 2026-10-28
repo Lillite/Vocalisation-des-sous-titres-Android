@@ -113,9 +113,13 @@ class TranslationRunner(private val directory: File,
         for (batch in batches) {
             if (batch.firstIndex < texts.size) continue
             checkCancelled(cancelled)
-            // Mark external requests before sending: a lost response may already
-            // have consumed quota. Local model interruption is always resumable.
-            checkpoints?.let { if (!it.write(plan, texts, policy.requestMayConsumeRemoteQuota)) cacheWarning = "La progression n’a pas pu être enregistrée ; garde cette session ouverte." }
+            // External calls need an uncertain-charge marker before sending.
+            // Local work already saved this exact validated prefix after its
+            // previous occurrence: do not rewrite/fsync it a second time. Every
+            // newly validated occurrence is still saved below before publishing.
+            if (policy.requestMayConsumeRemoteQuota) checkpoints?.let {
+                if (!it.write(plan, texts, true)) cacheWarning = "La progression n’a pas pu être enregistrée ; garde cette session ouverte."
+            }
             val response = try {
                 if (engine is ContextualTranslationEngine) {
                     val contextStart = (batch.firstIndex - 2).coerceAtLeast(0)
@@ -185,7 +189,9 @@ class TranslationRunner(private val directory: File,
                 else "La traduction est complète, mais sa sauvegarde durable a échoué. Exporte le SRT avant de fermer cette session."
             }
         }
-        if (writeCache) write(plan, result)
+        // A verified retained local result is read before the cache on every
+        // restore; a second, evictable copy adds I/O without a recovery benefit.
+        if (writeCache && (!requireDurable || !durable)) write(plan, result)
         // For local work, successful cache commit is insufficient: only a
         // durable result allows deleting the non-evictable complete journal.
         if (if (requireDurable) durable else read(plan)?.fingerprint == result.fingerprint)

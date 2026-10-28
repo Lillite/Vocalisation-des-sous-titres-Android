@@ -88,6 +88,43 @@ class LocalGgufRuntimeAndroidTest {
         try { assertEquals(" probe", next.generate("Next task after rejected output", 1, true).output) }
         finally { next.close(); terminating.delete() }
     }
+    @Test fun prefixReuseAndAcknowledgedCloseAllowAnImmediateBackendChange() {
+        val file = fixture(true)
+        val cpu = LocalGgufRuntime.Client(context)
+        try {
+            val info = cpu.open(file, 1, 512, executionMode = "CPU")
+            assertEquals("CPU", info.backend)
+            assertFalse(info.gpuObserved)
+            val cold = cpu.generate("Prefix cache synthetic request.", 1, true)
+            val warm = cpu.generate("Prefix cache synthetic request.", 1, true)
+            assertEquals(cold.output, warm.output)
+            assertEquals(0, cold.cachedPromptTokens)
+            assertEquals(warm.promptTokens - 1, warm.cachedPromptTokens)
+            assertEquals(1, warm.promptEvaluatedTokens)
+            assertFalse(warm.gpuObserved)
+            assertEquals(0L, warm.gpuGraphNodes)
+            // This barrier is valid even when an asynchronous UI close happened first.
+            cpu.close()
+            cpu.closeAndAwait()
+            val next = LocalGgufRuntime.Client(context)
+            try {
+                val auto = next.open(file, 1, 512, executionMode = "AUTO")
+                assertEquals("AUTO", auto.requestedMode)
+                if (auto.backend == "CPU") assertTrue(auto.fallbackReason.isNotEmpty())
+                val output = next.generate("Independent backend comparison.", 1, true)
+                assertEquals(" probe", output.output)
+                assertEquals(0, output.cachedPromptTokens)
+                if (auto.backend == "CPU") { assertFalse(output.gpuObserved); assertEquals(0L, output.gpuGraphNodes) }
+            } finally { next.closeAndAwait() }
+            if (android.os.Build.SUPPORTED_ABIS.first() == "x86_64") {
+                val strict = LocalGgufRuntime.Client(context)
+                try {
+                    try { strict.open(file, 1, 512, executionMode = "OPENCL"); fail("CPU-only ABI claimed GPU execution") }
+                    catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.BACKEND, failure.code) }
+                } finally { strict.closeAndAwait() }
+            }
+        } finally { cpu.closeAndAwait(); file.delete() }
+    }
     @Test fun cancelledClientAndMalformedModelNeverProduceTranslation() {
         val file = fixture(true)
         val client = LocalGgufRuntime.Client(context)

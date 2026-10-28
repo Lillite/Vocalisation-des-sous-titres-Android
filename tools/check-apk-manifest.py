@@ -8,7 +8,7 @@ if len(sys.argv) != 2:
 ns = '{http://schemas.android.com/apk/res/android}'
 root = ET.parse(Path(sys.argv[1])).getroot()
 assert root.get('package') == 'fr.soustitresvoix.player.translation', 'Unexpected application identity'
-assert root.get(ns + 'versionCode') == '11' and root.get(ns + 'versionName') == '0.5.4-local', 'Unexpected version'
+assert root.get(ns + 'versionCode') == '12' and root.get(ns + 'versionName') == '0.5.5-perf', 'Unexpected version'
 app = root.find('application')
 assert app is not None and app.get(ns + 'allowBackup') == 'false', 'Backup must remain disabled'
 assert app.get(ns + 'usesCleartextTraffic') == 'false', 'Cleartext network traffic must remain disabled'
@@ -31,6 +31,8 @@ assert diagnostic[0].get(ns + 'process') == ':model_diagnostic', 'Model probe mu
 translation = app.findall("service[@" + ns + "name='fr.soustitresvoix.player.LocalGgufTranslationService']")
 assert len(translation) == 1 and translation[0].get(ns + 'exported') == 'false', 'Local translation service must remain private'
 assert translation[0].get(ns + 'process') == ':model_diagnostic', 'Local translation must use its private model process'
+opencl = app.findall("uses-native-library[@" + ns + "name='libOpenCL.so']")
+assert len(opencl) == 1 and opencl[0].get(ns + 'required') == 'false', 'OpenCL must remain an optional device library'
 assert all(provider.get(ns + 'name') != 'com.google.mlkit.common.internal.MlKitInitProvider'
            for provider in app.findall('provider')), 'ML Kit must initialize only after explicit translation confirmation'
 print('PASS compiled cinema APK: identity, backup disabled, TTS query, no test service')

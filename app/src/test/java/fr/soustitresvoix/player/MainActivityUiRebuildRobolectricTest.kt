@@ -183,4 +183,25 @@ class MainActivityUiRebuildRobolectricTest {
             assertNull(activity.session.media)
         } finally { owner.pause().stop().destroy() }
     }
+
+    @Test fun syntheticBenchmarkPanelDoesNotPauseOrResumeTheReader() {
+        val owner = Robolectric.buildActivity(MainActivity::class.java).setup().visible()
+        try {
+            val activity = owner.get()
+            activity.session.player.playWhenReady = true
+            val before = activity.session.machine.snapshot().wantsPlayback
+            descendants(activity.findViewById<ViewGroup>(android.R.id.content))
+                .filterIsInstance<android.widget.Button>().single { it.text.toString() == "Comparer CPU et GPU — essai local intégré" }
+                .performClick()
+            val dialog = ShadowAlertDialog.getLatestAlertDialog()
+            assertTrue(dialog.isShowing)
+            assertTrue(activity.session.player.playWhenReady)
+            assertEquals(before, activity.session.machine.snapshot().wantsPlayback)
+            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertFalse(dialog.isShowing)
+            assertTrue(activity.session.player.playWhenReady)
+            assertNull(activity.session.media)
+        } finally { owner.pause().stop().destroy() }
+    }
 }

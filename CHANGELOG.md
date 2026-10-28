@@ -2,9 +2,19 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
-## 0.5.4-local — candidate de traduction GGUF locale
+## 0.5.5-perf — candidate de performances GGUF locales
 
-VersionCode **11**, identité Traduction conservée. [Guide GGUF](docs/TRADUCTION_GGUF_054.md) · [Notes, périmètre et validation](docs/releases/0.5.4-local.md). La validation de cette candidate et la vérification de sa distribution restent distinctes des résultats historiques.
+VersionCode **12**, identité Traduction et certificat durable conservés. [Guide des performances](docs/TRADUCTION_GGUF_055.md) · [Notes et limites](docs/releases/0.5.5-perf.md). La 0.5.2 reste la dernière stable. Cette candidate doit réussir sa propre campagne avant fusion et sa distribution doit être vérifiée séparément.
+
+- Optimisations CPU ARM64 et réutilisation exacte du préfixe de tokens pour réduire les recalculs, sans supprimer une occurrence de sous-titre ni affaiblir les contrôles de fin et d’annulation.
+- Backend GPU facultatif, avec distinction entre choix demandé, backend chargé et travail réellement déporté ; le CPU reste disponible.
+- Correctif de reconnaissance du profil du GGUF officiel Hy-MT2-7B et distinction des erreurs de fichier, de profil, de chargement et de calcul.
+- Mesures locales comparables du chargement, du traitement de la consigne et de la génération ; les gains, la stabilité et la qualité restent à vérifier sur le téléphone avec le même modèle et le même SRT.
+- Aucun nouveau téléchargement de poids, service distant, OCR ou NPU. Reprise, export complet et protections de lecture conservés.
+
+## 0.5.4-local — traduction GGUF locale publiée
+
+VersionCode **11**, identité Traduction conservée, publiée le **28 octobre 2026**. [Guide GGUF](docs/TRADUCTION_GGUF_054.md) · [Notes et preuves](docs/releases/0.5.4-local.md). La [PR #20](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/20) a réussi **662 tests avant fusion** ; reconstruction et publication ont ensuite été vérifiées sans répéter les suites. Le CPU est le seul backend de cette version ; le refus des métadonnées du GGUF officiel Hy-MT2 est une limite identifiée après publication.
 
 - Moteur GGUF local dans le parcours de traduction, sans serveur, compte, clé API, poids inclus ou téléchargement automatique. Import privé explicite, empreinte du contenu et paramètres liés aux résultats conservés.
 - Runtime CPU persistant pour la tâche, consignes adaptées à TranslateGemma et Hunyuan dense, contexte récent borné et refus d’une sortie tronquée. Les numéros et minutages des sous-titres restent gérés par le code.

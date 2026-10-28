@@ -7,6 +7,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.TextView
+import android.widget.Spinner
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -16,6 +17,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
 import java.io.File
+import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
@@ -28,6 +30,7 @@ class LocalGgufModelControlsRobolectricTest {
     private class Fixture : AutoCloseable {
         private val owner = Robolectric.buildActivity(Activity::class.java).setup().visible()
         val activity = owner.get()
+        init { activity.getSharedPreferences("translation-choices-v1", Activity.MODE_PRIVATE).edit().clear().commit() }
         val directory = File(activity.filesDir, "local-diagnostic").apply { deleteRecursively(); mkdirs() }
         var preparationBusy = false
         var launches = 0
@@ -136,6 +139,77 @@ class LocalGgufModelControlsRobolectricTest {
                 val text = descendants(root).filterIsInstance<TextView>().joinToString("\n") { it.text.toString() }
                 assertTrue(text.contains("Le chargement sera vérifié lors de la traduction"))
                 assertFalse(text.contains(model.absolutePath))
+            } finally { controls.close() }
+        }
+    }
+
+    @Test fun executionAndProfileChoicesAreExplicitPersistedAndNeverStartAModel() {
+        Fixture().use { f ->
+            val execution = descendants(f.root).filterIsInstance<Spinner>().single { it.contentDescription == "Exécution du modèle GGUF" }
+            val profile = descendants(f.root).filterIsInstance<Spinner>().single { it.contentDescription == "Profil de traduction du modèle GGUF" }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals("AUTO", f.controls.execution)
+            assertEquals(LocalGgufProfile.AUTO, f.controls.profile)
+            execution.setSelection(2); profile.setSelection(2)
+            // Configuration snapshots must see the selected item even before
+            // AdapterView delivers a deferred selection callback.
+            assertEquals("OPENCL", f.controls.execution)
+            assertEquals(LocalGgufProfile.HY_MT, f.controls.profile)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals("OPENCL", f.controls.execution)
+            assertEquals(LocalGgufProfile.HY_MT, f.controls.profile)
+            f.controls.saveChoices()
+            assertFalse(f.controls.busy)
+            assertEquals(0, f.launches)
+            assertEquals(0, f.changed)
+            assertTrue(f.directory.listFiles().orEmpty().isEmpty())
+            val restored = LocalGgufModelControls(f.activity, { false }, { f.launches++ }, {}, {})
+            try {
+                restored.view()
+                assertEquals("OPENCL", restored.execution)
+                assertEquals(LocalGgufProfile.HY_MT, restored.profile)
+            } finally { restored.close() }
+        }
+    }
+
+    @Test fun cancellationAfterACommittedPreparationAdoptsTheCurrentDescriptorInsteadOfTheOldHash() {
+        Fixture().use { f ->
+            f.controls.close()
+            fun header(tensors: Long) = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
+                .put(byteArrayOf(71, 71, 85, 70)).putInt(3).putLong(tensors).putLong(0).array()
+            val store = LocalGgufModelStore(f.activity)
+            val originalHeader = header(0)
+            val old = store.importModel(ByteArrayInputStream(originalHeader), originalHeader.size.toLong())
+            val controls = LocalGgufModelControls(f.activity, { false }, {}, { f.changed++ }, { f.messages += it })
+            try {
+                val root = controls.view()
+                assertEquals(old.sha256, controls.model?.sha256)
+                // Represents another explicit import replacing the shared
+                // diagnostic file while this form still shows its old choice.
+                val replacementHeader = header(1)
+                val privateFile = File(f.directory, "model.gguf")
+                privateFile.writeBytes(replacementHeader)
+                assertTrue(privateFile.setLastModified(old.modifiedMillis + 2_000))
+                descendants(root).filterIsInstance<Button>().single {
+                    it.text.toString() == "Préparer le modèle GGUF déjà importé dans le diagnostic"
+                }.performClick()
+                val deadline = System.nanoTime() + 5_000_000_000L
+                var committed = store.current()
+                // Deliberately do not drain the main looper: the worker commits
+                // its descriptor before the form receives its success callback.
+                while ((committed == null || committed.sha256 == old.sha256) && System.nanoTime() < deadline) {
+                    Thread.sleep(5); committed = store.current()
+                }
+                val current = requireNotNull(committed)
+                assertNotEquals(old.sha256, current.sha256)
+                assertTrue(controls.busy)
+                controls.cancel()
+                await { !controls.busy }
+                assertEquals(current.sha256, controls.model?.sha256)
+                assertEquals(store.current()?.sha256, controls.model?.sha256)
+                assertEquals(1, f.changed)
+                assertTrue(f.messages.last().contains("préparé avant l’annulation"))
+                assertArrayEquals(replacementHeader, privateFile.readBytes())
             } finally { controls.close() }
         }
     }

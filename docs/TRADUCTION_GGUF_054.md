@@ -1,10 +1,12 @@
-# Traduction GGUF locale — candidate 0.5.4
+# Traduction GGUF locale — préversion publiée 0.5.4
 
 [Accueil](../README.md) · [Notes de version](releases/0.5.4-local.md) · [Validation](../TESTING.md) · [Diagnostic préparatoire](DIAGNOSTIC_LOCAL_053.md)
 
-La candidate **0.5.4-local / code 11** ajoute un moteur GGUF au parcours de traduction. Le texte et le modèle restent sur le téléphone. L’application charge le fichier directement avec llama.cpp sur le **CPU**, sans passer par PocketPal et sans appeler un serveur. Les poids ne sont ni inclus dans l’APK ni téléchargés automatiquement.
+La préversion publiée **0.5.4-local / code 11** ajoute un moteur GGUF au parcours de traduction. Le texte et le modèle restent sur le téléphone. L’application charge le fichier directement avec llama.cpp sur le **CPU**, sans passer par PocketPal et sans appeler un serveur. Les poids ne sont ni inclus dans l’APK ni téléchargés automatiquement.
 
 Cette fonction traite les **sous-titres textuels**. L’OCR des textes incrustés ou des pistes image reste une opération distincte, non intégrée par cette version. Traduire ne demande aucun OCR préalable lorsque le SRT existe déjà.
+
+Les [notes 0.5.4](releases/0.5.4-local.md) conservent les preuves de publication et la limite connue de reconnaissance du GGUF officiel Hy-MT2. Les optimisations suivantes sont décrites séparément dans le [guide 0.5.5](TRADUCTION_GGUF_055.md).
 
 ## Préparer le modèle
 

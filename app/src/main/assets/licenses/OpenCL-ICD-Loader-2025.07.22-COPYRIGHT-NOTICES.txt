@@ -1,0 +1,17 @@
+OpenCL-ICD-Loader-2025.07.22 — copyright notices reproduced from the pinned source archive.
+
+Copyright (c) 2012-2020 The Khronos Group Inc.
+Copyright (c) 2012-2023 The Khronos Group Inc.
+Copyright (c) 2016-2019 The Khronos Group Inc.
+Copyright (c) 2016-2020 The Khronos Group Inc.
+Copyright (c) 2016-2023 The Khronos Group Inc.
+Copyright (c) 2016-2025 The Khronos Group Inc.
+Copyright (c) 2017-2019 The Khronos Group Inc.
+Copyright (c) 2017-2020 The Khronos Group Inc.
+Copyright (c) 2017-2022 The Khronos Group Inc.
+Copyright (c) 2019 LunarG, Inc.
+Copyright (c) 2019 The Khronos Group Inc.
+Copyright (c) 2019 Valve Corporation
+Copyright (c) 2020 The Khronos Group Inc.
+Copyright (c) 2022 The Khronos Group Inc.
+Copyright 2020 Jan Tojnar

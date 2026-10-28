@@ -123,7 +123,7 @@ class SubtitleTranslationControlsRobolectricTest {
     @Test fun providerSelectionShowsOnlyApplicableEndpointAndRegionWithMatchingHelp() {
         Fixture().use { fixture ->
             val panel = fixture.open()
-            val spinner = views(panel).filterIsInstance<Spinner>().single()
+            val spinner = views(panel).filterIsInstance<Spinner>().single { it.contentDescription == "Moteur de traduction" }
             assertEquals("Moteur de traduction", spinner.contentDescription.toString())
             assertEquals(7, spinner.count)
             val region = field(panel, "Région Azure")
@@ -158,7 +158,7 @@ class SubtitleTranslationControlsRobolectricTest {
             val storage = fixture.activity.getSharedPreferences("translation-choices-v1", Context.MODE_PRIVATE)
             storage.edit().putLong("google-interval-ms", 2_400L).commit()
             val panel = fixture.open()
-            val spinner = views(panel).filterIsInstance<Spinner>().single()
+            val spinner = views(panel).filterIsInstance<Spinner>().single { it.contentDescription == "Moteur de traduction" }
             val interval = field(panel, "Google en ligne : délai minimal")
             assertEquals("2400", interval.text.toString())
             button(panel, "Indexer la piste et estimer la traduction").performClick()
@@ -214,7 +214,7 @@ class SubtitleTranslationControlsRobolectricTest {
             fixture.activity.getSharedPreferences(TranslationCredentials.PREFERENCES, Context.MODE_PRIVATE)
                 .edit().putString("libre", "synthetic-legacy-value-must-not-follow-server").commit()
             val panel = fixture.open()
-            val spinner = views(panel).filterIsInstance<Spinner>().single()
+            val spinner = views(panel).filterIsInstance<Spinner>().single { it.contentDescription == "Moteur de traduction" }
             spinner.setSelection(TranslationProvider.LIBRE.ordinal)
             shadowOf(Looper.getMainLooper()).idle()
             val endpoint = field(panel, "Adresse de base du serveur LibreTranslate")
@@ -244,7 +244,7 @@ class SubtitleTranslationControlsRobolectricTest {
             button(panel, "Guide complet : moteurs, clés API et traduction sur téléphone").performClick()
             assertEquals("https://github.com/Lillite/Vocalisation-des-sous-titres-Android/blob/main/docs/GUIDE_MOTEURS_TRADUCTION.md",
                 requireNotNull(shadowOf(fixture.activity).nextStartedActivity).data.toString())
-            val spinner = views(panel).filterIsInstance<Spinner>().single()
+            val spinner = views(panel).filterIsInstance<Spinner>().single { it.contentDescription == "Moteur de traduction" }
             for (provider in TranslationProvider.entries) {
                 spinner.setSelection(provider.ordinal)
                 shadowOf(Looper.getMainLooper()).idle()
@@ -268,7 +268,7 @@ class SubtitleTranslationControlsRobolectricTest {
     @Test fun localGgufShowsModelAndComputeControlsWithoutCredentialsOrNetworkChoices() {
         Fixture().use { fixture ->
             val panel = fixture.open()
-            val spinner = views(panel).filterIsInstance<Spinner>().single()
+            val spinner = views(panel).filterIsInstance<Spinner>().single { it.contentDescription == "Moteur de traduction" }
             spinner.setSelection(TranslationProvider.LOCAL_GGUF.ordinal)
             shadowOf(Looper.getMainLooper()).idle()
             assertEquals(View.GONE, field(panel, "Clé API personnelle").visibility)
@@ -297,7 +297,7 @@ class SubtitleTranslationControlsRobolectricTest {
         java.io.File(context.filesDir, "local-diagnostic").deleteRecursively()
         Fixture().use { fixture ->
             val panel = fixture.open()
-            views(panel).filterIsInstance<Spinner>().single().setSelection(TranslationProvider.LOCAL_GGUF.ordinal)
+            views(panel).filterIsInstance<Spinner>().single { it.contentDescription == "Moteur de traduction" }.setSelection(TranslationProvider.LOCAL_GGUF.ordinal)
             shadowOf(Looper.getMainLooper()).idle()
             button(panel, "Indexer la piste et estimer la traduction").performClick()
             fixture.controls.refresh()
