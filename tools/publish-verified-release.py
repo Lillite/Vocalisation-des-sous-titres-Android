@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish only the signed 0.5.2 integral narration edition already validated on main.
+"""Publish only the signed 0.5.3-diagnostic candidate already validated on main.
 
 The temporary branch contains three data files, never a signing key. This script
 does not compile or sign an APK, delete a release/tag, replace an asset, execute a
@@ -32,14 +32,15 @@ import zipfile
 
 
 REPOSITORY = "Lillite/Vocalisation-des-sous-titres-Android"
-BRANCH = "release-upload/v0.5.2"
-TAG = "v0.5.2"
-TITLE = "Sous-titres en voix 0.5.2 — Google, traduction progressive et vocalisation intégrale"
+BRANCH = "release-upload/v0.5.3-diagnostic"
+TAG = "v0.5.3-diagnostic"
+TITLE = "Sous-titres en voix 0.5.3 — Diagnostic local (préversion)"
+PRERELEASE = True
 APPLICATION_ID = "fr.soustitresvoix.player.translation"
-VERSION_NAME = "0.5.2"
-VERSION_CODE = "9"
+VERSION_NAME = "0.5.3-diagnostic"
+VERSION_CODE = "10"
 EXPECTED_SIGNER_SHA256 = "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d"
-APK_PATH = "release-upload/SousTitresVoix-0.5.2-google.apk"
+APK_PATH = "release-upload/SousTitresVoix-0.5.3-diagnostic.apk"
 NOTES_PATH = "release-upload/notes.md"
 METADATA_PATH = "release-upload/release.json"
 VALIDATION_ARTIFACT = "SousTitresVoix-release-main"
@@ -411,9 +412,9 @@ def publish(root: Path, github: GitHub, value: dict[str, str], work: Path, ci_ru
     notes = (root / NOTES_PATH).read_text(encoding="utf-8")
     release = github.api(PREFIX + "/releases", "POST", {
         "tag_name": TAG, "target_commitish": value["source_sha"], "name": TITLE,
-        "body": notes, "draft": True, "prerelease": False,
+        "body": notes, "draft": True, "prerelease": PRERELEASE,
     }, expected=(201,))
-    require(release.get("draft") is True and release.get("tag_name") == TAG and
+    require(release.get("draft") is True and release.get("prerelease") is PRERELEASE and release.get("tag_name") == TAG and
             type(release.get("id")) is int, "Draft release creation was not confirmed.")
     release_id = release["id"]
     print(f"Draft release created: {release_id}; no public publication before asset checks.", flush=True)
@@ -430,7 +431,7 @@ def publish(root: Path, github: GitHub, value: dict[str, str], work: Path, ci_ru
             "Android validation changed during publication; draft retained for review.")
     visible = github.api(PREFIX + f"/releases/{release_id}")
     require(visible.get("id") == release_id and visible.get("draft") is True and
-            visible.get("prerelease") is False and visible.get("tag_name") == TAG and
+            visible.get("prerelease") is PRERELEASE and visible.get("tag_name") == TAG and
             visible.get("target_commitish") == value["source_sha"] and
             visible.get("name") == TITLE and visible.get("body") == notes,
             "Draft contents changed before publication.")
@@ -455,8 +456,10 @@ def publish(root: Path, github: GitHub, value: dict[str, str], work: Path, ci_ru
     # GitHub offers no atomic compare-and-publish transaction for these reads.
     # Concurrent changes after the last checks remain possible; verify again
     # after publication and never claim these checks eliminate that final race.
-    published = github.api(PREFIX + f"/releases/{release_id}", "PATCH", {"draft": False, "make_latest": "true"})
-    require(published.get("draft") is False and published.get("prerelease") is False and
+    published = github.api(PREFIX + f"/releases/{release_id}", "PATCH", {
+        "draft": False, "prerelease": PRERELEASE, "make_latest": "false" if PRERELEASE else "true",
+    })
+    require(published.get("draft") is False and published.get("prerelease") is PRERELEASE and
             published.get("tag_name") == TAG, "Public release state was not confirmed.")
     verify_tag(github, value["source_sha"])
     url = published.get("html_url", "")
@@ -534,7 +537,7 @@ def main() -> None:
     github = GitHub(os.environ.get("GITHUB_TOKEN", ""))
     no_existing_release_or_tag(github)
     ci_run = successful_main_run(github, value["source_sha"])
-    with tempfile.TemporaryDirectory(prefix="verified-translation-release-") as directory:
+    with tempfile.TemporaryDirectory(prefix="verified-diagnostic-release-") as directory:
         work = Path(directory)
         compare_ci_artifact(github, ci_run, value["source_sha"], root / APK_PATH, work)
         url = publish(root, github, value, work, ci_run)

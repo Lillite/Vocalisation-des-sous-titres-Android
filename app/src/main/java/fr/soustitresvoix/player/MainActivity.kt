@@ -45,6 +45,7 @@ import kotlin.math.roundToInt
 @UnstableApi
 class MainActivity : ComponentActivity() {
     private lateinit var translationControls: SubtitleTranslationControls
+    private lateinit var preparationDiagnostics: PreparationDiagnosticsController
     private lateinit var prefs: PlayerPreferences
     internal lateinit var session: PlaybackSession; private set
     private lateinit var playerView: PlayerView
@@ -76,6 +77,12 @@ class MainActivity : ComponentActivity() {
     private var pendingResumeOffer = false
     private var resumeOfferUri: String? = null
     private var pendingSubtitleExport: String? = null
+    private val diagnosticModelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (::preparationDiagnostics.isInitialized && !closed) preparationDiagnostics.selectedModel(uri)
+    }
+    private val diagnosticVideoPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (::preparationDiagnostics.isInitialized && !closed) preparationDiagnostics.selectedVideo(uri)
+    }
     private val subtitleExportLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val content = pendingSubtitleExport
         pendingSubtitleExport = null
@@ -148,6 +155,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        preparationDiagnostics = PreparationDiagnosticsController(this,
+            playbackIdle = {
+                val state = session.machine.snapshot()
+                !session.player.isPlaying && !state.wantsPlayback && state.speakingId == null && !session.isPreparing
+            },
+            launchModelPicker = { diagnosticModelPicker.launch(arrayOf("*/*")) },
+            launchVideoPicker = { diagnosticVideoPicker.launch(arrayOf("video/*", "application/octet-stream")) })
         buildUi()
         if (!handleViewIntent(intent)) prefs.lastMedia()?.let { saved ->
             val scheme = Uri.parse(saved.uri).scheme
@@ -172,6 +186,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onPause() {
         stopped = true; main.removeCallbacks(ticker)
+        if (::preparationDiagnostics.isInitialized) preparationDiagnostics.onHostPaused()
         if (::session.isInitialized) session.pause()
         super.onPause()
     }
@@ -179,6 +194,7 @@ class MainActivity : ComponentActivity() {
         closed = true; uiRebuildPending = false; requestToken++
         cinema?.close(); repairDialog?.dismiss(); resumeDialog?.dismiss(); resumeDialog = null
         if (::translationControls.isInitialized) translationControls.close()
+        if (::preparationDiagnostics.isInitialized) preparationDiagnostics.close()
         main.removeCallbacksAndMessages(null); io.shutdownNow()
         if (::playerView.isInitialized) playerView.player = null
         if (::session.isInitialized) {
@@ -587,6 +603,7 @@ class MainActivity : ComponentActivity() {
         }
         var pendingBenchmarkSeconds: Int? = null
         var pendingImageSettings = false
+        var pendingLocalDiagnostic = false
         lateinit var dialog: AlertDialog
         fun add(section: SettingsSection, label: String, aliases: String = "", view: View) = panel.add(section, label, view, aliases)
         fun action(section: SettingsSection, label: String, aliases: String = "", change: () -> Unit) {
@@ -714,6 +731,9 @@ class MainActivity : ComponentActivity() {
         action(SettingsSection.IMAGE, "Image, cadrage, zoom et corrections", "étirement bandes noires marges contraste luminosité Lanczos proportions") {
             pendingImageSettings = true; dialog.dismiss()
         }
+        action(SettingsSection.DIAGNOSTIC, "Diagnostic local : appareil, vidéo et modèle", "IA RAM mémoire CPU processeur GPU NPU GGUF décodage codecs") {
+            pendingLocalDiagnostic = true; dialog.dismiss()
+        }
         AdvancedSettings(this, session, prefs) { seconds ->
             pendingBenchmarkSeconds = seconds; dialog.dismiss()
         }.populate(panel)
@@ -733,6 +753,7 @@ class MainActivity : ComponentActivity() {
                 applyCaptionStyle(); applyWindowMode()
                 pendingBenchmarkSeconds?.let { session.startPlaybackBenchmark(it) }
                 if (pendingImageSettings) { setFullscreen(true); cinema?.showImageSettings() }
+                if (pendingLocalDiagnostic) preparationDiagnostics.show()
             }
         }
         dialog.show()

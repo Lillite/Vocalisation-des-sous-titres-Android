@@ -41,6 +41,7 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install --no-install-recommends -y ffmpeg >/dev/null
           fi
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" "cmake;3.22.1"
           if [[ ! -f "$ANDROID_HOME/platforms/android-36/android.jar" || ! -x "$ANDROID_HOME/build-tools/36.0.0/aapt2" ]]; then
             "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses < <(yes) >/dev/null
             "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
@@ -57,6 +58,7 @@ jobs:
           python3 tools/verify-pr-validation.py compare --apk build/distribution/app-release.apk
           "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print build/distribution/app-release.apk > build/verification/release-manifest.xml
           python3 tools/check-apk-manifest.py build/verification/release-manifest.xml
+          python3 tools/check-native-apk.py build/distribution/app-release.apk > build/verification/native-elf-alignment.txt
           sha256sum build/distribution/app-release.apk > build/verification/release-apk.sha256
           git diff --exit-code
       - name: Conserver APK à signer avec le certificat durable

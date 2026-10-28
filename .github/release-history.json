@@ -123,7 +123,7 @@
       "source_commit": "d5d5b63ea37ca4be423f375e8e7a75e870d154e6",
       "title": "Sous-titres en voix 0.5.1 — réglages stables et traduction résiliente",
       "prerelease": false,
-      "latest": true,
+      "latest": false,
       "notes": "docs/releases/0.5.1.md",
       "asset": {
         "id": 682813699,
@@ -134,16 +134,36 @@
         "version_code": 8,
         "application_id": "fr.soustitresvoix.player.translation"
       }
+    },
+    {
+      "id": 426237521,
+      "tag": "v0.5.2",
+      "source_commit": "d5b18f7e138ff4f2869e273b32db6c40fd46a98e",
+      "title": "Sous-titres en voix 0.5.2 — Google, traduction progressive et vocalisation intégrale",
+      "prerelease": false,
+      "latest": true,
+      "notes": "docs/releases/0.5.2.md",
+      "asset": {
+        "id": 683715933,
+        "name": "SousTitresVoix-0.5.2-google.apk",
+        "size": 69568484,
+        "sha256": "f2226d6ea1eb4ad78136a4cc5c8b0b664f5c622635c39601372ac1eaeb76ed5c",
+        "version_name": "0.5.2",
+        "version_code": 9,
+        "application_id": "fr.soustitresvoix.player.translation"
+      }
     }
   ],
   "next_release": {
-    "tag": "v0.5.2",
-    "title": "Sous-titres en voix 0.5.2 — Google, traduction progressive et vocalisation intégrale",
-    "notes": "docs/releases/0.5.2.md",
+    "tag": "v0.5.3-diagnostic",
+    "title": "Sous-titres en voix 0.5.3 — Diagnostic local (préversion)",
+    "prerelease": true,
+    "latest": false,
+    "notes": "docs/releases/0.5.3-diagnostic.md",
     "asset": {
-      "name": "SousTitresVoix-0.5.2-google.apk",
-      "version_name": "0.5.2",
-      "version_code": 9,
+      "name": "SousTitresVoix-0.5.3-diagnostic.apk",
+      "version_name": "0.5.3-diagnostic",
+      "version_code": 10,
       "application_id": "fr.soustitresvoix.player.translation"
     }
   }

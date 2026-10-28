@@ -2,6 +2,17 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
+## 0.5.3-diagnostic — candidate en préparation
+
+Première étape de préparation des moteurs locaux, versionCode **10** ; aucune livraison ni réussite de campagne n’est annoncée avant leurs vérifications. [Notes de la candidate](docs/releases/0.5.3-diagnostic.md) · [Guide du diagnostic](docs/DIAGNOSTIC_LOCAL_053.md).
+
+- Nouveau panneau **Diagnostic local : appareil, vidéo et modèle** : mesures RAM, mémoire du processus, stockage, thermique et codecs déclarés.
+- Essai vidéo synthétique ou locale choisie, au plus 8 images sur 10 secondes, sans OCR et sans promesse de compatibilité complète des anciens conteneurs.
+- Import privé d’un GGUF après consentement explicite, puis véritable essai CPU de chargement et génération synthétique avec llama.cpp via JNI dans un processus de service distinct. Aucun téléchargement automatique de poids.
+- Mesures et essais indépendants, annulation et fermeture dédiées, rapport copiable dans le presse-papiers. Aucune modification de la vocalisation ni nouveau service Internet.
+- GPU/NPU non exécutés ; OCR et traduction des sous-titres par TranslateGemma non intégrés à cette étape. Les essais ne remplacent pas une évaluation linguistique ni des mesures sur téléphone.
+- Préparation de la publication comme préversion sans remplacer la stable 0.5.2, avec conservation obligatoire du certificat durable. La sauvegarde privée Traduction a été retrouvée et son certificat public vérifié ; l’APK reste à valider et à signer avant distribution.
+
 ## 0.5.2 — Google et traduction pendant la lecture
 
 Cette version ajoute les moteurs Google, le réglage du tampon progressif et la correction du panneau audio. Les preuves de validation sont rattachées aux sources exactes dans [GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml). [Notes de version](docs/releases/0.5.2.md) · [Guide Google](docs/TRADUCTION_GOOGLE_052.md).

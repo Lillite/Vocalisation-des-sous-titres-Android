@@ -2,13 +2,15 @@
 
 Lecteur vidéo Android destiné d’abord à **vocaliser intégralement les occurrences textuelles de la piste choisie** : dialogues, panneaux, chevauchements et répétitions réelles. Les modes Confort et Adaptatif donnent à la voix le temps de terminer ; une traduction manquante provoque une attente perceptible.
 
-**Version 0.5.2 — Google et traduction pendant la lecture.** [Notes 0.5.2](docs/releases/0.5.2.md) · [Guide Google](docs/TRADUCTION_GOOGLE_052.md) · [Validation GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml).
+**Version publiée recommandée : 0.5.2 — Google et traduction pendant la lecture.** [Notes 0.5.2](docs/releases/0.5.2.md) · [Guide Google](docs/TRADUCTION_GOOGLE_052.md) · [Validation GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml).
+
+**Candidate en préparation : 0.5.3-diagnostic / code 10.** Mesures du téléphone, essai vidéo et test réel d’un GGUF sur CPU, sans OCR ni traduction TranslateGemma de film à ce stade. [Guide du diagnostic](docs/DIAGNOSTIC_LOCAL_053.md) · [Notes et limites de la candidate](docs/releases/0.5.3-diagnostic.md). Aucun nouvel APK distribué n’est annoncé avant validation et signature durable.
 
 **[Télécharger SousTitresVoix-0.5.2-google.apk](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.2/SousTitresVoix-0.5.2-google.apk)** · [Release et sommes de contrôle](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.2). Les archives « Source code » ne sont pas des APK.
 
 [Installation](#installer-et-commencer-sur-android) · [Tous les guides](docs/README.md) · [Nouveautés 0.5.2](docs/releases/0.5.2.md) · [Tests et preuves](TESTING.md) · [Signaler un problème](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/issues/new/choose)
 
-| Repère | Sources 0.5.2 |
+| Repère | Version publiée 0.5.2 |
 | --- | --- |
 | Édition | **Google et traduction pendant la lecture**, code 9 ; fonctions précédentes conservées |
 | Android minimum | **Android 8.0 — API 26** |
@@ -19,6 +21,12 @@ Lecteur vidéo Android destiné d’abord à **vocaliser intégralement les occu
 | Validation | APK de test et suites avant fusion ; [preuves, résultats et limites](TESTING.md), [exécutions Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml) |
 
 **Ce projet est réalisé intégralement par intelligence artificielle : la conception de l’application, l’écriture du code, les corrections, les tests automatisés et la documentation sont produits par IA à partir des demandes, des indications et des retours de son utilisateur.** Cette mention concerne le travail propre au projet. Android, Kotlin, Media3, les moteurs vocaux, les services de traduction et les autres composants tiers restent les créations de leurs auteurs respectifs.
+
+## Candidate 0.5.3 — diagnostic local
+
+Dans les sources de la candidate, **Réglages de la voix et du confort → Diagnostic → Diagnostic local : appareil, vidéo et modèle** propose des mesures indépendantes : RAM et codecs déclarés, décodage d’au plus 8 images sur 10 secondes, puis import consenti et essai synthétique d’un modèle GGUF avec llama.cpp sur CPU dans un processus distinct. Le rapport est copiable ; aucun modèle ni film n’est téléversé, aucun poids n’est téléchargé automatiquement et aucun nouveau service Internet n’est ajouté.
+
+Le GPU/NPU n’est pas exécuté. Cette étape ne produit pas encore de sous-titres par OCR ni de traduction TranslateGemma. Elle prépare leur choix sans modifier la vocalisation actuelle. Le [guide](docs/DIAGNOSTIC_LOCAL_053.md) distingue ces essais de la qualité d’une traduction de film ; les [notes](docs/releases/0.5.3-diagnostic.md) précisent les validations et la signature requises avant publication.
 
 ## Changements de la 0.5.2
 
