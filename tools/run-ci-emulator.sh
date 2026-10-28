@@ -8,8 +8,12 @@ if [[ -z "$sdk_root" || ! -d "$sdk_root" ]]; then
 fi
 export ANDROID_HOME="$sdk_root"
 export PATH="$sdk_root/platform-tools:$sdk_root/emulator:$PATH"
-sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
-avdmanager="$sdk_root/cmdline-tools/latest/bin/avdmanager"
+# The runner's "latest" alias may still point at an older tool that resolves
+# API 37 images but writes target=android-0 when creating their AVD metadata.
+# The workflow installs this exact tool version before reaching this script.
+cmdline_tools_bin="${ANDROID_CMDLINE_TOOLS_BIN:-$sdk_root/cmdline-tools/22.0/bin}"
+sdkmanager="$cmdline_tools_bin/sdkmanager"
+avdmanager="$cmdline_tools_bin/avdmanager"
 adb="$sdk_root/platform-tools/adb"
 emulator="$sdk_root/emulator/emulator"
 for tool in "$sdkmanager" "$avdmanager" "$adb"; do
@@ -83,6 +87,8 @@ else
 fi
 {
   date -u '+%Y-%m-%dT%H:%M:%SZ'
+  printf 'cmdline_tools_bin=%s\n' "$cmdline_tools_bin"
+  cat "$cmdline_tools_bin/../source.properties"
   timeout -k 1s 15s "$adb" version
   timeout -k 1s 30s "$sdkmanager" --version
   timeout -k 1s 15s "$emulator" -version
@@ -96,6 +102,15 @@ printf 'no\n' | timeout -k 1s 120s "$avdmanager" create avd --name "$avd_name" -
   printf 'hw.cpu.ncore=4\nhw.ramSize=2048\ndisk.dataPartition.size=2048M\n'
 } >> "$avd_home/$avd_name.avd/config.ini"
 cp "$avd_home/$avd_name.avd/config.ini" "$evidence/avd-config.ini"
+cp "$avd_home/$avd_name.ini" "$evidence/avd.ini"
+# Retain both AVD files before boot and reject the old tools' malformed target.
+# Resolving the image or observing sys.boot_completed alone does not establish
+# that the emulator was created for the requested Android platform.
+if ! awk -F '=' '$1 == "target" { sub(/\r$/, "", $2); count++; print "observed_target=" $2; if ($2 == "android-37.0") valid++ } END { exit !(count == 1 && valid == 1) }' \
+    "$evidence/avd.ini" > "$evidence/avd-target-check.txt"; then
+  echo 'The AVD target is not exactly android-37.0; refusing to boot or run instrumentation.' >&2
+  exit 2
+fi
 # Use the supported ANGLE + SwiftShader backend on this GPU-less runner.
 # SystemUI timed out while the former legacy backend was warming shaders.
 # Keep the same device, resources, readiness/ANR guards and complete test runs.

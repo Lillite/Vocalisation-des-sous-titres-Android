@@ -30,17 +30,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cli_bin="$ANDROID_HOME/cmdline-tools/22.0/bin"
+          if [[ ! -x "$cli_bin/sdkmanager" ]]; then
+            timeout -k 1s 300s "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "cmdline-tools;22.0" < <(yes)
+          fi
+          if ! grep -Eq '^Pkg.Revision[[:space:]]*=[[:space:]]*22[.]0[[:space:]]*$' "$ANDROID_HOME/cmdline-tools/22.0/source.properties"; then
+            echo 'The pinned Android command-line tools 22.0 are required.' >&2
+            exit 2
+          fi
+          export ANDROID_CMDLINE_TOOLS_BIN="$cli_bin"
+          printf 'ANDROID_CMDLINE_TOOLS_BIN=%s\n' "$cli_bin" >> "$GITHUB_ENV"
           if ! command -v ffmpeg >/dev/null; then
             sudo apt-get update -qq
             sudo apt-get install --no-install-recommends -y ffmpeg >/dev/null
           fi
           if [[ ! -f "$ANDROID_HOME/platforms/android-36/android.jar" || ! -x "$ANDROID_HOME/build-tools/36.0.0/aapt2" ]]; then
-            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses < <(yes) >/dev/null
-            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+            "$ANDROID_CMDLINE_TOOLS_BIN/sdkmanager" --licenses < <(yes) >/dev/null
+            "$ANDROID_CMDLINE_TOOLS_BIN/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
           fi
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" "cmake;3.22.1"
+          "$ANDROID_CMDLINE_TOOLS_BIN/sdkmanager" "ndk;27.2.12479018" "cmake;3.22.1"
           mkdir -p build/verification
-          timeout -k 1s 180s "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --list --channel=0 > build/verification/sdk-available.txt
+          timeout -k 1s 180s "$ANDROID_CMDLINE_TOOLS_BIN/sdkmanager" --list --channel=0 > build/verification/sdk-available.txt
           if ! awk -F '|' '$1 ~ /^[[:space:]]*system-images;android-37[.]0;default;x86_64[[:space:]]*$/ { found=1 } END { exit !found }' build/verification/sdk-available.txt; then
             echo 'The required stable Android 17 image was not resolved; refusing validation on an older image.' >&2
             exit 2
@@ -76,7 +86,7 @@ jobs:
           set -euo pipefail
           APK=app/build/outputs/apk/debug/app-debug.apk
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" > build/verification/debug-signature.txt
-          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$APK" > build/verification/debug-manifest.xml
+          "$ANDROID_CMDLINE_TOOLS_BIN/apkanalyzer" manifest print "$APK" > build/verification/debug-manifest.xml
           python3 tools/check-apk-manifest.py build/verification/debug-manifest.xml
           sha256sum "$APK" > build/verification/debug-apk.sha256
       - name: Creer une signature de validation ephemere
@@ -136,7 +146,7 @@ jobs:
             if [[ "$kind" == app ]]; then file="$APK"; else file="$TEST_APK"; fi
             "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$file" > "build/verification/signature-$kind.txt"
             "$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$file" > "build/verification/alignment-$kind.txt"
-            "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$file" > "build/verification/manifest-$kind.xml"
+            "$ANDROID_CMDLINE_TOOLS_BIN/apkanalyzer" manifest print "$file" > "build/verification/manifest-$kind.xml"
           done
           python3 tools/check-apk-manifest.py build/verification/manifest-app.xml
           python3 tools/check-native-apk.py "$APK" > build/verification/native-elf-alignment.txt
