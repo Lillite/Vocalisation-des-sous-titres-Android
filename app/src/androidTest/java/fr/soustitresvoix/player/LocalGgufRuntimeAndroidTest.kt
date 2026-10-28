@@ -115,12 +115,37 @@ class LocalGgufRuntimeAndroidTest {
                 assertEquals(" probe", output.output)
                 assertEquals(0, output.cachedPromptTokens)
                 if (auto.backend == "CPU") { assertFalse(output.gpuObserved); assertEquals(0L, output.gpuGraphNodes) }
+                if (android.os.Build.SUPPORTED_ABIS.first() == "x86_64") {
+                    assertEquals("CPU", auto.backend)
+                    assertEquals(auto.fallbackReason, output.fallbackReason)
+                    when (auto.fallbackReason) {
+                        "OPENCL_RAM_BUDGET", "OPENCL_RAM_UNKNOWN" -> {
+                            // Admission can avoid probing OpenCL on a memory-constrained emulator.
+                            assertNull(auto.diagnostic)
+                            assertNull(output.diagnostic)
+                        }
+                        "OPENCL_UNAVAILABLE" -> {
+                            assertEquals(LocalGgufDiagnostic.Reason.BACKEND_NOT_COMPILED, auto.diagnostic?.reason)
+                            assertEquals(LocalGgufDiagnostic.Stage.BACKEND, auto.diagnostic?.stage)
+                            assertEquals(auto.diagnostic?.reason, output.diagnostic?.reason)
+                            assertEquals(auto.diagnostic?.stage, output.diagnostic?.stage)
+                        }
+                        else -> fail("Unexpected CPU-only AUTO fallback: ${auto.fallbackReason}")
+                    }
+                }
             } finally { next.closeAndAwait() }
             if (android.os.Build.SUPPORTED_ABIS.first() == "x86_64") {
                 val strict = LocalGgufRuntime.Client(context)
                 try {
                     try { strict.open(file, 1, 512, executionMode = "OPENCL"); fail("CPU-only ABI claimed GPU execution") }
-                    catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.BACKEND, failure.code) }
+                    catch (failure: LocalGgufRuntime.Failure) {
+                        assertEquals(LocalGgufRuntime.Code.BACKEND, failure.code)
+                        assertEquals(LocalGgufDiagnostic.Stage.BACKEND, failure.diagnostic?.stage)
+                        assertEquals(LocalGgufDiagnostic.Reason.BACKEND_NOT_COMPILED, failure.diagnostic?.reason)
+                        assertTrue(requireNotNull(failure.diagnostic).elapsedMs >= 0)
+                        assertFalse(requireNotNull(failure.diagnostic).probeCached)
+                        assertFalse(requireNotNull(failure.diagnostic).render().contains(file.name))
+                    }
                 } finally { strict.closeAndAwait() }
             }
         } finally { cpu.closeAndAwait(); file.delete() }
@@ -139,7 +164,12 @@ class LocalGgufRuntimeAndroidTest {
         val invalid = LocalGgufRuntime.Client(context)
         try {
             try { invalid.open(malformed, 1, 512); fail("Malformed model was loaded") }
-            catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.MODEL, failure.code) }
+            catch (failure: LocalGgufRuntime.Failure) {
+                assertEquals(LocalGgufRuntime.Code.MODEL, failure.code)
+                assertEquals(LocalGgufDiagnostic.Stage.MODEL_LOAD, failure.diagnostic?.stage)
+                assertEquals(LocalGgufDiagnostic.Reason.MODEL_LOAD_FAILED, failure.diagnostic?.reason)
+                assertFalse(requireNotNull(failure.diagnostic).render().contains(malformed.name))
+            }
         } finally { invalid.close(); malformed.delete() }
     }
 }

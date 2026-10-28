@@ -71,23 +71,26 @@ if awk -v target="$device" 'NR > 1 && $1 == target { found=1 } END { exit !found
   echo 'The dedicated emulator port is already occupied; refusing to touch it.' >&2
   exit 2
 fi
-image='system-images;android-36;default;x86_64'
-if [[ ! -x "$emulator" || ! -f "$sdk_root/system-images/android-36/default/x86_64/package.xml" ]]; then
+# Android 17 is published under android-37.0, not android-37. The SDK
+# repository's current schema resolves that exact stable AOSP image. Do not
+# substitute an older Android image when resolution or installation fails.
+image='system-images;android-37.0;default;x86_64'
+if [[ ! -x "$emulator" || ! -f "$sdk_root/system-images/android-37.0/default/x86_64/package.xml" ]]; then
   timeout -k 1s 180s "$sdkmanager" --licenses < <(yes) > "$evidence/sdk-licenses.txt" 2>&1
   timeout -k 1s 600s "$sdkmanager" emulator "$image" > "$evidence/sdk-install.txt" 2>&1
 else
-  printf 'Official emulator and API 36 AOSP default x86_64 image already installed.\n' > "$evidence/sdk-install.txt"
+  printf 'Official emulator and Android 17 / API 37.0 AOSP default x86_64 image already installed.\n' > "$evidence/sdk-install.txt"
 fi
 {
   date -u '+%Y-%m-%dT%H:%M:%SZ'
   timeout -k 1s 15s "$adb" version
   timeout -k 1s 30s "$sdkmanager" --version
   timeout -k 1s 15s "$emulator" -version
-  cat "$sdk_root/system-images/android-36/default/x86_64/source.properties"
+  cat "$sdk_root/system-images/android-37.0/default/x86_64/source.properties"
 } > "$evidence/tool-versions.txt" 2>&1
 avd_home=$(mktemp -d "${RUNNER_TEMP:-/tmp}/tts-ci-avd.XXXXXX")
 export ANDROID_AVD_HOME="$avd_home"
-avd_name=tts-ci-api36
+avd_name=tts-ci-api37
 printf 'no\n' | timeout -k 1s 120s "$avdmanager" create avd --name "$avd_name" --package "$image" --device pixel_2 > "$evidence/avd-create.txt" 2>&1
 {
   printf 'hw.cpu.ncore=4\nhw.ramSize=2048\ndisk.dataPartition.size=2048M\n'

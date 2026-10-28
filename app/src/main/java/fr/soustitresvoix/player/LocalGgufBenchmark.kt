@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import java.time.Instant
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -28,6 +29,29 @@ internal class LocalGgufBenchmark(
         else engine.close()
     }
 ) : AutoCloseable {
+    data class Platform(val androidRelease: String, val api: Int, val manufacturer: String,
+        val model: String, val abis: List<String>, val appVersion: String?, val appVersionCode: Long?,
+        val startedAtUtc: String) {
+        fun render(): String = buildString {
+            append("Début de l’essai (UTC) : "); append(startedAtUtc)
+            append("\nApplication : "); append(appVersion ?: "version indisponible")
+            appVersionCode?.let { append(" ; code "); append(it) }
+            append("\nPlateforme rapportée par Android : "); append(androidRelease); append(" ; API "); append(api)
+            append("\nAppareil déclaré : "); append(manufacturer); append(' '); append(model)
+            append(" ; ABI : "); append(abis.joinToString(", ").ifEmpty { "indisponible" })
+        }
+        companion object {
+            @Suppress("DEPRECATION")
+            fun read(context: Context): Platform {
+                val info = runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
+                fun bounded(value: String?) = value.orEmpty().filter { !it.isISOControl() }.take(128).ifBlank { "indisponible" }
+                return Platform(bounded(Build.VERSION.RELEASE), Build.VERSION.SDK_INT,
+                    bounded(Build.MANUFACTURER), bounded(Build.MODEL), Build.SUPPORTED_ABIS.take(8).map(::bounded),
+                    info?.versionName?.let(::bounded), info?.let { if (Build.VERSION.SDK_INT >= 28) it.longVersionCode else it.versionCode.toLong() },
+                    Instant.now().toString())
+            }
+        }
+    }
     data class Environment(val availableRamBytes: Long = 0, val thermalStatus: Int? = null,
         val batteryTenthsCelsius: Int? = null) {
         fun render(): String = buildString {
@@ -75,16 +99,18 @@ internal class LocalGgufBenchmark(
     data class State(val status: String = "Prêt. Aucun essai comparatif lancé.", val busy: Boolean = false,
         val modelSha256: String = "", val modelBytes: Long = 0, val threads: Int = 4,
         val profile: LocalGgufProfile = LocalGgufProfile.AUTO, val runs: List<Run> = emptyList(),
-        val currentPerformance: LocalTranslationPerformance? = null) {
+        val currentPerformance: LocalTranslationPerformance? = null, val platform: Platform? = null) {
         fun report(): String = buildString {
             append("Comparatif local CPU / GPU — texte synthétique intégré\n")
             append(status)
             if (modelSha256.isEmpty()) { append("\nAucun modèle n’a été exécuté."); return@buildString }
+            platform?.let { append('\n'); append(it.render()) }
             append("\nModèle : "); append(modelBytes); append(" octets ; SHA-256 "); append(modelSha256)
             append("\nProfil demandé : "); append(profile.label); append(" ; threads CPU demandés : "); append(threads)
             append("\nSource anglaise fixe : "); append(SOURCE)
             append("\nCible : français ; contexte personnel vide ; mêmes poids, profil et limites de génération pour les deux modes.")
             append("\nOrdre fixe : CPU puis GPU OpenCL strict. Deux passages identiques par mode : premier passage puis réutilisation éventuelle du préfixe.")
+            append("\nLes durées d’appel et de mode comprennent déjà le chargement éventuel ; sa mesure séparée détaille le total.")
             append("\nLes modèles ne sont jamais chargés simultanément. L’ordre, le cache système, la chauffe, la lecture éventuelle et les autres applications peuvent influencer ces mesures ; leur activité n’est pas mesurée ici. Ces mesures ne prouvent pas la qualité sur un film.\n")
             currentPerformance?.let {
                 append("\nDernières mesures de l’essai en cours :\n"); append(it.render()); append('\n')
@@ -92,7 +118,8 @@ internal class LocalGgufBenchmark(
             runs.forEach { run ->
                 append("\nMode demandé : "); append(run.requestedMode)
                 append("\nAvant : "); append(run.before.render())
-                append("\nChargement du modèle : "); append(if (run.loadMs > 0) "${run.loadMs} ms" else "non mesuré séparément")
+                append("\nChargement du modèle : "); append(if (run.loadMs > 0) "${run.loadMs} ms" else
+                    "aucune mesure positive de chargement réussi reçue ; un chargement a pu être tenté")
                 run.samples.forEach { sample ->
                     append("\n\nPassage "); append(sample.number)
                     append(if (sample.number == 1) " — premier appel" else " — même texte dans la même session")
@@ -135,7 +162,7 @@ internal class LocalGgufBenchmark(
         val owner = ++sequence
         val token = AtomicBoolean(false).also { cancelled = it }
         publish(State("Comparatif demandé. Sa durée dépend du modèle ; tu peux l’annuler.", true,
-            model.sha256, model.bytes, threads, profile))
+            model.sha256, model.bytes, threads, profile, platform = Platform.read(app)))
         worker.execute {
             val results = mutableListOf<Run>()
             var fatal = false

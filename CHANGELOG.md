@@ -2,9 +2,18 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
-## 0.5.5-perf — candidate de performances GGUF locales
+## 0.5.6-opencl — candidate de diagnostic GPU précis
 
-VersionCode **12**, identité Traduction et certificat durable conservés. [Guide des performances](docs/TRADUCTION_GGUF_055.md) · [Notes et limites](docs/releases/0.5.5-perf.md). La 0.5.2 reste la dernière stable. Cette candidate doit réussir sa propre campagne avant fusion et sa distribution doit être vérifiée séparément.
+VersionCode **13**, identité Traduction et certificat durable conservés. [Guide du diagnostic](docs/DIAGNOSTIC_OPENCL_056.md) · [Notes et limites](docs/releases/0.5.6-opencl.md). La 0.5.2 reste la dernière stable. La validation et la distribution de cette candidate restent à établir sur ses propres sources.
+
+- Transmission d’une cause technique bornée entre le calcul natif, le service Android et le rapport : étape, raison, statut OpenCL disponible, inventaire mesuré et durée, sans journal brut ni contenu personnel.
+- Distinction du pilote directement visible, de l’enregistrement ICD et du backend GPU reconnu. Une réponse d’échec réutilisée est signalée ; un échec rapide ne devient pas une mesure de performance GPU.
+- Premier appel explicitement présenté avec son chargement éventuel ; absence de mesure de chargement réussie distinguée d’une absence de tentative.
+- Calcul, modèle, quantification, contexte et règles de lecture conservés. Aucun GPU fonctionnel ni gain supplémentaire n’est annoncé avant essai réel.
+
+## 0.5.5-perf — performances GGUF locales publiées
+
+VersionCode **12**, identité Traduction et certificat durable conservés. [Guide des performances](docs/TRADUCTION_GGUF_055.md) · [Notes et limites](docs/releases/0.5.5-perf.md). La 0.5.2 reste la dernière stable. La [PR #21](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/21) a réussi **698 tests avant fusion**. Reconstruction, signature et téléchargement public ont ensuite été vérifiés ; [preuves](docs/releases/0.5.5-perf.md).
 
 - Optimisations CPU ARM64 et réutilisation exacte du préfixe de tokens pour réduire les recalculs, sans supprimer une occurrence de sous-titre ni affaiblir les contrôles de fin et d’annulation.
 - Backend GPU facultatif, avec distinction entre choix demandé, backend chargé et travail réellement déporté ; le CPU reste disponible.
