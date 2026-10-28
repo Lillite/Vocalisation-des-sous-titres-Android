@@ -1,12 +1,14 @@
 package fr.soustitresvoix.player
 
 import android.content.Context
+import android.os.Build
 import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.json.JSONObject
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
@@ -16,8 +18,10 @@ import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.time.Instant
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /** Coordinator checks use a fake measured backend, never trained weights or an actual GPU. */
 @RunWith(RobolectricTestRunner::class)
@@ -142,6 +146,106 @@ class LocalGgufBenchmarkRobolectricTest {
         } finally { benchmark.close() }
     }
 
+    @Test fun firstCallAlreadyIncludesLazyLoadAndModeCountsItOnceWithCleanup() {
+        val now = AtomicLong(1_000)
+        val benchmark = LocalGgufBenchmark(context, {}, engineFactory = { config ->
+            var calls = 0
+            FakeEngine(config, mutableListOf(), mutableListOf(), beforeGeneration = {
+                // First call: 10 ms load + 12 ms prompt + 20 ms generation.
+                // Second call: 1 ms prompt + 20 ms generation, model still loaded.
+                now.addAndGet(if (++calls == 1) 42 else 21)
+            })
+        }, snapshot = probe, clock = now::get, closeEngine = { engine ->
+            now.addAndGet(3); engine.close()
+        })
+        try {
+            benchmark.start(model, 4, LocalGgufProfile.AUTO); await(benchmark)
+            assertEquals(2, benchmark.state.runs.size)
+            benchmark.state.runs.forEach { run ->
+                assertNull(run.failure)
+                assertEquals(10L, run.loadMs)
+                assertEquals(listOf(42L, 21L), run.samples.map { it.wallMs })
+                assertEquals(66L, run.wallMs)
+                assertEquals(run.samples.sumOf { it.wallMs } + 3, run.wallMs)
+            }
+            assertTrue(benchmark.state.report().contains("comprennent déjà le chargement éventuel"))
+        } finally { benchmark.close() }
+    }
+
+    @Test fun reportCapturesTheActualPlatformAndAppIdentityOnceAtStart() {
+        val benchmark = LocalGgufBenchmark(context, {}, engineFactory = {
+            FakeEngine(it, mutableListOf(), mutableListOf())
+        }, snapshot = probe)
+        try {
+            val before = Instant.now()
+            benchmark.start(model, 4, LocalGgufProfile.AUTO); await(benchmark)
+            val platform = requireNotNull(benchmark.state.platform)
+            assertEquals(Build.VERSION.RELEASE, platform.androidRelease)
+            assertEquals(Build.VERSION.SDK_INT, platform.api)
+            assertEquals(Build.MODEL, platform.model)
+            assertEquals(Build.MANUFACTURER, platform.manufacturer)
+            assertEquals(Build.SUPPORTED_ABIS.toList(), platform.abis)
+            @Suppress("DEPRECATION")
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            assertEquals(info.versionName, platform.appVersion)
+            assertEquals(info.longVersionCode, platform.appVersionCode)
+            val started = Instant.parse(platform.startedAtUtc)
+            assertFalse(started.isBefore(before))
+            assertFalse(started.isAfter(Instant.now()))
+            val report = benchmark.state.report()
+            assertTrue(report.contains("Plateforme rapportée par Android : ${Build.VERSION.RELEASE} ; API ${Build.VERSION.SDK_INT}"))
+            assertEquals(1, Regex("Plateforme rapportée par Android").findAll(report).count())
+            assertFalse(report.contains("OxygenOS"))
+            assertFalse(report.contains("fingerprint", ignoreCase = true))
+        } finally { benchmark.close() }
+    }
+
+    @Test fun gpuFailureRetainsBoundedDiagnosticAndReleasesBothModesWithoutFalseSuccess() {
+        val privateMarker = "synthetic private marker must not leave the parser"
+        val diagnostic = requireNotNull(LocalGgufDiagnostic.parse(JSONObject().apply {
+            put("stage", "OPENCL_ICD"); put("reason", "ICD_NO_PLATFORM"); put("elapsedMs", 50)
+            put("openClStatus", -1001); put("directPlatforms", 1); put("icdPlatforms", 0)
+            put("gpuDevices", -1); put("probeCached", true)
+            put("privatePath", model.file.absolutePath); put("output", privateMarker)
+        }))
+        val events = mutableListOf<String>()
+        val benchmark = LocalGgufBenchmark(context, {}, engineFactory = { config ->
+            events += "${config.localExecution}:open"
+            if (config.localExecution == "CPU") FakeEngine(config, events, mutableListOf())
+            else object : TranslationEngine {
+                override val id = TranslationEngines.translationIdentity(config)
+                override fun translate(texts: List<String>, sourceLanguage: String, targetLanguage: String,
+                    cancelled: () -> Boolean): List<String> =
+                    throw TranslationFailure(TranslationFailure.Reason.LOCAL_BACKEND, diagnostic)
+                override fun close() { if (events.lastOrNull() != "OPENCL:closed") events += "OPENCL:closed" }
+            }
+        }, snapshot = probe)
+        try {
+            benchmark.start(model, 4, LocalGgufProfile.AUTO); await(benchmark)
+            val cpu = benchmark.state.runs.first()
+            val gpu = benchmark.state.runs.last()
+            assertNull(cpu.failure)
+            assertEquals(2, cpu.samples.size)
+            assertTrue(cpu.cleanupConfirmed)
+            assertTrue(gpu.cleanupConfirmed)
+            assertTrue(gpu.samples.isEmpty())
+            assertTrue(requireNotNull(gpu.failure).contains(diagnostic.render()))
+            assertNull(gpu.lastPerformance)
+            assertEquals(0L, gpu.loadMs)
+            assertEquals(listOf("CPU:open", "CPU:generate:1", "CPU:generate:2", "CPU:closed", "OPENCL:open", "OPENCL:closed"), events)
+            val report = benchmark.state.report()
+            assertTrue(report.contains("OPENCL_ICD"))
+            assertTrue(report.contains("ICD_NO_PLATFORM"))
+            assertTrue(report.contains("-1001"))
+            assertTrue(report.contains("un chargement a pu être tenté"))
+            assertFalse(report.contains("GPU réellement observé : oui"))
+            assertFalse(report.contains("sorties CPU et GPU sont identiques"))
+            assertFalse(report.contains(model.file.absolutePath))
+            assertFalse(report.contains(privateMarker))
+            assertTrue(store.remove())
+        } finally { benchmark.close() }
+    }
+
     @Test fun differingOutputsAreExplicitAndNeverBecomeAnAutomaticQualityRanking() {
         val benchmark = LocalGgufBenchmark(context, {}, engineFactory = {
             FakeEngine(it, mutableListOf(), mutableListOf(), output = if (it.localExecution == "CPU")
@@ -174,6 +278,8 @@ class LocalGgufBenchmarkRobolectricTest {
             assertEquals(1, benchmark.state.runs.size)
             assertTrue(benchmark.state.runs.single().samples.isEmpty())
             assertTrue(benchmark.state.status.contains("annulé"))
+            assertFalse(benchmark.state.report().contains("GPU réellement observé : oui"))
+            assertFalse(benchmark.state.report().contains("deux réponses complètes validées"))
         } finally { benchmark.close() }
     }
 }

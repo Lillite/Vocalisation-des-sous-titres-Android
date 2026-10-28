@@ -3,6 +3,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include "execution_diagnostic.h"
 #ifdef SUBTITLE_NATIVE_TESTING
 #include <vector>
 #endif
@@ -11,6 +12,7 @@ struct llama_model;
 struct llama_context;
 namespace subtitle_local {
 struct Response {
+    subtitle_native::ExecutionDiagnostic diagnostic;
     std::string code = "MODEL";
     std::string name;
     std::string architecture;

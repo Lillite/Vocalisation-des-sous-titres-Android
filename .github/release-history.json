@@ -188,18 +188,36 @@
       },
       "id": 426794876,
       "source_commit": "6797e59a19053b375a24f8b7bb1c8e6beb48f478"
+    },
+    {
+      "tag": "v0.5.5-perf",
+      "title": "Sous-titres en voix 0.5.5 — Performances GGUF locales (préversion)",
+      "prerelease": true,
+      "latest": false,
+      "notes": "docs/releases/0.5.5-perf.md",
+      "asset": {
+        "name": "SousTitresVoix-0.5.5-perf.apk",
+        "version_name": "0.5.5-perf",
+        "version_code": 12,
+        "application_id": "fr.soustitresvoix.player.translation",
+        "id": 685686076,
+        "size": 53529386,
+        "sha256": "cd07705714eff711283711041abe196ed5f849c8cf8a9ae41cd8fb64dfd16950"
+      },
+      "id": 426942970,
+      "source_commit": "71a014af332906ecda30b74faadcc5d6ee3ddc9d"
     }
   ],
   "next_release": {
-    "tag": "v0.5.5-perf",
-    "title": "Sous-titres en voix 0.5.5 — Performances GGUF locales (préversion)",
+    "tag": "v0.5.6-opencl",
+    "title": "Sous-titres en voix 0.5.6 — Diagnostic OpenCL précis (préversion)",
     "prerelease": true,
     "latest": false,
-    "notes": "docs/releases/0.5.5-perf.md",
+    "notes": "docs/releases/0.5.6-opencl.md",
     "asset": {
-      "name": "SousTitresVoix-0.5.5-perf.apk",
-      "version_name": "0.5.5-perf",
-      "version_code": 12,
+      "name": "SousTitresVoix-0.5.6-opencl.apk",
+      "version_name": "0.5.6-opencl",
+      "version_code": 13,
       "application_id": "fr.soustitresvoix.player.translation"
     }
   }

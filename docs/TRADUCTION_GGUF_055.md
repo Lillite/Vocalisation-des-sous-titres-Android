@@ -1,8 +1,8 @@
-# Traduction GGUF locale — candidate 0.5.5 performances
+# Traduction GGUF locale — préversion 0.5.5 performances
 
 [Accueil](../README.md) · [Notes de version](releases/0.5.5-perf.md) · [Validation](../TESTING.md) · [Parcours publié 0.5.4](TRADUCTION_GGUF_054.md)
 
-La candidate **0.5.5-perf / code 12** prépare l’optimisation de la traduction locale existante. Le fichier GGUF, le SRT et les calculs restent sur le téléphone. Aucun passage par PocketPal, serveur ou compte n’est nécessaire ; aucun poids n’est inclus ou téléchargé automatiquement. La traduction textuelle fonctionne indépendamment de l’OCR, qui n’est pas ajouté par cette étape.
+La préversion publiée **0.5.5-perf / code 12** ajoute des optimisations à la traduction locale existante. Ses [preuves de publication](releases/0.5.5-perf.md) portent sur 698 tests. Le diagnostic précis des échecs GPU fait l’objet de la [candidate 0.5.6](DIAGNOSTIC_OPENCL_056.md). Le fichier GGUF, le SRT et les calculs restent sur le téléphone. Aucun passage par PocketPal, serveur ou compte n’est nécessaire ; aucun poids n’est inclus ou téléchargé automatiquement. La traduction textuelle fonctionne indépendamment de l’OCR, qui n’est pas ajouté par cette étape.
 
 ## Conserver le parcours de traduction
 

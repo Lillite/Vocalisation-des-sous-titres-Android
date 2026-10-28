@@ -57,6 +57,30 @@ class LocalGgufRuntimeRobolectricTest {
             catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.RESPONSE, failure.code) }
         }
     }
+    @Test fun serviceErrorReconstructionRetainsOnlyTheSanitizedDiagnosticForTheClient() {
+        val native = JSONObject().put("code", "BACKEND").put("diagnostic", JSONObject()
+            .put("stage", "OPENCL_DRIVER").put("reason", "DRIVER_NOT_ACCESSIBLE")
+            .put("elapsedMs", 17).put("openClStatus", JSONObject.NULL)
+            .put("directPlatforms", -1).put("icdPlatforms", -1).put("gpuDevices", -1).put("probeCached", false)
+            .put("privatePath", "/private/not-for-the-report.gguf")).toString()
+        val nativeFailure = try { LocalGgufRuntime.response(native); throw AssertionError("Expected native error") }
+            catch (failure: LocalGgufRuntime.Failure) { failure }
+        val host = Robolectric.buildService(LocalGgufTranslationService::class.java).create()
+        try {
+            val error = host.get().javaClass.getDeclaredMethod("error", LocalGgufRuntime.Code::class.java,
+                LocalGgufDiagnostic::class.java).apply { isAccessible = true }
+            val encoded = error.invoke(host.get(), nativeFailure.code, nativeFailure.diagnostic) as String
+            assertFalse(encoded.contains("privatePath"))
+            assertFalse(encoded.contains("not-for-the-report"))
+            try { LocalGgufRuntime.response(encoded); fail("Service error was lost") }
+            catch (clientFailure: LocalGgufRuntime.Failure) {
+                assertEquals(LocalGgufRuntime.Code.BACKEND, clientFailure.code)
+                assertEquals(LocalGgufDiagnostic.Stage.OPENCL_DRIVER, clientFailure.diagnostic?.stage)
+                assertEquals(LocalGgufDiagnostic.Reason.DRIVER_NOT_ACCESSIBLE, clientFailure.diagnostic?.reason)
+                assertEquals(17L, clientFailure.diagnostic?.elapsedMs)
+            }
+        } finally { host.destroy(); shadowOf(Looper.getMainLooper()).idle() }
+    }
     @Test fun mainThreadCallsFailBeforeBindingAndCloseNeverWaits() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val client = LocalGgufRuntime.Client(context)

@@ -8,6 +8,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -270,9 +271,13 @@ class LocalGgufTranslationEngineTest {
     @Test fun automaticDriverFailureWaitsForUnloadingBeforeStartingCpuAndReportsFallback() {
         val fixture = fixture()
         val gpuReleased = AtomicBoolean(false)
+        val diagnostic = requireNotNull(LocalGgufDiagnostic.parse(JSONObject()
+            .put("stage", "GENERATION").put("reason", "NO_GPU_EXECUTION").put("elapsedMs", 30)
+            .put("openClStatus", JSONObject.NULL).put("directPlatforms", 1).put("icdPlatforms", 1)
+            .put("gpuDevices", 1).put("probeCached", false)))
         val gpu = Backend(LocalGgufBackend.Info("TranslateGemma 4B", "gemma3",
             LocalTranslationPerformance(phase = "load", backend = "OPENCL"))).apply {
-            generate = { _, _ -> throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.BACKEND) }
+            generate = { _, _ -> throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.BACKEND, diagnostic) }
             onAwaitedClose = { gpuReleased.set(true) }
         }
         val cpu = Backend().apply { onOpen = { assertTrue("GPU release must precede CPU allocation", gpuReleased.get()) } }
@@ -288,7 +293,36 @@ class LocalGgufTranslationEngineTest {
         assertTrue(reports.any { it.phase == "fallback" && it.fallbackReason.isNotBlank() })
         assertEquals("AUTO", reports.last().requestedMode)
         assertEquals("CPU", reports.last().backend)
+        assertSame(diagnostic, reports.last().diagnostic)
+        assertTrue(reports.last().render().contains("NO_GPU_EXECUTION"))
         engine.close()
+    }
+
+    @Test fun strictBackendFailuresPreserveTheirStageAndCodeWithoutPersonalText() {
+        for (duringOpen in listOf(true, false)) {
+            val fixture = fixture()
+            val diagnostic = requireNotNull(LocalGgufDiagnostic.parse(JSONObject()
+                .put("stage", if (duringOpen) "OPENCL_ICD" else "GENERATION")
+                .put("reason", if (duringOpen) "ICD_NO_PLATFORM" else "NO_GPU_EXECUTION")
+                .put("elapsedMs", 50).put("openClStatus", -1001)
+                .put("directPlatforms", 1).put("icdPlatforms", 0).put("gpuDevices", -1)
+                .put("probeCached", duringOpen).put("output", "Private synthetic subtitle")))
+            val backend = Backend().apply {
+                if (duringOpen) onOpen = { throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.BACKEND, diagnostic) }
+                else generate = { _, _ -> throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.BACKEND, diagnostic) }
+            }
+            var creations = 0
+            val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { creations++; backend }, executionMode = "OPENCL")
+            try {
+                val failure = fails<TranslationFailure> { engine.translate(listOf("Private synthetic source"), "en", "fr") { false } }
+                assertEquals(TranslationFailure.Reason.LOCAL_BACKEND, failure.reason)
+                assertSame(diagnostic, failure.localDiagnostic)
+                assertTrue(failure.message.orEmpty().contains(diagnostic.reason.name))
+                assertFalse(failure.message.orEmpty().contains("Private synthetic"))
+                assertEquals(1, creations)
+                assertEquals(if (duringOpen) 0 else 1, backend.prompts.size)
+            } finally { engine.close() }
+        }
     }
 
     @Test fun failedUnloadingReceiptPreventsCpuRetryAndKeepsTheErrorVisible() {

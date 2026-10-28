@@ -19,6 +19,13 @@ namespace subtitle_local {
 namespace {
 using Clock = std::chrono::steady_clock;
 long long elapsed(Clock::time_point start) { return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start).count(); }
+void diagnose(Response & result, const char * stage, const char * reason, Clock::time_point start) {
+    auto & value = result.diagnostic;
+    value.stage = stage; value.reason = reason;
+    value.elapsed_ms = std::min(86'400'000LL, std::max(0LL, elapsed(start)));
+    value.has_opencl_status = false;
+    value.probe_cached = false;
+}
 long long peak_rss() { struct rusage v{}; return getrusage(RUSAGE_SELF, &v) == 0 ? static_cast<long long>(v.ru_maxrss) * 1024 : 0; }
 std::string metadata(llama_model * model, const char * key) {
     char value[512]{};
@@ -121,12 +128,21 @@ std::string Response::json() const {
         << ",\"requestedGpuLayers\":" << requested_gpu_layers << ",\"actualGpuLayers\":" << actual_gpu_layers
         << ",\"gpuObserved\":" << (gpu_observed ? "true" : "false") << ",\"gpuGraphNodes\":" << gpu_graph_nodes
         << ",\"cachedPromptTokens\":" << cached_prompt_tokens << ",\"promptEvaluatedTokens\":" << prompt_evaluated_tokens
-        << ",\"residentBytes\":" << resident_bytes << ",\"availableRamBytes\":" << available_ram_bytes << '}';
+        << ",\"residentBytes\":" << resident_bytes << ",\"availableRamBytes\":" << available_ram_bytes;
+    if (diagnostic.present()) {
+        out << ",\"diagnostic\":{\"stage\":" << quote(diagnostic.stage) << ",\"reason\":" << quote(diagnostic.reason)
+            << ",\"elapsedMs\":" << diagnostic.elapsed_ms << ",\"openClStatus\":";
+        if (diagnostic.has_opencl_status) out << diagnostic.opencl_status; else out << "null";
+        out << ",\"directPlatforms\":" << diagnostic.direct_platforms << ",\"icdPlatforms\":" << diagnostic.icd_platforms
+            << ",\"gpuDevices\":" << diagnostic.gpu_devices << ",\"probeCached\":" << (diagnostic.probe_cached ? "true" : "false") << '}';
+    }
+    out << '}';
     return out.str();
 }
 Response Session::open(const std::string & path, int threads, int context_tokens, const std::string & execution,
         int gpu_layers, const std::string & cache_path) {
     std::lock_guard<std::mutex> lock(operation_);
+    const auto open_start = Clock::now();
     Response result;
     result.process_id = static_cast<int>(getpid());
     result.requested_mode = execution;
@@ -138,10 +154,14 @@ Response Session::open(const std::string & path, int threads, int context_tokens
     state_->lease = std::make_unique<subtitle_native::ModelLease>();
     if (!*state_->lease) { state_->lease.reset(); result.code = "BUSY"; return result; }
     auto release_on_error = [&]() { state_->clear_model(); state_->lease.reset(); };
+    const char * phase = "BACKEND";
     try {
         subtitle_native::initialize_backend();
         auto * cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
-        if (!cpu) { result.code = "BACKEND"; release_on_error(); return result; }
+        if (!cpu) {
+            diagnose(result, phase, "CPU_BACKEND_MISSING", open_start);
+            result.code = "BACKEND"; release_on_error(); return result;
+        }
         const std::string cpu_description = ggml_backend_dev_description(cpu);
         auto * gpu = static_cast<ggml_backend_dev_t>(nullptr);
         const auto available = available_ram_bytes();
@@ -157,8 +177,11 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         } else if (execution != "CPU") {
             if (!cache_path.empty() && cache_path.find('\0') == std::string::npos)
                 setenv("GGML_OPENCL_KERNEL_CACHE_DIR", cache_path.c_str(), 1);
-            if (subtitle_native::prepare_opencl()) gpu = opencl_device();
+            const bool prepared = subtitle_native::prepare_opencl(&result.diagnostic);
+            if (prepared) gpu = opencl_device();
             if (!gpu) {
+                if (prepared) diagnose(result, "OPENCL_DEVICE", "DEVICE_NOT_REGISTERED", open_start);
+                else result.diagnostic.elapsed_ms = std::min(86'400'000LL, std::max(0LL, elapsed(open_start)));
                 if (execution == "OPENCL") { result.code = "BACKEND"; release_on_error(); return result; }
                 result.fallback_reason = "OPENCL_UNAVAILABLE";
             }
@@ -167,6 +190,7 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         const auto load_start = Clock::now();
         for (int attempt = 0; attempt < 2; ++attempt) {
             state_->clear_model();
+            phase = "MODEL_LOAD";
             auto p = llama_model_default_params();
             ggml_backend_dev_t devices[] = {use_gpu ? gpu : cpu, nullptr};
             p.devices = devices; p.n_gpu_layers = use_gpu ? gpu_layers : 0; p.load_mode = LLAMA_LOAD_MODE_MMAP;
@@ -175,6 +199,7 @@ Response Session::open(const std::string & path, int threads, int context_tokens
             state_->model.reset(llama_model_load_from_file(path.c_str(), p));
             if (cancelled_.load()) { result.code = "CANCELLED"; release_on_error(); return result; }
             if (!state_->model) {
+                diagnose(result, phase, "MODEL_LOAD_FAILED", open_start);
                 if (use_gpu && execution == "AUTO") { use_gpu = false; result.fallback_reason = "OPENCL_MODEL_LOAD_FAILED"; continue; }
                 result.code = use_gpu ? "BACKEND" : "MODEL"; release_on_error(); return result;
             }
@@ -182,15 +207,20 @@ Response Session::open(const std::string & path, int threads, int context_tokens
             cp.n_ctx = context_tokens; cp.n_batch = std::min(context_tokens, 512); cp.n_ubatch = 128;
             cp.n_threads = threads; cp.n_threads_batch = threads; cp.offload_kqv = use_gpu; cp.op_offload = use_gpu;
             cp.abort_callback = abort; cp.abort_callback_data = &cancelled_;
+            phase = "CONTEXT_INIT";
             state_->context.reset(llama_init_from_model(state_->model.get(), cp));
             if (cancelled_.load()) { result.code = "CANCELLED"; release_on_error(); return result; }
             if (!state_->context) {
+                diagnose(result, phase, "CONTEXT_INIT_FAILED", open_start);
                 if (use_gpu && execution == "AUTO") { use_gpu = false; result.fallback_reason = "OPENCL_CONTEXT_FAILED"; continue; }
                 result.code = use_gpu ? "BACKEND" : "CONTEXT"; release_on_error(); return result;
             }
             break;
         }
-        if (!state_->model || !state_->context) { result.code = "BACKEND"; release_on_error(); return result; }
+        if (!state_->model || !state_->context) {
+            diagnose(result, phase, "UNEXPECTED_FAILURE", open_start);
+            result.code = "BACKEND"; release_on_error(); return result;
+        }
         state_->gpu_selected = use_gpu;
         result.load_ms = elapsed(load_start);
         result.backend = use_gpu ? "OPENCL" : "CPU";
@@ -205,15 +235,24 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         measure_memory(result); result.code = "OK";
         state_->info = result;
         return result;
-    } catch (const std::bad_alloc &) { release_on_error(); result.code = "MEMORY"; return result; }
-      catch (...) { release_on_error(); result.code = "MODEL"; return result; }
+    } catch (const std::bad_alloc &) {
+        diagnose(result, phase, "ALLOCATION_FAILED", open_start);
+        release_on_error(); result.code = "MEMORY"; return result;
+    } catch (...) {
+        diagnose(result, phase, "UNEXPECTED_FAILURE", open_start);
+        release_on_error(); result.code = "MODEL"; return result;
+    }
 }
 Response Session::generate(const std::string & prompt, int output_tokens, bool add_special) {
     std::lock_guard<std::mutex> lock(operation_);
+    const auto generate_start = Clock::now();
     Response result = state_->info;
     result.code = "MODEL";
     result.process_id = static_cast<int>(getpid());
     auto failed = [&](const char * code, const char * reason = "error") {
+        const std::string failure_code = code;
+        if (failure_code == "MEMORY") diagnose(result, "GENERATION", "ALLOCATION_FAILED", generate_start);
+        else if (failure_code == "RESPONSE") diagnose(result, "GENERATION", "UNEXPECTED_FAILURE", generate_start);
         result.code = code; result.stop_reason = reason; result.output.clear();
         state_->clear_cache(); measure_memory(result); return result;
     };
@@ -275,6 +314,7 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
         result.gpu_graph_nodes = static_cast<long long>(subtitle_native::observed_gpu_graph_nodes());
         result.gpu_observed = state_->gpu_selected && result.gpu_graph_nodes > 0;
         if (state_->gpu_selected && !result.gpu_observed) {
+            diagnose(result, "GENERATION", "NO_GPU_EXECUTION", generate_start);
             if (result.requested_mode == "OPENCL") return failed("BACKEND", "no_gpu_execution");
             result.backend = "CPU"; result.device = "CPU"; result.fallback_reason = "OPENCL_NO_COMPUTE";
         }

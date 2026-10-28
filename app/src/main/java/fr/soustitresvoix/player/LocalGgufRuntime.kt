@@ -23,20 +23,22 @@ import java.util.concurrent.atomic.AtomicLong
 /** Optional OpenCL and CPU execution; text and paths stay inside private app processes. */
 internal object LocalGgufRuntime {
     enum class Code { BUSY, MODEL, CONTEXT, INPUT_TOO_LONG, OUTPUT_LIMIT, CANCELLED, DIED, TIMEOUT, RESPONSE, BACKEND, MEMORY }
-    class Failure(val code: Code) : Exception("Local GGUF: ${code.name}")
+    class Failure(val code: Code, val diagnostic: LocalGgufDiagnostic? = null) : Exception("Local GGUF: ${code.name}")
     data class Info(val name: String, val architecture: String, val fileType: String,
         val contextTokens: Int, val modelBytes: Long, val modelParameters: Long,
         val loadMs: Long = 0, val peakRssBytes: Long = 0, val processId: Int = 0,
         val backend: String = "CPU", val device: String = "CPU", val requestedMode: String = "CPU",
         val fallbackReason: String = "", val requestedGpuLayers: Int = 0, val actualGpuLayers: Int = 0,
-        val gpuObserved: Boolean = false, val residentBytes: Long = -1, val availableRamBytes: Long = -1)
+        val gpuObserved: Boolean = false, val residentBytes: Long = -1, val availableRamBytes: Long = -1,
+        val diagnostic: LocalGgufDiagnostic? = null)
     data class Generation(val output: String, val promptTokens: Int, val generatedTokens: Int,
         val stopReason: String, val promptMs: Long, val generationMs: Long, val peakRssBytes: Long,
         val backend: String = "CPU", val device: String = "CPU", val requestedMode: String = "CPU",
         val fallbackReason: String = "", val requestedGpuLayers: Int = 0, val actualGpuLayers: Int = 0,
         val gpuObserved: Boolean = false, val gpuGraphNodes: Long = 0,
         val cachedPromptTokens: Int = 0, val promptEvaluatedTokens: Int = 0,
-        val residentBytes: Long = -1, val availableRamBytes: Long = -1)
+        val residentBytes: Long = -1, val availableRamBytes: Long = -1,
+        val diagnostic: LocalGgufDiagnostic? = null)
     private val loaded by lazy {
         try { System.loadLibrary("subtitle_model_probe"); true }
         catch (_: LinkageError) { false }
@@ -46,7 +48,8 @@ internal object LocalGgufRuntime {
         if (json.length > GgufMessages.MAX_JSON) throw Failure(Code.RESPONSE)
         JSONObject(json).also {
             val code = it.getString("code")
-            if (code != "OK") throw Failure(runCatching { Code.valueOf(code) }.getOrDefault(Code.RESPONSE))
+            if (code != "OK") throw Failure(runCatching { Code.valueOf(code) }.getOrDefault(Code.RESPONSE),
+                LocalGgufDiagnostic.parse(it.optJSONObject("diagnostic")))
         }
     } catch (failure: Failure) { throw failure }
       catch (_: Exception) { throw Failure(Code.RESPONSE) }
@@ -58,7 +61,8 @@ internal object LocalGgufRuntime {
                 x.getLong("modelParameters"), x.getLong("loadMs"), x.getLong("peakRssBytes"), x.optInt("processId"),
                 x.optString("backend", "CPU"), x.optString("device", "CPU").take(256), x.optString("requestedMode", "CPU"),
                 x.optString("fallbackReason").take(128), x.optInt("requestedGpuLayers"), x.optInt("actualGpuLayers"),
-                x.optBoolean("gpuObserved"), x.optLong("residentBytes", -1), x.optLong("availableRamBytes", -1)).also {
+                x.optBoolean("gpuObserved"), x.optLong("residentBytes", -1), x.optLong("availableRamBytes", -1),
+                LocalGgufDiagnostic.parse(x.optJSONObject("diagnostic"))).also {
                 if (it.contextTokens !in 128..2048 || it.modelBytes <= 0 || it.modelParameters <= 0 ||
                     it.loadMs < 0 || it.peakRssBytes < 0 || !validBackend(it.backend, it.requestedMode) ||
                     it.gpuObserved || it.actualGpuLayers !in -1..1024 || it.requestedGpuLayers !in -1..1024 ||
@@ -77,7 +81,7 @@ internal object LocalGgufRuntime {
                 x.optString("fallbackReason").take(128), x.optInt("requestedGpuLayers"), x.optInt("actualGpuLayers"),
                 x.optBoolean("gpuObserved"), x.optLong("gpuGraphNodes"), x.optInt("cachedPromptTokens"),
                 x.optInt("promptEvaluatedTokens", x.getInt("promptTokens")), x.optLong("residentBytes", -1),
-                x.optLong("availableRamBytes", -1)).also {
+                x.optLong("availableRamBytes", -1), LocalGgufDiagnostic.parse(x.optJSONObject("diagnostic"))).also {
                 if (it.stopReason != "end_of_generation" || it.output.toByteArray(Charsets.UTF_8).size > 65536 ||
                     it.promptTokens !in 1..2048 || it.generatedTokens !in 0..1024 ||
                     it.promptMs < 0 || it.generationMs < 0 || it.peakRssBytes < 0 || !validBackend(it.backend, it.requestedMode) ||

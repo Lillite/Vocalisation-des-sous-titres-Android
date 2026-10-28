@@ -44,7 +44,8 @@ class LocalGgufTranslationService : Service() {
         true
     })
     override fun onBind(intent: Intent?): IBinder = inbox.binder
-    private fun error(code: LocalGgufRuntime.Code) = JSONObject().put("code", code.name).toString()
+    private fun error(code: LocalGgufRuntime.Code, diagnostic: LocalGgufDiagnostic? = null) = JSONObject()
+        .put("code", code.name).apply { diagnostic?.let { put("diagnostic", it.toJson()) } }.toString()
     private fun respond(reply: Messenger, request: Long, session: Long, json: String) {
         if (destroyed.get()) return
         try { reply.send(Message.obtain(null, GgufMessages.RESULT).apply {
@@ -91,7 +92,7 @@ class LocalGgufTranslationService : Service() {
                     it.path.startsWith(cacheRoot.path + File.separator) && (it.isDirectory || it.mkdirs())
                 }
                 opened.open(file, threads, context, execution, layers, cache).also { LocalGgufRuntime.info(it); succeeded = true }
-            } catch (failure: LocalGgufRuntime.Failure) { error(failure.code) }
+            } catch (failure: LocalGgufRuntime.Failure) { error(failure.code, failure.diagnostic) }
               catch (_: Exception) { error(LocalGgufRuntime.Code.MODEL) }
               catch (_: LinkageError) { error(LocalGgufRuntime.Code.BACKEND) }
               catch (_: OutOfMemoryError) { error(LocalGgufRuntime.Code.MEMORY) }
@@ -120,7 +121,7 @@ class LocalGgufTranslationService : Service() {
             val json = try {
                 if (cancelled.get()) throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.CANCELLED)
                 nativeSession?.generate(text, tokens, special) ?: error(LocalGgufRuntime.Code.MODEL)
-            } catch (failure: LocalGgufRuntime.Failure) { error(failure.code) }
+            } catch (failure: LocalGgufRuntime.Failure) { error(failure.code, failure.diagnostic) }
               catch (_: Exception) { error(LocalGgufRuntime.Code.RESPONSE) }
               catch (_: LinkageError) { error(LocalGgufRuntime.Code.BACKEND) }
               catch (_: OutOfMemoryError) { error(LocalGgufRuntime.Code.MEMORY) }

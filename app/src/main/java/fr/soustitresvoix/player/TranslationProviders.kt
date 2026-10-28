@@ -59,7 +59,8 @@ interface TranslationEngine : Closeable {
 class TranslationCancelledException : IOException("Traduction annulée ; aucune piste incomplète n’a été activée.")
 
 /** Only application-owned messages cross the UI boundary; no cause/body/URI is attached. */
-class TranslationFailure(val reason: Reason) : IOException(reason.message) {
+class TranslationFailure(val reason: Reason, val localDiagnostic: LocalGgufDiagnostic? = null) :
+    IOException(reason.message + (localDiagnostic?.let { "\n" + it.render() } ?: "")) {
     enum class Reason(val message: String) {
         BUDGET("Le volume restant dépasse ton plafond local de nouveaux caractères. Aucun nouveau lot n’a été envoyé."),
         CONFIGURATION("Configuration du traducteur invalide. Vérifie le moteur, sa clé, sa région et les langues."),

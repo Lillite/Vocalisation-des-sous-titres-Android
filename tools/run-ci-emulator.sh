@@ -8,8 +8,12 @@ if [[ -z "$sdk_root" || ! -d "$sdk_root" ]]; then
 fi
 export ANDROID_HOME="$sdk_root"
 export PATH="$sdk_root/platform-tools:$sdk_root/emulator:$PATH"
-sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
-avdmanager="$sdk_root/cmdline-tools/latest/bin/avdmanager"
+# The runner's "latest" alias may still point at an older tool that resolves
+# API 37 images but writes target=android-0 when creating their AVD metadata.
+# The workflow installs this exact tool version before reaching this script.
+cmdline_tools_bin="${ANDROID_CMDLINE_TOOLS_BIN:-$sdk_root/cmdline-tools/22.0/bin}"
+sdkmanager="$cmdline_tools_bin/sdkmanager"
+avdmanager="$cmdline_tools_bin/avdmanager"
 adb="$sdk_root/platform-tools/adb"
 emulator="$sdk_root/emulator/emulator"
 for tool in "$sdkmanager" "$avdmanager" "$adb"; do
@@ -71,28 +75,42 @@ if awk -v target="$device" 'NR > 1 && $1 == target { found=1 } END { exit !found
   echo 'The dedicated emulator port is already occupied; refusing to touch it.' >&2
   exit 2
 fi
-image='system-images;android-36;default;x86_64'
-if [[ ! -x "$emulator" || ! -f "$sdk_root/system-images/android-36/default/x86_64/package.xml" ]]; then
+# Android 17 is published under android-37.0, not android-37. The SDK
+# repository's current schema resolves that exact stable AOSP image. Do not
+# substitute an older Android image when resolution or installation fails.
+image='system-images;android-37.0;default;x86_64'
+if [[ ! -x "$emulator" || ! -f "$sdk_root/system-images/android-37.0/default/x86_64/package.xml" ]]; then
   timeout -k 1s 180s "$sdkmanager" --licenses < <(yes) > "$evidence/sdk-licenses.txt" 2>&1
   timeout -k 1s 600s "$sdkmanager" emulator "$image" > "$evidence/sdk-install.txt" 2>&1
 else
-  printf 'Official emulator and API 36 AOSP default x86_64 image already installed.\n' > "$evidence/sdk-install.txt"
+  printf 'Official emulator and Android 17 / API 37.0 AOSP default x86_64 image already installed.\n' > "$evidence/sdk-install.txt"
 fi
 {
   date -u '+%Y-%m-%dT%H:%M:%SZ'
+  printf 'cmdline_tools_bin=%s\n' "$cmdline_tools_bin"
+  cat "$cmdline_tools_bin/../source.properties"
   timeout -k 1s 15s "$adb" version
   timeout -k 1s 30s "$sdkmanager" --version
   timeout -k 1s 15s "$emulator" -version
-  cat "$sdk_root/system-images/android-36/default/x86_64/source.properties"
+  cat "$sdk_root/system-images/android-37.0/default/x86_64/source.properties"
 } > "$evidence/tool-versions.txt" 2>&1
 avd_home=$(mktemp -d "${RUNNER_TEMP:-/tmp}/tts-ci-avd.XXXXXX")
 export ANDROID_AVD_HOME="$avd_home"
-avd_name=tts-ci-api36
+avd_name=tts-ci-api37
 printf 'no\n' | timeout -k 1s 120s "$avdmanager" create avd --name "$avd_name" --package "$image" --device pixel_2 > "$evidence/avd-create.txt" 2>&1
 {
   printf 'hw.cpu.ncore=4\nhw.ramSize=2048\ndisk.dataPartition.size=2048M\n'
 } >> "$avd_home/$avd_name.avd/config.ini"
 cp "$avd_home/$avd_name.avd/config.ini" "$evidence/avd-config.ini"
+cp "$avd_home/$avd_name.ini" "$evidence/avd.ini"
+# Retain both AVD files before boot and reject the old tools' malformed target.
+# Resolving the image or observing sys.boot_completed alone does not establish
+# that the emulator was created for the requested Android platform.
+if ! awk -F '=' '$1 == "target" { sub(/\r$/, "", $2); count++; print "observed_target=" $2; if ($2 == "android-37.0") valid++ } END { exit !(count == 1 && valid == 1) }' \
+    "$evidence/avd.ini" > "$evidence/avd-target-check.txt"; then
+  echo 'The AVD target is not exactly android-37.0; refusing to boot or run instrumentation.' >&2
+  exit 2
+fi
 # Use the supported ANGLE + SwiftShader backend on this GPU-less runner.
 # SystemUI timed out while the former legacy backend was warming shaders.
 # Keep the same device, resources, readiness/ANR guards and complete test runs.

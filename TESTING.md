@@ -2,9 +2,54 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Essais sur téléphone](docs/TESTS_TELEPHONE.md) · [Contribution](CONTRIBUTING.md)
 
-## Candidate 0.5.5-perf — validation à établir
+## Candidate 0.5.6-opencl — validation à établir
 
-Les sources de la candidate préparent **0.5.5-perf / code 12**, avec l’identité Android conservée. Le [guide des performances](docs/TRADUCTION_GGUF_055.md) décrit les optimisations CPU, le GPU facultatif à mesurer, le cache de préfixe exact et le correctif de reconnaissance Hy-MT2. Traduction et OCR restent indépendants ; le NPU et l’OCR ne sont pas intégrés. Aucun gain de vitesse ou de qualité linguistique n’est déduit des tests synthétiques.
+Les sources préparent **0.5.6-opencl / code 13**, avec la même identité Android et le même certificat durable. Le [guide](docs/DIAGNOSTIC_OPENCL_056.md) et les [notes](docs/releases/0.5.6-opencl.md) distinguent le correctif de diagnostic d’une résolution encore non démontrée de l’échec GPU. Aucun modèle, poids, quantification ou contexte n’est modifié pour accélérer les mesures.
+
+Les nouvelles régressions doivent vérifier la conservation de l’étape et de la raison bornées depuis le natif jusqu’au rapport, les codes et compteurs inconnus, le refus des données arbitraires, la réutilisation éventuelle d’une préparation échouée et les durées inclusives du premier appel. Les protections de Pause, de déplacement, de callbacks périmés, d’occurrences, de reprise et d’export demeurent requises. Le chemin CPU ne doit jamais ouvrir le pilote OpenCL ; le mode GPU strict ne peut pas valider un repli CPU.
+
+L’inventaire final attendu contient **178 tests noyau, 418 tests JVM application et 110 tests Android**, soit **706 méthodes distinctes**. Les lanceurs vérifient les effectifs et les identités exactes dans les rapports du run concerné ; cet inventaire n’annonce pas leur réussite. La campagne exacte doit exécuter les tests sur **l’APK release**, avec **Android 17 / API 37**, sans présenter les tests Android 16 / API 36 de la version précédente comme une preuve de compatibilité nouvelle. Les niveaux de compilation et de ciblage restent API 36 ; le niveau du système d’exécution est une mesure distincte. Les tests émulateur n’établissent ni déport GPU réel sur le OnePlus, ni qualité linguistique, débit soutenu, autonomie ou TalkBack réel.
+
+Avant fusion, la proposition exacte doit construire et tester cet APK dans GitHub Actions. Après fusion à deux parents, la reconstruction doit prouver les mêmes sources et le contenu applicatif identique hors signature, sans répéter les suites réussies. La publication exige la signature durable et le contrôle indépendant des fichiers publics. La **0.5.2 reste la dernière stable**. Aucun succès de la 0.5.6 n’est annoncé avant son exécution correspondante.
+
+### Outillage local 0.5.6
+
+Les **59 tests Python hors réseau** ont réussi : **20** pour la publication, **23** pour la synchronisation de l’historique, **10** pour le nettoyage documentaire et **6** pour la provenance après fusion. Le formatage des notes publiques a aussi été vérifié avec des identifiants synthétiques, sans signature ni téléversement. Ces résultats ne remplacent pas les suites Kotlin, JNI et Android de la candidate.
+
+La compilation Kotlin principale, JVM et AndroidTest, puis **42 méthodes JVM ciblées**, ont réussi en **1 min 12 s** : diagnostic **3**, runtime **8**, moteur **23** et benchmark **8**, sans échec, erreur ni test ignoré. Les tâches requises `:core:test :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest` ont ensuite réussi en **2 min 50 s** ; les deux architectures natives ont été construites et lint rapporte **0 erreur, 97 avertissements**. Les tâches à jour, notamment le noyau, ne sont pas comptées comme une nouvelle exécution de tests. Le test Android AUTO a été corrigé pendant cette construction pour distinguer les replis mémoire légitimes du backend absent ; son fichier final a effectivement été recompilé, sans modifier le garde-fou mémoire de production.
+
+Les trois essais natifs hôte ont réussi : sonde existante, traduction avec modèle miniature terminant et fixture sensible au contexte, et détection OpenCL synthétique. Cette dernière exerce les étapes d’erreur, la réponse mémorisée, les compteurs bornés et une initialisation concurrente unique à travers le même parcours de détection que le code de production ; elle ne mesure aucun pilote GPU réel. La comparaison des logits avec et sans réutilisation reste identique pour les cas testés.
+
+Les APK ont passé les contrôles du manifeste compilé, des alignements ELF/ZIP de 16 Kio et de l’absence de pilote OpenCL embarqué ou de dépendance obligatoire vers lui. Le premier contrôle ad hoc, trop large, refusait tout GGUF dans l’APK principal : il a correctement trouvé l’ancien modèle miniature de diagnostic intégré. Le contrôle corrigé distingue ce modèle conservé de la fixture terminante de traduction, qui reste uniquement dans l’APK AndroidTest. Ces vérifications locales ne remplacent pas la campagne complète sur l’APK release et Android 17.
+
+### Première campagne Android 17 interrompue
+
+Le [run 40747778424](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40747778424), source `97a24d33b96e39cb235a0725043e3ca5122c986c`, a validé **178 tests noyau et 418 JVM**, puis s’est arrêté après **2 tests Android exécutés, dont 1 échec et 108 manquants**. Ce run ne valide donc pas les 706 méthodes attendues. Les rapports sont conservés dans l’artefact `12843267116`, ZIP de **2 982 536 octets**, SHA-256 `82950fb1fca11abf66972ede3e0e5c0ee154ce98c5617200bf8ce48352d56cb2`.
+
+Les journaux montrent un `SIGABRT` de `system_server` dans `GoldfishMapper::readFromHost`, pendant la persistance d’un aperçu de tâche, sur l’assertion `!rcEnc->featureInfo()->hasReadColorBufferDma`. Le `DeadSystemException` de l’application survient ensuite. Les outils préinstallés étaient **Command-line Tools 12.0** ; un [reproducteur primaire](https://github.com/actions/runner-images/issues/14484) documente cette même assertion avec une cible AVD `android-0` créée par des outils antérieurs à 20. Notre première collecte n’avait pas conservé le fichier externe indiquant cette cible : cette métadonnée ne peut pas être établie rétrospectivement.
+
+La préparation est corrigée pour installer et utiliser explicitement **Command-line Tools 22.0**, conserver les fichiers AVD et refuser une cible différente de `android-37.0` avant démarrage. Aucun test, effet graphique, capture de tâche ou garde-fou mémoire n’est désactivé. Le code applicatif et les tests restent inchangés ; la nouvelle proposition doit être validée avant fusion, sans transformer les réussites de la campagne interrompue en preuve du nouvel état.
+
+## Préversion publiée 0.5.5-perf — résultats vérifiés
+
+La [PR #21](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/21) a été validée par le [run 40721684965, tentative 2](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40721684965/attempts/2) : **178 tests noyau, 410 JVM application et 110 Android**, soit **698 réussites**, sans échec, erreur, test ignoré, manquant ou dupliqué. Les 110 tests Android ont réellement porté sur l’APK release dans un émulateur **Android 16 / API 36**. La première tentative s’était arrêtée sur un téléchargement NDK invalide, avant toute compilation ou test ; seule cette exécution échouée a été relancée, sur les mêmes sources.
+
+La fusion a produit `71a014af332906ecda30b74faadcc5d6ee3ddc9d`, arbre `4f24e0ccd8065f78d259d5ac204e869169f32ac5`. Le [run après fusion 40727662374](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40727662374) a vérifié les mêmes arbre et parents que la proposition testée, puis le contenu applicatif identique de l’APK reconstruit hors signature, **sans rejouer les suites**. Le [run de publication 40730354656](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40730354656) a réussi après signature durable et contrôles ; le téléchargement public indépendant a confirmé les octets exacts.
+
+| Repère | Valeur vérifiée |
+| --- | --- |
+| APK publié | `SousTitresVoix-0.5.5-perf.apk`, **53 529 386 octets** |
+| Identité et version | `fr.soustitresvoix.player.translation`, `0.5.5-perf`, code **12** |
+| SHA-256 APK | `cd07705714eff711283711041abe196ed5f849c8cf8a9ae41cd8fb64dfd16950` |
+| Certificat SHA-256 | `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d` |
+| Release / asset APK | `426942970` / `685686076` |
+| Publication | Préversion, dernière stable 0.5.2 conservée |
+
+Les essais de téléphone sont distincts de ces 698 régressions. Ils ont validé deux réponses CPU et la réutilisation de 92 tokens d’entrée sur 93 ; les tentatives GPU ont échoué avec un message trop général. Le [guide 0.5.6](docs/DIAGNOSTIC_OPENCL_056.md) décrit cette limite et les mesures CPU ponctuelles. Les résultats ci-dessous relatent la préparation de la **0.5.5**, pas la validation de la candidate suivante.
+
+### Périmètre et inventaire 0.5.5
+
+Les sources publiées **0.5.5-perf / code 12** conservent l’identité Android. Le [guide des performances](docs/TRADUCTION_GGUF_055.md) décrit les optimisations CPU, le GPU facultatif à mesurer, le cache de préfixe exact et le correctif de reconnaissance Hy-MT2. Traduction et OCR restent indépendants ; le NPU et l’OCR ne sont pas intégrés. Aucun gain de vitesse ou de qualité linguistique n’est déduit des tests synthétiques.
 
 | Groupe | Vérifications requises |
 | --- | --- |
@@ -16,7 +61,7 @@ Les sources de la candidate préparent **0.5.5-perf / code 12**, avec l’identi
 | Occurrences et lecteur | SRT autonome, répétitions, chevauchements, segmentation Unicode, sorties incomplètes, annulation/reprise, export complet ; pause, déplacement et callbacks périmés toujours prioritaires. |
 | Interface et stockage | Choix explicite CPU/GPU, état du modèle fiable, paramètres de reprise compatibles, progression et erreurs perceptibles, grands caractères et défilement. |
 
-L’inventaire final contient **178 tests noyau, 410 tests JVM application et 110 tests Android**, soit **698 méthodes distinctes attendues**. Les lanceurs exigent ces effectifs et les identités exactes dans les XML du run concerné. Cet inventaire n’annonce pas leur réussite. Les **662 tests réussis de la 0.5.4**, les **600 de la 0.5.3** et les **567 de la 0.5.2 ci-dessous sont historiques** ; ils ne valident pas cette candidate. Aucun succès de compilation, de test, de TalkBack réel, de qualité linguistique ou de performance du téléphone n’est annoncé avant son exécution correspondante. Aucun modèle de production ni texte personnel n’est téléchargé ou téléversé pour ces régressions.
+L’inventaire de la 0.5.5 contient **178 tests noyau, 410 tests JVM application et 110 tests Android**, soit **698 méthodes distinctes**. Les lanceurs ont retrouvé ces effectifs et identités exactes dans les XML du run vérifié ci-dessus. Les succès des versions précédentes n’ont pas servi à valider ces nouvelles sources. Aucun modèle de production ni texte personnel n’a été téléchargé ou téléversé pour ces régressions ; leurs résultats ne mesurent pas TalkBack réel, la fidélité linguistique ou les performances du téléphone.
 
 Le modèle miniature terminant reste généré dans les **assets de l’APK d’instrumentation seulement**, jamais dans l’APK principal. Ses générations réelles vérifient JNI et le cycle de vie ; les doubles contrôlés JVM restent distincts. L’émulateur ne démontre pas un calcul GPU sur le OnePlus ni le gain d’un modèle de production.
 
@@ -36,7 +81,7 @@ Un premier lot ciblé de **141 méthodes JVM** a produit **133 réussites et 8 �
 
 La dernière reprise locale ciblée a réussi en **1 min 47 s** : **22 méthodes JVM**, réparties en **7** de runtime, **6** de contrôles du modèle, **5** de benchmark, **3** d’interface du benchmark et **1** de reconstruction de l’activité. La compilation incrémentale des deux architectures, l’APK AndroidTest et lint ont également réussi, avec **0 erreur et 97 avertissements** lint. Ce lot ciblé ne remplace pas l’inventaire complet de **698 méthodes attendu en CI**.
 
-L’essai natif hôte a comparé une réutilisation de préfixe avec un calcul neuf sur une fixture sensible au contexte, aux poids d’attention non nuls : différence maximale des logits **0** pour les cas testés. Cette vérification CPU hôte ne mesure ni traduction de production, ni GPU du téléphone, ni gain prolongé. Les suites finales de la proposition exacte restent à exécuter avant fusion.
+L’essai natif hôte a comparé une réutilisation de préfixe avec un calcul neuf sur une fixture sensible au contexte, aux poids d’attention non nuls : différence maximale des logits **0** pour les cas testés. Cette vérification CPU hôte ne mesure ni traduction de production, ni GPU du téléphone, ni gain prolongé. Les suites finales de cette proposition ont ensuite été exécutées avec les résultats de la 0.5.5 vérifiés ci-dessus.
 
 Le dernier smoke test natif hôte et l’ancienne sonde ont aussi réussi après les corrections de reconnaissance des messages d’offload. Le helper sensible au contexte est réservé à l’essai hôte et absent des APK. Ces essais ne transforment pas une déclaration de backend ou un chargement de couches en preuve de calcul GPU sur le téléphone.
 
@@ -701,7 +746,7 @@ Contrôler ensuite chaque rapport JVM contre les méthodes attendues :
 
 ```sh
 python3 tools/verify-test-results.py --reports core/build/test-results/test --expected-count 178 --sources core/src/test/kotlin --output build/verification/local-debug-core-summary.json
-python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 410 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
+python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 418 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
 ```
 
 Pour une preuve finale, fournir aussi `--not-before-ns` avec l’instant de début

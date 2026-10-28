@@ -27,7 +27,8 @@ private class NativeTranslationBackend(context: Context) : LocalGgufBackend {
             LocalGgufBackend.Info(it.name, it.architecture, LocalTranslationPerformance(phase = "load",
                 requestedMode = it.requestedMode, backend = it.backend, device = it.device,
                 gpuObserved = false, loadMs = it.loadMs, peakRssBytes = it.peakRssBytes,
-                currentRssBytes = it.residentBytes, availableRamBytes = it.availableRamBytes, fallbackReason = it.fallbackReason))
+                currentRssBytes = it.residentBytes, availableRamBytes = it.availableRamBytes, fallbackReason = it.fallbackReason,
+                diagnostic = it.diagnostic))
         }
     override fun generate(prompt: String, maxOutputTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Generation =
         client.generate(prompt, maxOutputTokens, addSpecialTokens = false, cancelled = cancelled)
@@ -38,7 +39,7 @@ private class NativeTranslationBackend(context: Context) : LocalGgufBackend {
                     generatedTokens = it.generatedTokens, cachedPromptTokens = it.cachedPromptTokens,
                     promptEvaluatedTokens = it.promptEvaluatedTokens, peakRssBytes = it.peakRssBytes,
                     currentRssBytes = it.residentBytes, availableRamBytes = it.availableRamBytes,
-                    gpuGraphNodes = it.gpuGraphNodes, fallbackReason = it.fallbackReason))
+                    gpuGraphNodes = it.gpuGraphNodes, fallbackReason = it.fallbackReason, diagnostic = it.diagnostic))
             }
     override fun cancel() = client.cancel()
     override fun close() = client.close()
@@ -80,11 +81,13 @@ class LocalGgufTranslationEngine internal constructor(
     private var runningMode = executionMode
     private var cpuFallbackAttempted = false
     private var fallbackMessage = ""
+    private var fallbackDiagnostic: LocalGgufDiagnostic? = null
 
     override fun setPerformanceListener(listener: ((LocalTranslationPerformance) -> Unit)?) { performanceListener = listener }
     private fun measured(value: LocalTranslationPerformance) {
         val message = if (fallbackMessage.isEmpty()) value.fallbackReason else fallbackMessage
-        runCatching { performanceListener?.invoke(value.copy(requestedMode = executionMode, fallbackReason = message)) }
+        runCatching { performanceListener?.invoke(value.copy(requestedMode = executionMode, fallbackReason = message,
+            diagnostic = fallbackDiagnostic ?: value.diagnostic)) }
     }
 
     override fun translate(texts: List<String>, sourceLanguage: String, targetLanguage: String,
@@ -172,7 +175,7 @@ class LocalGgufTranslationEngine internal constructor(
                 LocalGgufRuntime.Code.OUTPUT_LIMIT -> TranslationFailure.Reason.LOCAL_TRUNCATED
                 LocalGgufRuntime.Code.DIED, LocalGgufRuntime.Code.TIMEOUT -> TranslationFailure.Reason.LOCAL_PROCESS
                 else -> TranslationFailure.Reason.RESPONSE
-            })
+            }, failure.diagnostic)
         } catch (failure: TranslationCancelledException) { throw failure }
           catch (_: IOException) { throw TranslationFailure(TranslationFailure.Reason.LOCAL_MODEL) }
           catch (_: Exception) { throw TranslationFailure(TranslationFailure.Reason.LOCAL_TRANSLATION) }
@@ -239,6 +242,7 @@ class LocalGgufTranslationEngine internal constructor(
             LocalGgufRuntime.Code.TIMEOUT -> "Le calcul automatique a dépassé son délai. Nouvelle tentative sur CPU."
             else -> "Le processus du calcul automatique s’est arrêté. Nouvelle tentative sur CPU."
         }
+        fallbackDiagnostic = failure.diagnostic
         measured(LocalTranslationPerformance(phase = "fallback", requestedMode = executionMode))
         val previous = backend ?: retiredBackend
         // A returned cancellation is not proof of memory release. Wait for the

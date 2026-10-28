@@ -21,7 +21,8 @@ data class LocalTranslationPerformance(
     val currentRssBytes: Long = 0,
     val availableRamBytes: Long = 0,
     val gpuGraphNodes: Long = 0,
-    val fallbackReason: String = ""
+    val fallbackReason: String = "",
+    val diagnostic: LocalGgufDiagnostic? = null
 ) {
     /** Throughput of the last native call, not an aggregate of split/retried fragments. */
     val tokensPerSecond: Double get() = if (generationMs > 0) generatedTokens * 1000.0 / generationMs else 0.0
@@ -54,6 +55,7 @@ data class LocalTranslationPerformance(
             append(String.format(Locale.FRANCE, "%.2f Gio", availableRamBytes / 1_073_741_824.0))
         }
         if (fallbackReason.isNotEmpty()) { append(".\nRepli de calcul : "); append(fallbackDescription()) }
+        diagnostic?.let { append('\n'); append(it.render()) }
     }
 
     private fun fallbackDescription(): String = when (fallbackReason) {

@@ -124,8 +124,8 @@ sdk=$(adb -s "$device" shell getprop ro.build.version.sdk | tr -d '\r')
 abi=$(adb -s "$device" shell getprop ro.product.cpu.abi | tr -d '\r')
 fingerprint=$(adb -s "$device" shell getprop ro.build.fingerprint | tr -d '\r')
 printf 'sdk=%s\nabi=%s\nfingerprint=%s\n' "$sdk" "$abi" "$fingerprint" > "$evidence/device-properties.txt"
-if [[ "$variant" == release && ( "$sdk" != 36 || "$abi" != x86_64 ) ]]; then
-  echo 'Release validation requires the API 36 x86_64 emulator configured by CI.' >&2
+if [[ "$variant" == release && ( "$sdk" != 37 || "$abi" != x86_64 ) ]]; then
+  echo 'Release validation requires the Android 17 / API 37 x86_64 emulator configured by CI.' >&2
   exit 2
 fi
 adb -s "$device" shell svc power stayon true >/dev/null || exit 2

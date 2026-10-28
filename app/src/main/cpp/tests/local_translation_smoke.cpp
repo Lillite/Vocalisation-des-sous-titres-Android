@@ -33,6 +33,7 @@ int main(int argc, char ** argv) {
         assert(info.architecture == "llama" && info.model_bytes > 0 && info.model_parameters > 0);
         assert(info.context_tokens == 512 && info.process_id > 0);
         assert(info.backend == "CPU" && !info.gpu_observed && info.actual_gpu_layers == 0);
+        assert(!info.diagnostic.present() && info.json().find("\"diagnostic\"") == std::string::npos);
         subtitle_local::Session second;
         assert(second.open(argv[1], 1, 512).code == "BUSY");
         subtitle_probe::Cancellation probe_cancel;
@@ -60,7 +61,10 @@ int main(int argc, char ** argv) {
     }
     {
         subtitle_local::Session retry;
-        assert(retry.open("/missing/model.gguf", 1, 512).code == "MODEL");
+        const auto missing = retry.open("/missing/model.gguf", 1, 512);
+        assert(missing.code == "MODEL" && missing.diagnostic.present());
+        assert(std::string(missing.diagnostic.stage) == "MODEL_LOAD" && std::string(missing.diagnostic.reason) == "MODEL_LOAD_FAILED");
+        assert(missing.json().find("/missing/model.gguf") == std::string::npos);
         assert(retry.open(argv[1], 1, 512).code == "OK");
         check_output(retry.generate("model is released after failure", 1, true));
     }
@@ -69,11 +73,19 @@ int main(int argc, char ** argv) {
         const auto info = auto_mode.open(argv[1], 1, 512, "AUTO");
         assert(info.code == "OK" && info.requested_mode == "AUTO");
         assert(info.backend == "CPU" && !info.fallback_reason.empty());
+        if (info.fallback_reason == "OPENCL_UNAVAILABLE") {
+            assert(info.diagnostic.present() && std::string(info.diagnostic.reason) == "BACKEND_NOT_COMPILED");
+            assert(!info.diagnostic.probe_cached);
+        }
         check_output(auto_mode.generate("CPU fallback still computes", 1, true));
     }
     {
         subtitle_local::Session strict;
-        assert(strict.open(argv[1], 1, 512, "OPENCL").code == "BACKEND");
+        const auto rejected = strict.open(argv[1], 1, 512, "OPENCL");
+        assert(rejected.code == "BACKEND" && rejected.diagnostic.present());
+        assert(std::string(rejected.diagnostic.stage) == "BACKEND" && std::string(rejected.diagnostic.reason) == "BACKEND_NOT_COMPILED");
+        assert(!rejected.diagnostic.has_opencl_status && !rejected.diagnostic.probe_cached);
+        assert(rejected.json().find("\"openClStatus\":null") != std::string::npos);
     }
 #ifdef SUBTITLE_NATIVE_TESTING
     if (argc == 4) {
