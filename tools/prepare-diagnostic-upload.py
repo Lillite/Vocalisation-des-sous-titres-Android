@@ -78,6 +78,36 @@ def parse_json(data):
     return json.loads(data.decode('utf-8'), object_pairs_hook=unique_object)
 
 
+def safe_error_diagnostic(data, token):
+    """Keep bounded message/resource/field/code, never error.value or raw data."""
+    try:
+        require(len(data) <= 8192, 'Oversized error diagnostic.')
+        parsed = parse_json(data)
+        require(isinstance(parsed, dict), 'Invalid error diagnostic.')
+        result = {}
+        message = parsed.get('message')
+        if isinstance(message, str):
+            if token:
+                message = message.replace(token, '[redacted]')
+            message = re.sub(r'[A-Za-z0-9+/=_-]{80,}', '[redacted-long-value]', message)
+            message = re.sub(r'[\x00-\x1f\x7f]+', ' ', message)
+            result['message'] = message[:500]
+        errors = parsed.get('errors')
+        if isinstance(errors, list):
+            safe_errors = []
+            for item in errors[:10]:
+                if isinstance(item, dict):
+                    safe_item = {key: value for key, value in item.items()
+                                 if key in {'resource', 'field', 'code'} and isinstance(value, str) and
+                                 re.fullmatch(r'[A-Za-z0-9_. -]{1,80}', value) and not (token and token in value)}
+                    if safe_item:
+                        safe_errors.append(safe_item)
+            result['errors'] = safe_errors
+        return json.dumps(result, ensure_ascii=False)
+    except Exception:
+        return 'No bounded parseable diagnostic.'
+
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         raise Refusal('API redirect refused.')
@@ -105,6 +135,8 @@ class GitHub:
             'X-GitHub-Api-Version': '2026-03-10',
             'User-Agent': 'SousTitresVoix-reviewed-upload-preparation',
         })
+        if method == 'POST':
+            print('Preparation stage: POST ' + path, flush=True)
         try:
             with self._opener.open(request, timeout=180) as response:
                 require(response.status == (201 if method == 'POST' else 200), 'Unexpected API status.')
@@ -112,8 +144,10 @@ class GitHub:
                 require(len(data) <= MAX_RESPONSE_BYTES, 'API response exceeds verification limit.')
                 return parse_json(data)
         except urllib.error.HTTPError as error:
-            # Never log a token, request body, URL or response body.
-            raise Refusal('GitHub refused a preparation operation with HTTP ' + str(error.code) + '; no retry.') from None
+            # Never log a token, request body, headers, error.value or raw body.
+            diagnostic = safe_error_diagnostic(error.read(8193), self._token)
+            raise Refusal('GitHub refused ' + method + ' ' + path + ' with HTTP ' + str(error.code) +
+                          '; ' + diagnostic + '; no retry.') from None
         except (urllib.error.URLError, TimeoutError, OSError):
             raise Refusal('GitHub preparation interrupted; no automatic mutation retry.') from None
 
