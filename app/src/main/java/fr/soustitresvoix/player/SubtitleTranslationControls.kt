@@ -22,6 +22,8 @@ import android.os.Looper
 /** Explicit provider selection, configuration help, volume preview and network consent. */
 @UnstableApi
 class SubtitleTranslationControls(private val activity: Activity, private val session: PlaybackSession,
+    private val launchLocalModelPicker: () -> Unit = {},
+    private val otherLocalPreparationBusy: () -> Boolean = { false },
     private val onExport: (String, String, String) -> Unit = { _, _, _ -> }) {
     private var auxiliaryWorker: ExecutorService? = null
     private val main = Handler(Looper.getMainLooper())
@@ -35,6 +37,7 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
     private var confirmation: AlertDialog? = null
     private var status: TextView? = null
     private var localStatus: String? = null
+    private var localModelControls: LocalGgufModelControls? = null
     @Volatile private var panelGeneration = 0L
     private var pendingPreview = false
     private fun showLocalStatus(value: String) { localStatus = value; status?.text = value }
@@ -68,6 +71,7 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
         if (activity.isFinishing || activity.isDestroyed) return
         close(); session.pause(); clearLocalStatus()
         val generation = panelGeneration
+        var latestPreview: SubtitleTranslationSession.Preview? = null
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8)) }
         column.addView(text("Traduit la piste textuelle choisie vers le français avant lecture, ou progressivement sur choix explicite. Chaque réplique, panneau et répétition conserve son identité et son minutage. Le choix d’affichage est indépendant de la voix. La préparation initiale ne lance jamais la lecture. Seule une attente de traduction pendant une lecture demandée peut reprendre automatiquement."))
         status = text(session.translation.status).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
@@ -82,6 +86,21 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
         }
         column.addView(spinner)
         val providerDescription = text(""); column.addView(providerDescription)
+        val localModelGroup = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val localModels = LocalGgufModelControls(activity, { session.isPreparing || otherLocalPreparationBusy() }, launchLocalModelPicker,
+            onChanged = {
+                latestPreview = null
+                if (pendingPreview) { pendingPreview = false; session.translation.cancel() }
+            }, onMessage = { value -> showLocalStatus(value) })
+        localModelControls = localModels
+        localModelGroup.addView(localModels.view())
+        val (threadsLabel, localThreads) = field("GGUF local : threads de calcul — 1 à 8, défaut 4", storage.getInt("local-threads", 4).toString())
+        localThreads.inputType = InputType.TYPE_CLASS_NUMBER
+        localModelGroup.addView(threadsLabel); localModelGroup.addView(localThreads)
+        val (localContextLabel, localContext) = field("GGUF local : contexte de l’œuvre ou de la scène, facultatif — reste sur le téléphone", storage.getString("local-context", "") ?: "")
+        localContext.isSingleLine = false; localContext.setLines(3)
+        localModelGroup.addView(localContextLabel); localModelGroup.addView(localContext)
+        localModelGroup.addView(text("TranslateGemma et Hy-MT2 utilisent des demandes adaptées à leur famille. Chaque occurrence reste distincte ; le modèle ne modifie pas les minutages. Les modèles GGUF sont interchangeables, sous réserve de compatibilité et de mémoire disponible."))
         val (languageLabel, language) = field("Langue originale — code explicite, par exemple en, es, de, it, sr-Latn ou sr-Cyrl", storage.getString("language", "en") ?: "en")
         column.addView(languageLabel); column.addView(language)
         column.addView(button("Choisir une langue courante") {
@@ -119,7 +138,6 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
         val (formalityLabel, formality) = field("DeepL : registre — default, more, less, prefer_more ou prefer_less", "default")
         column.addView(formalityLabel); column.addView(formality)
         column.addView(text("Ces options s’appliquent à DeepL seulement. Contexte : synopsis court, noms et explications utiles ; il est envoyé au service avec chaque lot. Registre : more préfère un ton formel, less un ton moins formel, prefer_more/prefer_less tolèrent les langues sans ce réglage. Modèle : quality_optimized privilégie la qualité ; latency_optimized vise une attente plus courte ; prefer_quality_optimized permet la sélection compatible du fournisseur. Disponibilité selon le compte et la langue. Le contexte guide la traduction sans garantir les noms ou le registre. L’application ne crée pas de glossaire distant. Les options font partie de l’identité du cache."))
-        var latestPreview: SubtitleTranslationSession.Preview? = null
         val comparisons = mutableListOf<TranslationProviderConfig>()
         column.addView(text("La langue est celle des sous-titres, pas forcément celle du film. Pour DeepL, indique sr pour le serbe ; les variantes sr-Latn/sr-Cyrl concernent Azure. Une langue refusée n’est jamais remplacée par une langue voisine."))
         val (keyLabel, key) = field("Clé API personnelle — masquée ; laisse vide pour tenter une piste déjà en cache", "", true)
@@ -130,8 +148,9 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
         column.addView(regionLabel); column.addView(region)
         val (endpointLabel, endpoint) = field("Adresse de base du serveur LibreTranslate — HTTPS, sans identifiant, paramètres ou fragment", storage.getString("endpoint", "") ?: "")
         column.addView(endpointLabel); column.addView(endpoint)
+        column.addView(localModelGroup)
         fun selected() = providers[spinner.selectedItemPosition]
-        fun configuration() = TranslationProviderConfig(selected(), if (selected().isGoogle) "" else key.text.toString().trim(),
+        fun configuration() = TranslationProviderConfig(selected(), if (selected().isGoogle || selected().isLocal) "" else key.text.toString().trim(),
             if (selected() == TranslationProvider.AZURE) region.text.toString().trim() else "",
             if (selected() == TranslationProvider.LIBRE) endpoint.text.toString().trim() else "",
             if (selected() == TranslationProvider.DEEPL_FREE || selected() == TranslationProvider.DEEPL_PRO)
@@ -139,7 +158,10 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                     model.text.toString().trim(), formality.text.toString().trim(), glossaryRevision.text.toString().trim())
             else TranslationOptions(),
             TranslationExecutionOptions(if (selected() == TranslationProvider.GOOGLE_WEB) googleInterval.text.toString().toLongOrNull() ?: -1L else 1_000L,
-                selected() == TranslationProvider.GOOGLE_LOCAL && mobileModels.isChecked))
+                selected() == TranslationProvider.GOOGLE_LOCAL && mobileModels.isChecked),
+            localModel = if (selected() == TranslationProvider.LOCAL_GGUF) localModels.model else null,
+            localThreads = if (selected() == TranslationProvider.LOCAL_GGUF) localThreads.text.toString().toIntOrNull() ?: 0 else 4,
+            localContext = if (selected() == TranslationProvider.LOCAL_GGUF) localContext.text.toString() else "")
         fun credentialScope(): String? = if (selected() != TranslationProvider.LIBRE) selected().id else
             try { providerIdentity(TranslationProviderConfig(TranslationProvider.LIBRE, endpoint = endpoint.text.toString().trim())) }
             catch (_: Exception) { null }
@@ -149,19 +171,22 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
             // Clear first: a key from server A must never follow the user to server B.
             key.setText(""); remember.isChecked = false
             val scope = credentialScope(); currentCredentialScope = scope
-            if (scope != null && !selected().isGoogle) try { key.setText(credentials.read(scope).orEmpty()) }
+            if (scope != null && !selected().isGoogle && !selected().isLocal) try { key.setText(credentials.read(scope).orEmpty()) }
             catch (_: Exception) { showLocalStatus("La clé enregistrée ne peut pas être déchiffrée. Saisis-la à nouveau ou efface-la.") }
         }
         fun providerChanged() {
             clearLocalStatus()
             val provider = selected()
             providerDescription.text = description(provider)
-            val keyVisibility = if (provider.isGoogle) View.GONE else View.VISIBLE
+            val keyVisibility = if (provider.isGoogle || provider.isLocal) View.GONE else View.VISIBLE
             listOf(keyLabel, key, remember).forEach { it.visibility = keyVisibility }
             forgetKeyButton?.visibility = keyVisibility
             googleInterval.visibility = if (provider == TranslationProvider.GOOGLE_WEB) View.VISIBLE else View.GONE
             googleIntervalLabel.visibility = googleInterval.visibility
             mobileModels.visibility = if (provider == TranslationProvider.GOOGLE_LOCAL) View.VISIBLE else View.GONE
+            localModelGroup.visibility = if (provider == TranslationProvider.LOCAL_GGUF) View.VISIBLE else View.GONE
+            listOf(threadsLabel, localThreads, localContextLabel, localContext).forEach { it.visibility = localModelGroup.visibility }
+            localModels.setActive(provider == TranslationProvider.LOCAL_GGUF)
             region.visibility = if (provider == TranslationProvider.AZURE) View.VISIBLE else View.GONE
             regionLabel.visibility = region.visibility
             endpoint.visibility = if (provider == TranslationProvider.LIBRE) View.VISIBLE else View.GONE
@@ -190,10 +215,19 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
             if (scope == null) showLocalStatus("Indique d’abord l’adresse HTTPS valide du serveur dont tu veux effacer la clé.")
             else try { credentials.remove(scope); key.setText(""); remember.isChecked = false; showLocalStatus("Clé mémorisée effacée pour ce moteur et ce serveur.") }
             catch (_: Exception) { showLocalStatus("La clé n’a pas pu être effacée. Réessaie après fermeture du panneau.") }
-        }.also { it.visibility = if (selected().isGoogle) View.GONE else View.VISIBLE; column.addView(it) }
+        }.also { it.visibility = if (selected().isGoogle || selected().isLocal) View.GONE else View.VISIBLE; column.addView(it) }
         column.addView(button("Indexer la piste et estimer la traduction") {
             clearLocalStatus()
             val provider = selected()
+            if (provider == TranslationProvider.LOCAL_GGUF && otherLocalPreparationBusy()) {
+                showLocalStatus("Termine ou annule la traduction du fichier SRT hors ligne avant de lancer une autre traduction GGUF.")
+                return@button
+            }
+            if (provider == TranslationProvider.LOCAL_GGUF && (localModels.busy || localModels.model == null)) {
+                showLocalStatus(if (localModels.busy) "Attends la fin de la préparation du modèle GGUF."
+                    else "Choisis un modèle GGUF ou prépare celui déjà importé dans le diagnostic.")
+                return@button
+            }
             val config = configuration()
             val sourceLanguage = language.text.toString().trim()
             val bufferSeconds = buffer.text.toString().toIntOrNull()
@@ -204,7 +238,8 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                 showLocalStatus("Cette langue n’est pas prise en charge par Google local. Choisis un moteur en ligne compatible ; aucun texte ni modèle n’a été téléchargé."); return@button
             }
             val credentialIdentity = try { providerIdentity(config) } catch (_: Exception) {
-                showLocalStatus("Adresse LibreTranslate invalide. Utilise une adresse HTTPS sans identifiant, paramètres ou fragment."); return@button
+                showLocalStatus(if (provider == TranslationProvider.LOCAL_GGUF) "Le modèle GGUF n’est pas prêt ou ses réglages sont invalides."
+                    else "Adresse LibreTranslate invalide. Utilise une adresse HTTPS sans identifiant, paramètres ou fragment."); return@button
             }
             val identity = try { TranslationEngines.translationIdentity(config) } catch (_: Exception) {
                 showLocalStatus("Options invalides ou non prises en charge par le moteur choisi."); return@button
@@ -216,6 +251,7 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                 .putBoolean("progressive", progressive.isChecked).putInt("buffer-seconds", bufferSeconds)
                 .putBoolean("mobile-models", mobileModels.isChecked)
             if (provider == TranslationProvider.GOOGLE_WEB) choices.putLong("google-interval-ms", config.execution.googleIntervalMillis)
+            if (provider == TranslationProvider.LOCAL_GGUF) choices.putInt("local-threads", config.localThreads)
             choices.apply()
             val saveKey = remember.isChecked
             pendingPreview = true
@@ -226,16 +262,19 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                 }
                 val destination = if (provider == TranslationProvider.LIBRE) TranslationEngines.libreEndpoint(config.endpoint).host else provider.label
                 val privacy = when (provider) {
+                    TranslationProvider.LOCAL_GGUF -> "Traduction locale avec le fichier GGUF préparé et le moteur CPU intégré. Le texte, le contexte, la vidéo et l’audio restent sur le téléphone ; aucun serveur, clé API ou téléchargement de modèle n’est utilisé. Le modèle reste chargé pendant cette tâche puis ses ressources sont libérées. Le téléphone peut chauffer et Android peut interrompre un traitement ; les occurrences validées sont enregistrées pour reprise."
                     TranslationProvider.GOOGLE_LOCAL -> "Traduction automatique par Google Traduction (ML Kit) sur le téléphone. Le texte, la vidéo et l’audio ne sont pas envoyés au traducteur. Les modèles nécessaires seront téléchargés ${if (config.execution.allowMobileModelDownload) "en Wi-Fi ou avec les données mobiles autorisées" else "en Wi-Fi seulement"} (environ 30 Mo par modèle). Le SDK peut terminer un téléchargement déjà commencé même après annulation de l’attente ; il peut transmettre à Google des données techniques sur l’appareil, les performances et les langues, sans envoyer le texte au traducteur."
                     TranslationProvider.GOOGLE_WEB -> "Le texte sera envoyé directement à Google par un accès non officiel sans clé. Une requête à la fois, délai minimal ${config.execution.googleIntervalMillis} ms, ralentissement adaptatif et attentes bornées. Aucun blocage ne sera contourné. Le cache réduit les appels mais ne garantit pas la disponibilité de Google. La vidéo et l’audio ne sont pas envoyés."
                     else -> "Le texte intégral sera envoyé à $destination si aucun cache complet correspondant n’existe. La vidéo et l’audio ne sont pas envoyés. Vérifie le quota et les plafonds de ton compte. DeepL : 500 ms minimum entre appels, cinq nouvelles tentatives maximum après refus de débit, deux minutes d’attente cumulée maximum par lot ; aucune relance automatique des quotas épuisés ou des réponses réseau perdues."
                 }
                 confirmation?.dismiss()
                 confirmation = AlertDialog.Builder(activity).setTitle("Confirmer la traduction vers le français")
-                    .setMessage("${preview.plan.cues.size} occurrences, ${preview.plan.estimatedCharacters} unités UTF-16 pour la piste. Nouveaux caractères estimés après reprise/cache : ${preview.estimatedNewCharacters}. Plafond local : ${if (preview.maximumNewCharacters == Long.MAX_VALUE) "non limité" else preview.maximumNewCharacters.toString()}. Décompte du fournisseur distinct.\n\n$privacy\n\nUne piste complète en cache ou conservée est réutilisée sans requête et sans clé. ${preview.resumedOccurrences} occurrences validées peuvent être reprises. ${if (preview.uncertainRequest && !provider.isGoogle) "Une requête interrompue a un état de facturation inconnu : sa reprise peut être facturée de nouveau." else "Les lots validés sont enregistrés pour reprise."} Le travail peut être interrompu par Android ; rouvre la même piste et confirme pour reprendre. ${if (preview.progressive) "Tu pourras regarder pendant la traduction, après $bufferSeconds secondes d’avance validée, en appuyant sur Lire." else "La lecture française attend la piste complète."} Choisis une voix française dans Voix et confort.")
-                    .setPositiveButton(if (provider.isGoogle) "Traduire avec Google" else "Traduire / réutiliser le cache") { _, _ ->
+                    .setMessage("${preview.plan.cues.size} occurrences, ${preview.plan.estimatedCharacters} unités UTF-16 pour la piste. Nouveaux caractères estimés après reprise/cache : ${preview.estimatedNewCharacters}. Plafond local : ${if (preview.maximumNewCharacters == Long.MAX_VALUE) "non limité" else preview.maximumNewCharacters.toString()}.${if (provider.isLocal) "" else " Décompte du fournisseur distinct."}\n\n$privacy\n\nUne piste complète en cache ou conservée est réutilisée sans requête et sans clé. ${preview.resumedOccurrences} occurrences validées peuvent être reprises. ${if (preview.uncertainRequest && !provider.isGoogle && !provider.isLocal) "Une requête interrompue a un état de facturation inconnu : sa reprise peut être facturée de nouveau." else "Les lots validés sont enregistrés pour reprise."} Le travail peut être interrompu par Android ; rouvre la même piste et confirme pour reprendre. ${if (preview.progressive) "Tu pourras regarder pendant la traduction, après $bufferSeconds secondes d’avance validée, en appuyant sur Lire." else "La lecture française attend la piste complète."} Choisis une voix française dans Voix et confort.")
+                    .setPositiveButton(when { provider == TranslationProvider.LOCAL_GGUF -> "Traduire localement avec le GGUF"; provider.isGoogle -> "Traduire avec Google"; else -> "Traduire / réutiliser le cache" }) { _, _ ->
                         if (generation != panelGeneration || panel?.isShowing != true) { session.translation.cancel(); return@setPositiveButton }
                         pendingPreview = false; clearLocalStatus()
+                        if (provider == TranslationProvider.LOCAL_GGUF)
+                            storage.edit().putString("local-context", config.localContext).putInt("local-threads", config.localThreads).apply()
                         if (saveKey && config.apiKey.isNotBlank()) {
                             try { credentials.save(credentialIdentity, config.apiKey) }
                             catch (_: Exception) { showLocalStatus("La clé n’a pas pu être mémorisée. Elle sera utilisée uniquement pour cette demande.") }
@@ -297,7 +336,7 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                     val sampleTrack = samplePreview?.track
                     val destinations = configs.mapIndexed { i, config -> "Configuration ${i+1} : " + if (config.provider == TranslationProvider.LIBRE) TranslationEngines.libreEndpoint(config.endpoint).host else config.provider.label }.joinToString("\n")
                     AlertDialog.Builder(activity).setTitle("Confirmer tous les destinataires du comparatif")
-                        .setMessage("${sample.size} occurrences (${sample.sumOf { it.length }} unités UTF-16) seront envoyées séparément à :\n$destinations\n\nLes moteurs en ligne reçoivent cet essai et peuvent le facturer selon leur offre ; Google local traite le texte sur le téléphone et peut télécharger des modèles. Les résultats sont comparés visuellement, sans classement automatique de fidélité. Texte, contexte et glossaire selon chaque configuration.")
+                        .setMessage("${sample.size} occurrences (${sample.sumOf { it.length }} unités UTF-16) seront traitées séparément par :\n$destinations\n\nLes moteurs en ligne reçoivent cet essai et peuvent le facturer selon leur offre ; Google local traite le texte sur le téléphone et peut télécharger des modèles. Le moteur GGUF utilise seulement le modèle préparé sur le téléphone. Les résultats sont comparés visuellement, sans classement automatique de fidélité. Texte, contexte et glossaire selon chaque configuration.")
                         .setPositiveButton(if (configs.any { it.provider.isGoogle }) "Comparer avec Google" else "Envoyer cet échantillon") { _, _ ->
                             if (generation != panelGeneration || sampleGeneration != session.generation || sampleTrack != session.selectedTextId() || panel?.isShowing != true) {
                                 showLocalStatus("La vidéo ou la piste a changé. Indexe le nouvel échantillon avant tout envoi."); return@setPositiveButton
@@ -385,9 +424,10 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                 TranslationProvider.LIBRE -> "https://docs.libretranslate.com/guides/api_usage/"
                 TranslationProvider.GOOGLE_WEB -> "https://translate.google.com/"
                 TranslationProvider.GOOGLE_LOCAL -> "https://developers.google.com/ml-kit/language/translation"
+                TranslationProvider.LOCAL_GGUF -> "https://github.com/ggml-org/llama.cpp"
             })
         })
-        column.addView(text("Google ML Kit traduit sur ce téléphone après téléchargement des modèles compatibles. La qualité peut différer du service en ligne ; entre langues autres que l’anglais, les modèles passent par l’anglais. Les fichiers GGUF, SafeTensors et ONNX ne peuvent pas être importés ici. Une traduction conservée reste lisible hors connexion quel que soit son moteur d’origine."))
+        column.addView(text("Google ML Kit traduit sur ce téléphone après téléchargement des modèles compatibles. La qualité peut différer du service en ligne ; entre langues autres que l’anglais, les modèles passent par l’anglais. Le moteur GGUF accepte les modèles compatibles choisis explicitement ; SafeTensors et ONNX ne sont pas importés. Une traduction conservée reste lisible hors connexion quel que soit son moteur d’origine."))
         column.addView(button("Google local : langues prises en charge") {
             AlertDialog.Builder(activity).setTitle("Codes de langue Google ML Kit")
                 .setMessage(MlKitTranslationEngine.supportedLanguages().joinToString(", "))
@@ -409,7 +449,8 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
         val message = localStatus ?: session.translation.status
         if (panel?.isShowing == true && it.text.toString() != message) it.text = message
     } }
-    fun close() { invalidatePanel(); auxiliaryWorker?.shutdownNow(); auxiliaryWorker = null; panel?.dismiss(); panel = null; status = null; localStatus = null }
+    fun selectedLocalModel(uri: Uri?) { localModelControls?.selected(uri) }
+    fun close() { invalidatePanel(); localModelControls?.close(); localModelControls = null; auxiliaryWorker?.shutdownNow(); auxiliaryWorker = null; panel?.dismiss(); panel = null; status = null; localStatus = null }
 
     companion object {
         internal fun providerIdentity(config: TranslationProviderConfig): String = TranslationEngines.identity(config)
@@ -420,6 +461,7 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
             TranslationProvider.LIBRE -> "LibreTranslate : traduction par un serveur que tu choisis. Indique son adresse HTTPS et sa clé si l’instance en exige une ; demande à son administrateur les langues installées, les quotas et la politique de conservation. La gratuité dépend de l’instance et de son hébergement. L’application appelle /translate et refuse les redirections. Ce serveur ne s’exécute pas sur le téléphone : même auto-hébergé, il reçoit les sous-titres. L’application ne crée ni ne déploie de serveur."
             TranslationProvider.GOOGLE_WEB -> "Google Traduction en ligne sans clé : accès non officiel, facultatif. Les sous-titres sont envoyés directement à Google ; la vidéo et l’audio restent sur le téléphone. Une seule requête à la fois, délai minimal réglable de 500 à 10 000 ms (défaut 1 000), ralentissement après limitation, au plus trois nouvelles tentatives temporaires et deux minutes d’attente par requête. Un blocage explicite suspend le travail. Les résultats validés sont conservés pour reprise et les textes identiques peuvent réutiliser une traduction sans supprimer leurs occurrences. Aucun quota illimité ni fonctionnement permanent n’est garanti."
             TranslationProvider.GOOGLE_LOCAL -> "Google Traduction sur le téléphone avec ML Kit : moteur local gratuit après téléchargement des modèles nécessaires, environ 30 Mo chacun. Wi-Fi par défaut ; les données mobiles demandent le choix explicite ci-dessus. Le texte n’est pas envoyé au service de traduction. Langues plus limitées qu’en ligne : consulte la liste. Entre langues autres que l’anglais, le modèle passe par l’anglais ; vérifie les résultats selon l’œuvre. Annuler arrête la traduction et l’attente, mais un téléchargement déjà lancé par le SDK peut finir en arrière-plan."
+            TranslationProvider.LOCAL_GGUF -> "Modèle GGUF sur le téléphone : traduction hors ligne avec llama.cpp sur CPU. Choisis un modèle compatible, notamment TranslateGemma ou Hy-MT2, ou prépare le modèle déjà importé dans le diagnostic. Aucun compte, clé API, serveur ou téléchargement automatique. Les langues dépendent du modèle ; une langue refusée n’est pas remplacée. Chaque occurrence et son minutage sont conservés. Les textes et le contexte restent locaux. La préparation peut continuer pendant le visionnage en mode progressif, dans les limites de mémoire et de vitesse du téléphone."
         }
     }
 }

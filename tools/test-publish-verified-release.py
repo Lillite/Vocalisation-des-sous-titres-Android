@@ -116,7 +116,7 @@ class PublicationGitHub:
             return [{'id': 99, 'tag_name': publisher.TAG, 'draft': True}] if self.draft_collision else []
         if suffix == '/releases' and method == 'POST':
             assert data['draft'] is True
-            assert data['prerelease'] is True, 'The diagnostic candidate must remain a prerelease'
+            assert data['prerelease'] is True, 'The local-translation candidate must remain a prerelease'
             self.draft = {**deepcopy(data), 'id': 12, 'assets': []}
             return deepcopy(self.draft)
         if suffix.startswith('/actions/workflows/release-build.yml/runs?'):

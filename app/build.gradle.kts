@@ -51,6 +51,18 @@ val generateDiagnosticModel = tasks.register<Exec>("generateDiagnosticModel") {
     outputs.file(diagnosticModel)
     commandLine("python3", generator.absolutePath, diagnosticModel.get().asFile.absolutePath)
 }
+// The terminating model exercises real JNI in the test APK only. No trained
+// weights or additional test model are shipped in the application APK.
+val translationTestAssets = layout.buildDirectory.dir("generated/translation-test-assets")
+val translationTestModel = translationTestAssets.map { it.file("translation_test_model.gguf") }
+val generateTranslationTestModel = tasks.register<Exec>("generateTranslationTestModel") {
+    val generator = file("src/main/cpp/tests/make_tiny_gguf.py")
+    inputs.file(generator)
+    inputs.property("terminating", true)
+    outputs.file(translationTestModel)
+    doFirst { translationTestModel.get().asFile.parentFile.mkdirs() }
+    commandLine("python3", generator.absolutePath, translationTestModel.get().asFile.absolutePath, "--terminating")
+}
 android {
     namespace = "fr.soustitresvoix.player"
     compileSdk = 36
@@ -60,8 +72,8 @@ android {
         applicationId = "fr.soustitresvoix.player.translation"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.5.3-diagnostic"
+        versionCode = 11
+        versionName = "0.5.4-local"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild { cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" } }
@@ -73,6 +85,7 @@ android {
         }
     }
     sourceSets.getByName("main").res.srcDir(demoResources)
+    sourceSets.getByName("androidTest").assets.srcDir(translationTestAssets)
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -106,6 +119,12 @@ android {
     lint { abortOnError = true; checkReleaseBuilds = true }
 }
 tasks.named("preBuild") { dependsOn(generateDemo); dependsOn(generateDiagnosticModel) }
+// AGP's legacy AndroidTest asset source set does not preserve a mapped task
+// provider as its producer. All AndroidTest consumers, including lint model
+// generation, must depend on this small deterministic test-only asset.
+tasks.configureEach {
+    if (name.contains("AndroidTest")) dependsOn(generateTranslationTestModel)
+}
 kotlin { jvmToolchain(17) }
 dependencies {
     implementation(project(":core"))

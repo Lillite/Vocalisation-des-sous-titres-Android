@@ -438,7 +438,9 @@ class SubtitleTranslationAndroidTest {
                         "DeepL : registre — default, more, less, prefer_more ou prefer_less",
                         "Clé API personnelle — masquée ; laisse vide pour tenter une piste déjà en cache",
                         "Région Azure — code de la ressource, par exemple francecentral ; vide uniquement si la clé est globale",
-                        "Adresse de base du serveur LibreTranslate — HTTPS, sans identifiant, paramètres ou fragment"
+                        "Adresse de base du serveur LibreTranslate — HTTPS, sans identifiant, paramètres ou fragment",
+                        "GGUF local : threads de calcul — 1 à 8, défaut 4",
+                        "GGUF local : contexte de l’œuvre ou de la scène, facultatif — reste sur le téléphone"
                     )
                     lateinit var fieldsByLabel: Map<String, EditText>
                     scenario.onActivity {
@@ -458,7 +460,7 @@ class SubtitleTranslationAndroidTest {
                         assertFalse("Progressive translation must remain an explicit choice", progressive.isChecked)
                     }
                     val providers = TranslationProvider.values()
-                    assertEquals(listOf("azure", "deepl-free", "deepl-pro", "libre", "google-web-v1", "google-local-v1"), providers.map { it.id })
+                    assertEquals(listOf("azure", "deepl-free", "deepl-pro", "libre", "google-web-v1", "google-local-v1", "local-gguf-v1"), providers.map { it.id })
                     for ((index, provider) in providers.withIndex()) {
                         scenario.onActivity {
                             descendants(panel.get()).filterIsInstance<Spinner>().single().setSelection(index)
@@ -476,17 +478,18 @@ class SubtitleTranslationAndroidTest {
                             assertTrue("Provider help must span several readable lines", help.layout.lineCount > 1)
                             for (line in 0 until help.layout.lineCount) assertEquals(0, help.layout.getEllipsisCount(line))
                             val visibleLabels = setOf(expectedFieldLabels[0], expectedFieldLabels[1], expectedFieldLabels[3]) +
-                                (if (provider.isGoogle) emptySet() else setOf(expectedFieldLabels[9])) + when (provider) {
+                                (if (provider.isGoogle || provider.isLocal) emptySet() else setOf(expectedFieldLabels[9])) + when (provider) {
                                     TranslationProvider.AZURE -> setOf(expectedFieldLabels[10])
                                     TranslationProvider.DEEPL_FREE, TranslationProvider.DEEPL_PRO -> expectedFieldLabels.subList(4, 9).toSet()
                                     TranslationProvider.LIBRE -> setOf(expectedFieldLabels[11])
                                     TranslationProvider.GOOGLE_WEB -> setOf(expectedFieldLabels[2])
                                     TranslationProvider.GOOGLE_LOCAL -> emptySet()
+                                    TranslationProvider.LOCAL_GGUF -> expectedFieldLabels.subList(12, 14).toSet()
                                 }
                             val remember = views.filterIsInstance<CheckBox>().single {
                                 it.text.toString() == "Mémoriser cette clé, chiffrée avec Android Keystore sur ce téléphone"
                             }
-                            assertEquals(if (provider.isGoogle) View.GONE else View.VISIBLE, remember.visibility)
+                            assertEquals(if (provider.isGoogle || provider.isLocal) View.GONE else View.VISIBLE, remember.visibility)
                             val mobileModels = views.filterIsInstance<CheckBox>().single {
                                 it.text.toString() == "Google local : autoriser les données mobiles pour télécharger les modèles"
                             }

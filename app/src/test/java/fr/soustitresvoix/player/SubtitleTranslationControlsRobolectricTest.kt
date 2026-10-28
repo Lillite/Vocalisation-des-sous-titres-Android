@@ -68,8 +68,8 @@ class SubtitleTranslationControlsRobolectricTest {
 
     @Test fun everyProviderHasSpecificSetupCostsPrivacyAndCapabilityDescriptions() {
         val descriptions = TranslationProvider.entries.associateWith { SubtitleTranslationControls.description(it) }
-        assertEquals(6, descriptions.size)
-        assertEquals(6, descriptions.values.distinct().size)
+        assertEquals(7, descriptions.size)
+        assertEquals(7, descriptions.values.distinct().size)
         val azure = descriptions.getValue(TranslationProvider.AZURE)
         assertTrue(azure.contains("Clés et point de terminaison"))
         assertTrue(azure.contains("2 millions de caractères/mois"))
@@ -95,7 +95,7 @@ class SubtitleTranslationControlsRobolectricTest {
         Fixture().use { fixture ->
             val panel = fixture.open()
             val fields = views(panel).filterIsInstance<EditText>()
-            assertEquals(12, fields.size)
+            assertEquals(14, fields.size)
             for (input in fields) {
                 val labels = views(panel).filterIsInstance<TextView>().filter { it.labelFor == input.id }
                 assertEquals("Each editor needs its own accessible label", 1, labels.size)
@@ -125,7 +125,7 @@ class SubtitleTranslationControlsRobolectricTest {
             val panel = fixture.open()
             val spinner = views(panel).filterIsInstance<Spinner>().single()
             assertEquals("Moteur de traduction", spinner.contentDescription.toString())
-            assertEquals(6, spinner.count)
+            assertEquals(7, spinner.count)
             val region = field(panel, "Région Azure")
             val endpoint = field(panel, "Adresse de base du serveur LibreTranslate")
             for ((index, provider) in TranslationProvider.entries.withIndex()) {
@@ -256,11 +256,56 @@ class SubtitleTranslationControlsRobolectricTest {
                     TranslationProvider.LIBRE -> "docs.libretranslate.com"
                     TranslationProvider.GOOGLE_WEB -> "translate.google.com"
                     TranslationProvider.GOOGLE_LOCAL -> "developers.google.com"
+                    TranslationProvider.LOCAL_GGUF -> "github.com"
                     else -> "developers.deepl.com"
                 }, url.host)
             }
             assertFalse(fixture.session.translation.required)
             assertFalse(fixture.session.translation.busy)
+        }
+    }
+
+    @Test fun localGgufShowsModelAndComputeControlsWithoutCredentialsOrNetworkChoices() {
+        Fixture().use { fixture ->
+            val panel = fixture.open()
+            val spinner = views(panel).filterIsInstance<Spinner>().single()
+            spinner.setSelection(TranslationProvider.LOCAL_GGUF.ordinal)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(View.GONE, field(panel, "Clé API personnelle").visibility)
+            assertEquals(View.GONE, field(panel, "Région Azure").visibility)
+            assertEquals(View.GONE, field(panel, "Adresse de base du serveur LibreTranslate").visibility)
+            assertEquals(View.GONE, field(panel, "Google en ligne : délai minimal").visibility)
+            assertEquals(View.GONE, views(panel).filterIsInstance<CheckBox>()
+                .single { it.text.toString().startsWith("Google local : autoriser") }.visibility)
+            assertTrue(field(panel, "GGUF local : threads de calcul").isShown)
+            assertTrue(field(panel, "GGUF local : contexte de l’œuvre").isShown)
+            assertEquals("4", field(panel, "GGUF local : threads de calcul").text.toString())
+            assertTrue(button(panel, "Choisir un modèle GGUF local pour traduire").isShown)
+            assertTrue(text(panel).contains("Aucun compte, clé API, serveur ou téléchargement automatique"))
+            assertFalse(fixture.session.translation.busy)
+            assertFalse(fixture.session.player.playWhenReady)
+
+            spinner.setSelection(TranslationProvider.AZURE.ordinal)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertFalse(field(panel, "GGUF local : threads de calcul").isShown)
+            assertEquals(View.VISIBLE, field(panel, "Clé API personnelle").visibility)
+        }
+    }
+
+    @Test fun missingGgufCannotPrepareATrackAndNoModelIsLoadedByOpeningOrRefreshing() {
+        val context = org.robolectric.RuntimeEnvironment.getApplication()
+        java.io.File(context.filesDir, "local-diagnostic").deleteRecursively()
+        Fixture().use { fixture ->
+            val panel = fixture.open()
+            views(panel).filterIsInstance<Spinner>().single().setSelection(TranslationProvider.LOCAL_GGUF.ordinal)
+            shadowOf(Looper.getMainLooper()).idle()
+            button(panel, "Indexer la piste et estimer la traduction").performClick()
+            fixture.controls.refresh()
+            assertTrue(text(panel).contains("Choisis un modèle GGUF ou prépare celui déjà importé"))
+            assertFalse(fixture.session.translation.busy)
+            assertFalse(fixture.session.translation.required)
+            assertTrue(fixture.messages.isEmpty())
+            assertFalse(java.io.File(context.filesDir, "local-diagnostic/model.gguf").exists())
         }
     }
 }

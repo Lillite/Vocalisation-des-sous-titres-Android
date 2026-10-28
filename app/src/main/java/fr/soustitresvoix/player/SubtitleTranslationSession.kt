@@ -150,6 +150,8 @@ class SubtitleTranslationSession(
                     val text = SubtitleText.clean(item.raw)
                     if (text.isBlank()) null else TranslationCue(item.identity, item.startUs, item.endUs, text)
                 }
+                if (mediaSource.subtitleMime == "application/x-subrip" && mediaSource.subtitlePath != null)
+                    SrtSourceIntegrity.check(File(mediaSource.subtitlePath), cues.size)
                 val plan = TranslationPlan.create(cues, sourceLanguage, targetLanguage, providerId = providerId)
                 // Exact transport limits are checked by the runner before its first request.
                 val checkpoint = runner.checkpointSummary(plan)
@@ -157,14 +159,15 @@ class SubtitleTranslationSession(
                 main.post {
                     if (isCurrent(current, generation, track, ticket)) {
                         job = null; preview = result
-                        status = "Piste prête à traduire : ${cues.size} occurrences, ${plan.estimatedCharacters} unités UTF-16 estimées. Confirmation d’envoi requise."
+                        status = "Piste prête à traduire : ${cues.size} occurrences, ${plan.estimatedCharacters} unités UTF-16 estimées. Confirmation du traitement requise."
                         changed(); prepared(result)
                     }
                 }
             } catch (error: Exception) { main.post {
                 if (isCurrent(current, generation, track, ticket)) {
                     job = null
-                    status = if (!scanning && error is IllegalArgumentException) error.message ?: "La piste ne peut pas être traduite."
+                    status = if (error is SrtSourceIntegrity.InvalidSource) SrtSourceIntegrity.FAILURE_MESSAGE
+                        else if (!scanning && error is IllegalArgumentException) error.message ?: "La piste ne peut pas être traduite."
                         else "Indexation impossible. Vérifie le fichier et sa piste textuelle ; aucun texte n’a été envoyé."
                     message(status, true); changed(); finishRestore(false)
                 }
@@ -207,7 +210,9 @@ class SubtitleTranslationSession(
                                 changed()
                             }
                         }
-                    }, TranslationRunPolicy(value.maximumNewCharacters)) { texts ->
+                    }, TranslationRunPolicy(value.maximumNewCharacters,
+                        requestMayConsumeRemoteQuota = !value.plan.providerId.startsWith("local-gguf-") &&
+                            !value.plan.providerId.startsWith("google-local-"))) { texts ->
                         if (value.progressive && texts.size < value.plan.cues.size) {
                             // The runner already validates every returned occurrence. Hash only
                             // additions, then coalesce fast local/cache responses on the UI loop.

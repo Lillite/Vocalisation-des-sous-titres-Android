@@ -152,18 +152,36 @@
         "version_code": 9,
         "application_id": "fr.soustitresvoix.player.translation"
       }
+    },
+    {
+      "tag": "v0.5.3-diagnostic",
+      "title": "Sous-titres en voix 0.5.3 — Diagnostic local (préversion)",
+      "prerelease": true,
+      "latest": false,
+      "notes": "docs/releases/0.5.3-diagnostic.md",
+      "asset": {
+        "name": "SousTitresVoix-0.5.3-diagnostic.apk",
+        "version_name": "0.5.3-diagnostic",
+        "version_code": 10,
+        "application_id": "fr.soustitresvoix.player.translation",
+        "id": 684138289,
+        "size": 53565559,
+        "sha256": "c622d3f49bced6f1afeb8abd35060841cc2f7636f75576e5e6c1bc5af18d80d1"
+      },
+      "id": 426350156,
+      "source_commit": "3b68b118c3f7d21ef47a47e6eb5611ceb34f2055"
     }
   ],
   "next_release": {
-    "tag": "v0.5.3-diagnostic",
-    "title": "Sous-titres en voix 0.5.3 — Diagnostic local (préversion)",
+    "tag": "v0.5.4-local",
+    "title": "Sous-titres en voix 0.5.4 — Traduction GGUF locale (préversion)",
     "prerelease": true,
     "latest": false,
-    "notes": "docs/releases/0.5.3-diagnostic.md",
+    "notes": "docs/releases/0.5.4-local.md",
     "asset": {
-      "name": "SousTitresVoix-0.5.3-diagnostic.apk",
-      "version_name": "0.5.3-diagnostic",
-      "version_code": 10,
+      "name": "SousTitresVoix-0.5.4-local.apk",
+      "version_name": "0.5.4-local",
+      "version_code": 11,
       "application_id": "fr.soustitresvoix.player.translation"
     }
   }

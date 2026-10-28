@@ -52,13 +52,13 @@ FetchContent_Declare(probe_llama
 )
 FetchContent_MakeAvailable(probe_llama)
 
-add_library(model_probe_engine STATIC model_probe_engine.cpp)
+add_library(model_probe_engine STATIC model_probe_engine.cpp local_model_backend.cpp local_translation_engine.cpp)
 target_compile_features(model_probe_engine PUBLIC cxx_std_17)
 target_include_directories(model_probe_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(model_probe_engine PUBLIC llama)
 
 if(ANDROID)
-    add_library(subtitle_model_probe SHARED model_probe_jni.cpp)
+    add_library(subtitle_model_probe SHARED model_probe_jni.cpp local_translation_jni.cpp)
     target_link_libraries(subtitle_model_probe PRIVATE model_probe_engine)
     # Android 15+ devices may use 16-KiB memory pages.
     target_link_options(subtitle_model_probe PRIVATE "-Wl,-z,max-page-size=16384")
@@ -66,4 +66,6 @@ else()
     # Actual host inference test, not an Android stub or performance claim.
     add_executable(model-probe-smoke tests/model_probe_smoke.cpp)
     target_link_libraries(model-probe-smoke PRIVATE model_probe_engine)
+    add_executable(local-translation-smoke tests/local_translation_smoke.cpp)
+    target_link_libraries(local-translation-smoke PRIVATE model_probe_engine)
 endif()

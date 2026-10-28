@@ -4,7 +4,7 @@
 
 **Documentation 0.5.2 — Google et traduction pendant la lecture.** [Télécharger l’APK](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.2/SousTitresVoix-0.5.2-google.apk) · [Notes 0.5.2](releases/0.5.2.md) · [Guide Google](TRADUCTION_GOOGLE_052.md) · [Validation GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml). Les résultats antérieurs restent attachés à leurs versions.
 
-**Candidate 0.5.3-diagnostic en préparation.** [Guide du diagnostic local](DIAGNOSTIC_LOCAL_053.md) · [Notes, périmètre, validation et signature](releases/0.5.3-diagnostic.md). Mesures Android, court essai vidéo et véritable essai de GGUF sur CPU ; OCR, traduction TranslateGemma de film et GPU/NPU non intégrés/exécutés à cette étape. La 0.5.2 reste le téléchargement stable recommandé.
+**Candidate 0.5.4-local en préparation.** [Guide de traduction GGUF locale](TRADUCTION_GGUF_054.md) · [Notes, périmètre, validation et signature](releases/0.5.4-local.md). Traduction de la piste choisie sur CPU, progression conservée et export ; OCR et accélération GPU/NPU restent hors de cette étape. La 0.5.2 reste le téléchargement stable recommandé. La [0.5.3-diagnostic publiée](releases/0.5.3-diagnostic.md) fournit les essais locaux préparatoires.
 
 ## Installer et utiliser sur téléphone
 
@@ -27,6 +27,7 @@ La série 0.5 conserve l’identité Android de l’édition Traduction 0.4.0 ; 
 
 | Besoin | Guide |
 | --- | --- |
+| Traduire avec un GGUF choisi sur le téléphone dans la candidate 0.5.4 | [Traduction GGUF locale](TRADUCTION_GGUF_054.md) |
 | Configurer Google en ligne/local et regarder pendant la traduction | [Guide Google 0.5.2](TRADUCTION_GOOGLE_052.md) |
 | Choisir une offre gratuite, comprendre Google et les limites DeepL | [Traduction gratuite et limites](TRADUCTION_GRATUITE_ET_LIMITES.md) |
 | Configurer les moteurs Google, Azure, DeepL ou LibreTranslate depuis Android | [Moteurs, comptes, options et dépannage](GUIDE_MOTEURS_TRADUCTION.md) |
@@ -35,7 +36,7 @@ La série 0.5 conserve l’identité Android de l’édition Traduction 0.4.0 ; 
 | Utiliser le moteur local intégré ou étudier d’autres modèles | [ML Kit intégré](TRADUCTION_GOOGLE_052.md#google-local--ml-kit) ; [étude antérieure des autres candidats](ETUDE_TRADUCTION_LOCALE.md) |
 | Essayer une piste synthétique anglaise | [Exemple SRT](../examples/essai-traduction-en.srt) |
 
-**ML Kit apporte une traduction locale dans les langues compatibles après téléchargement de ses modèles.** Aucun OCR, import Hugging Face, accès Google Cloud/Apps Script ou service de lecture durable en arrière-plan n’est intégré. Réutiliser un texte traduit conservé reste une fonction distincte d’une nouvelle traduction locale. Les comptes et quotas des services en ligne demeurent à vérifier auprès du fournisseur.
+**ML Kit apporte une traduction locale dans les langues compatibles après téléchargement de ses modèles. La candidate 0.5.4 ajoute l’exécution directe d’un GGUF local choisi explicitement.** Elle ne parcourt pas Hugging Face et ne télécharge pas de poids automatiquement. Aucun OCR, accès Google Cloud/Apps Script ou service de lecture durable en arrière-plan n’est intégré. Réutiliser un texte traduit conservé reste une fonction distincte d’une nouvelle traduction locale. Les comptes et quotas des services en ligne demeurent à vérifier auprès du fournisseur.
 
 ## Développer, vérifier et contribuer
 
@@ -59,7 +60,8 @@ Les **524 tests de la 0.5.1**, référence historique, se répartissent en 178 t
 
 | Version ou document | Statut et périmètre |
 | --- | --- |
-| [0.5.3-diagnostic — diagnostic local](releases/0.5.3-diagnostic.md) | Candidate en préparation ; CPU GGUF synthétique et sondes locales, sans OCR ni traduction TranslateGemma de film ; publication signée non encore établie |
+| [0.5.4-local — traduction GGUF locale](releases/0.5.4-local.md) | Candidate en préparation ; modèle choisi sur le téléphone, reprise et export ; validation propre à établir |
+| [0.5.3-diagnostic — diagnostic local](releases/0.5.3-diagnostic.md) | Préversion publiée le 28 octobre 2026 ; CPU GGUF synthétique et sondes locales ; 600 tests réussis sur ses sources |
 | [0.5.2 — Google et lecture pendant la traduction](releases/0.5.2.md) | Moteurs Google, tampon progressif réglable, correction du panneau audio ; [preuves](../TESTING.md) |
 | [0.5.1 — réglages stables et traduction résiliente](releases/0.5.1.md) | Publication historique du 27 octobre 2026 ; correctifs conservés |
 | [0.5.0 — Confort intégral](releases/0.5.0.md) | Publication historique du 26 octobre 2026 ; fonctions conservées |

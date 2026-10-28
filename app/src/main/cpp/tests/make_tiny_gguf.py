@@ -15,7 +15,7 @@ def string(value):
     return struct.pack('<Q', len(data)) + data
 
 
-def generate(destination):
+def generate(destination, terminating=False):
     # GGUF types: UINT32=4, FLOAT32=6, BOOL=7, STRING=8, ARRAY=9.
     tokens = ['<unk>', '<s>', '</s>'] + [f'<0x{i:02X}>' for i in range(256)] + ['▁probe']
     n_vocab, embedding, hidden = len(tokens), 16, 32
@@ -59,8 +59,14 @@ def generate(destination):
         return a.tobytes()
     output = [0.0] * (embedding * n_vocab)
     output[-embedding:] = [1.0] * embedding
+    token_embeddings = [1.0] * (embedding * n_vocab)
+    if terminating:
+        # A probe token changes the sign of the final hidden vector. Its next
+        # greedy prediction is EOS, exercising true termination without training.
+        token_embeddings[-embedding:] = [-1.0] * embedding
+        output[2 * embedding:3 * embedding] = [-1.0] * embedding
     tensors = [
-        ('token_embd.weight', [embedding, n_vocab], values([1.0] * (embedding * n_vocab))),
+        ('token_embd.weight', [embedding, n_vocab], values(token_embeddings)),
         ('output_norm.weight', [embedding], values([1.0] * embedding)),
         ('output.weight', [embedding, n_vocab], values(output)),
         ('blk.0.attn_norm.weight', [embedding], values([1.0] * embedding)),
@@ -89,4 +95,4 @@ def generate(destination):
 
 
 if __name__ == '__main__':
-    print(f'Synthetic GGUF: {generate(sys.argv[1])} bytes')
+    print(f"Synthetic GGUF: {generate(sys.argv[1], '--terminating' in sys.argv[2:])} bytes")

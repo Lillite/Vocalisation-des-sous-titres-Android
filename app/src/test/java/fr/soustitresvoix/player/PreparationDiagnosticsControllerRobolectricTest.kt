@@ -238,4 +238,49 @@ class PreparationDiagnosticsControllerRobolectricTest {
             f.assertPreferencesUnchanged()
         }
     }
+
+    @Test fun importingReplacementRemovesPreviousModelsExecutionResult() {
+        Fixture().use { f ->
+            val bytes = java.nio.ByteBuffer.allocate(40).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                .put(byteArrayOf(71, 71, 85, 70)).putInt(3).putLong(0).putLong(0).array()
+            val original = File(f.activity.cacheDir, "replacement-synthetic.gguf").apply { writeBytes(bytes) }
+            @Suppress("UNCHECKED_CAST")
+            val reports = PreparationDiagnosticsController::class.java.getDeclaredField("reports").let {
+                it.isAccessible = true
+                it.get(f.controller) as MutableMap<String, String>
+            }
+            reports["model"] = "Ancien modèle : 9,74 tokens par seconde — résultat périmé"
+            val panel = f.open()
+            assertTrue(text(panel).contains("résultat périmé"))
+            button(panel, "Choisir un modèle GGUF local").performClick()
+            f.controller.selectedModel(Uri.fromFile(original))
+            val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5)
+            while (!text(panel).contains("Copie privée complète") && System.nanoTime() < deadline) {
+                shadowOf(Looper.getMainLooper()).idle()
+                Thread.sleep(10)
+            }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(text(panel).contains("Copie privée complète : 40 octets"))
+            assertFalse("An import must not present the old model's inference as the new model's result",
+                text(panel).contains("résultat périmé"))
+            assertTrue(text(panel).contains("lance un nouvel essai"))
+            assertArrayEquals(bytes, original.readBytes())
+            assertArrayEquals(bytes, f.model.readBytes())
+            assertNotNull(LocalGgufModelStore(f.activity).current())
+        }
+    }
+
+    @Test fun modelInUseCannotBeDeletedByTheDiagnostic() {
+        Fixture().use { f ->
+            f.model.writeBytes(byteArrayOf(1, 2, 3))
+            val panel = f.open()
+            LocalGgufModelStore(f.activity).acquireMutationLease().use {
+                button(panel, "Supprimer la copie du modèle importé").performClick()
+                assertTrue(f.model.exists())
+                assertTrue(text(panel).contains("Attends sa fin avant de supprimer"))
+            }
+            button(panel, "Supprimer la copie du modèle importé").performClick()
+            assertFalse(f.model.exists())
+        }
+    }
 }

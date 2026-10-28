@@ -18,8 +18,8 @@ object SubtitleText {
         text = text.replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">")
             .replace("&quot;", "\"").replace("&#39;", "'").replace("&amp;", "&")
         if (skipDescriptions) text = descriptions.replace(text, "")
-        // Media3 has already decoded markup in ordinary text cues. Never execute
-        // HTML/JS and never send captions to a language model.
+        // Media3 has already decoded markup in ordinary text cues. Treat the
+        // result as text; any translation requires its explicit application flow.
         return text.lines().map { spaces.replace(it, " ").trim() }
             .joinToString("\n").trim()
     }

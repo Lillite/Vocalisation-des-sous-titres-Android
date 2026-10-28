@@ -1,8 +1,8 @@
-# Diagnostic local — candidat 0.5.3
+# Diagnostic local — préversion publiée 0.5.3
 
 [Accueil](../README.md) · [Documentation](README.md) · [Notes du candidat](releases/0.5.3-diagnostic.md) · [Validation](../TESTING.md)
 
-La version **0.5.3-diagnostic / code 10** prépare le choix des futurs moteurs locaux. Elle mesure le téléphone, essaie un court décodage vidéo et permet d’exécuter réellement un modèle GGUF sur le **CPU**. Elle ne réalise encore ni OCR de film ni traduction de sous-titres avec TranslateGemma. La version publiée recommandée reste la [0.5.2](releases/0.5.2.md) tant qu’un APK diagnostic signé et vérifié n’a pas été publié.
+La version **0.5.3-diagnostic / code 10**, [publiée comme préversion](releases/0.5.3-diagnostic.md), prépare les moteurs locaux. Elle mesure le téléphone, essaie un court décodage vidéo et permet d’exécuter réellement un modèle GGUF sur le **CPU**. Ce diagnostic ne réalise ni OCR de film ni traduction de sous-titres avec TranslateGemma. La [0.5.2](releases/0.5.2.md) reste la stable recommandée. L’intégration de traduction GGUF de la [candidate 0.5.4](TRADUCTION_GGUF_054.md) constitue une étape séparée.
 
 ## Ouvrir le diagnostic
 

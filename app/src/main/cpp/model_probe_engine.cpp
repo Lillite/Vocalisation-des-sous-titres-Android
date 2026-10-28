@@ -1,4 +1,5 @@
 #include "model_probe_engine.h"
+#include "local_model_backend.h"
 #include "llama.h"
 #include "ggml-backend.h"
 #include <algorithm>
@@ -16,8 +17,6 @@
 namespace subtitle_probe {
 namespace {
 using Clock = std::chrono::steady_clock;
-std::mutex execution_mutex;
-std::once_flag backend_once;
 constexpr int context_size = 512;
 constexpr size_t max_output_bytes = 8192;
 long long millis(Clock::time_point start) {
@@ -43,7 +42,6 @@ std::string metadata(llama_model * model, const char * key) {
 }
 bool aborted(void * data) { return static_cast<Cancellation *>(data)->cancelled.load(); }
 bool loading(float, void * data) { return !aborted(data); }
-void silent_log(ggml_log_level, const char *, void *) { /* Never expose local model paths in logcat. */ }
 std::string prompt_for(llama_model * model, Result & result) {
     auto name = metadata(model, "general.name");
     std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -88,11 +86,11 @@ Result run(const std::string & path, Cancellation & cancellation, int threads,
         result.status = "CANCELLED"; result.stop_reason = "cancelled";
         result.detail = "Essai annulé ; les ressources du modèle sont libérées.";
     };
-    std::unique_lock<std::mutex> execution(execution_mutex, std::try_to_lock);
-    if (!execution.owns_lock()) { result.status = "BUSY"; result.detail = "Un autre essai natif est en cours."; return result; }
+    subtitle_native::ModelLease execution;
+    if (!execution) { result.status = "BUSY"; result.detail = "Un autre essai natif est en cours."; return result; }
     if (cancellation.cancelled.load()) { cancel_result(); return result; }
     try {
-        std::call_once(backend_once, [] { llama_log_set(silent_log, nullptr); ggml_log_set(silent_log, nullptr); llama_backend_init(); });
+        subtitle_native::initialize_backend();
         auto parameters = llama_model_default_params();
         ggml_backend_dev_t cpu_devices[] = {ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU), nullptr};
         if (!cpu_devices[0]) { result.detail = "Moteur CPU indisponible dans cette bibliothèque."; return result; }

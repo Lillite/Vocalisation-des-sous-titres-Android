@@ -2,16 +2,28 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
-## 0.5.3-diagnostic — candidate en préparation
+## 0.5.4-local — candidate de traduction GGUF locale
 
-Première étape de préparation des moteurs locaux, versionCode **10** ; aucune livraison ni réussite de campagne n’est annoncée avant leurs vérifications. [Notes de la candidate](docs/releases/0.5.3-diagnostic.md) · [Guide du diagnostic](docs/DIAGNOSTIC_LOCAL_053.md).
+VersionCode **11**, identité Traduction conservée. [Guide GGUF](docs/TRADUCTION_GGUF_054.md) · [Notes, périmètre et validation](docs/releases/0.5.4-local.md). La validation de cette candidate et la vérification de sa distribution restent distinctes des résultats historiques.
+
+- Moteur GGUF local dans le parcours de traduction, sans serveur, compte, clé API, poids inclus ou téléchargement automatique. Import privé explicite, empreinte du contenu et paramètres liés aux résultats conservés.
+- Runtime CPU persistant pour la tâche, consignes adaptées à TranslateGemma et Hunyuan dense, contexte récent borné et refus d’une sortie tronquée. Les numéros et minutages des sous-titres restent gérés par le code.
+- Préparation d’un fichier SRT sans vidéo, progression et reprise des occurrences validées, conservation de l’original et export d’un nouveau SRT/VTT complet.
+- Réutilisation des protections de lecture progressive, de pause, de déplacement et de réponse tardive. Chaque occurrence, répétition réelle, panneau et chevauchement reste conservé.
+- Résultat de diagnostic invalidé lorsqu’un nouveau modèle est importé, pour ne pas attribuer un ancien essai au nouveau fichier.
+- Modèle miniature terminant généré pour l’APK d’instrumentation seulement ; exécution JNI testée séparément de la qualité linguistique. GPU, NPU, OCR et choix définitif du modèle restent hors de cette étape.
+- Publication préparée comme préversion, sans remplacer la stable 0.5.2 et avec le certificat durable existant.
+
+## 0.5.3-diagnostic — préversion publiée
+
+Première étape de préparation des moteurs locaux, versionCode **10**, publiée le **28 octobre 2026**. [Notes et preuves](docs/releases/0.5.3-diagnostic.md) · [Guide du diagnostic](docs/DIAGNOSTIC_LOCAL_053.md). La [PR #19](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/19) a réussi **600 tests avant fusion** ; reconstruction et publication ont ensuite été vérifiées sans répéter les suites.
 
 - Nouveau panneau **Diagnostic local : appareil, vidéo et modèle** : mesures RAM, mémoire du processus, stockage, thermique et codecs déclarés.
 - Essai vidéo synthétique ou locale choisie, au plus 8 images sur 10 secondes, sans OCR et sans promesse de compatibilité complète des anciens conteneurs.
 - Import privé d’un GGUF après consentement explicite, puis véritable essai CPU de chargement et génération synthétique avec llama.cpp via JNI dans un processus de service distinct. Aucun téléchargement automatique de poids.
 - Mesures et essais indépendants, annulation et fermeture dédiées, rapport copiable dans le presse-papiers. Aucune modification de la vocalisation ni nouveau service Internet.
 - GPU/NPU non exécutés ; OCR et traduction des sous-titres par TranslateGemma non intégrés à cette étape. Les essais ne remplacent pas une évaluation linguistique ni des mesures sur téléphone.
-- Préparation de la publication comme préversion sans remplacer la stable 0.5.2, avec conservation obligatoire du certificat durable. La sauvegarde privée Traduction a été retrouvée et son certificat public vérifié ; l’APK reste à valider et à signer avant distribution.
+- Publication comme préversion sans remplacer la stable 0.5.2, avec le certificat durable conservé et le téléchargement de l’APK vérifié. Aucune clé privée n’est distribuée.
 
 ## 0.5.2 — Google et traduction pendant la lecture
 

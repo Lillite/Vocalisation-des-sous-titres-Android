@@ -58,6 +58,10 @@ internal class TranslationCheckpointStore(private val directory: File) {
         plan.cues.take(texts.size), plan.sourceLanguage, plan.targetLanguage, plan.providerId).complete(texts)
 }
 
-data class TranslationRunPolicy(val maximumNewCharacters: Long = Long.MAX_VALUE) {
+data class TranslationRunPolicy(
+    val maximumNewCharacters: Long = Long.MAX_VALUE,
+    /** Local inference can be repeated after interruption without an uncertain remote charge. */
+    val requestMayConsumeRemoteQuota: Boolean = true
+) {
     init { require(maximumNewCharacters >= 0) }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish only the signed 0.5.3-diagnostic candidate already validated on main.
+"""Publish only the signed 0.5.4-local candidate already validated on main.
 
 The temporary branch contains three data files, never a signing key. This script
 does not compile or sign an APK, delete a release/tag, replace an asset, execute a
@@ -32,15 +32,15 @@ import zipfile
 
 
 REPOSITORY = "Lillite/Vocalisation-des-sous-titres-Android"
-BRANCH = "release-upload/v0.5.3-diagnostic"
-TAG = "v0.5.3-diagnostic"
-TITLE = "Sous-titres en voix 0.5.3 — Diagnostic local (préversion)"
+BRANCH = "release-upload/v0.5.4-local"
+TAG = "v0.5.4-local"
+TITLE = "Sous-titres en voix 0.5.4 — Traduction GGUF locale (préversion)"
 PRERELEASE = True
 APPLICATION_ID = "fr.soustitresvoix.player.translation"
-VERSION_NAME = "0.5.3-diagnostic"
-VERSION_CODE = "10"
+VERSION_NAME = "0.5.4-local"
+VERSION_CODE = "11"
 EXPECTED_SIGNER_SHA256 = "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d"
-APK_PATH = "release-upload/SousTitresVoix-0.5.3-diagnostic.apk"
+APK_PATH = "release-upload/SousTitresVoix-0.5.4-local.apk"
 NOTES_PATH = "release-upload/notes.md"
 METADATA_PATH = "release-upload/release.json"
 VALIDATION_ARTIFACT = "SousTitresVoix-release-main"
@@ -537,7 +537,7 @@ def main() -> None:
     github = GitHub(os.environ.get("GITHUB_TOKEN", ""))
     no_existing_release_or_tag(github)
     ci_run = successful_main_run(github, value["source_sha"])
-    with tempfile.TemporaryDirectory(prefix="verified-diagnostic-release-") as directory:
+    with tempfile.TemporaryDirectory(prefix="verified-local-release-") as directory:
         work = Path(directory)
         compare_ci_artifact(github, ci_run, value["source_sha"], root / APK_PATH, work)
         url = publish(root, github, value, work, ci_run)
