@@ -23,10 +23,12 @@ import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.action.ViewActions.scrollTo
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.RootMatchers.isDialog
+import androidx.test.espresso.matcher.RootMatchers.isPlatformPopup
 import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
 import androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withContentDescription
+import androidx.test.espresso.matcher.ViewMatchers.withSpinnerText
 import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -101,7 +103,11 @@ class ExpertAudioAndroidTest {
             onView(withText("Réglages de la voix et du confort")).perform(scrollTo(), click())
             onView(withContentDescription("Choisir une rubrique de réglages"))
                 .inRoot(isDialog()).perform(scrollTo(), click())
-            onData(equalTo("Son")).perform(click())
+            // The native Spinner opens a PopupWindow above the settings dialog.
+            // Its rows must be matched in that root, not the unfocused activity.
+            onData(equalTo("Son")).inRoot(isPlatformPopup()).perform(click())
+            onView(withContentDescription("Choisir une rubrique de réglages"))
+                .inRoot(isDialog()).check(matches(withSpinnerText("Son")))
             onView(withId(R.id.audio_dsp_open)).inRoot(isDialog()).perform(scrollTo(), click())
             onView(withId(R.id.audio_dsp_enabled)).inRoot(isDialog()).check(matches(isDisplayed()))
             onView(withId(R.id.audio_dsp_band_3)).inRoot(isDialog()).perform(scrollTo(), click())
