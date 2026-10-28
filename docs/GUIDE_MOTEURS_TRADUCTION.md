@@ -2,25 +2,24 @@
 
 [Accueil](../README.md) · [Documentation](README.md) · [Services gratuits et limites](TRADUCTION_GRATUITE_ET_LIMITES.md) · [Tests sur téléphone](TESTS_TELEPHONE.md)
 
-Guide d’utilisation des fonctions **0.5.0 et des correctifs 0.5.1** ; état du projet au **27 octobre 2026**. Les références commerciales initiales ont été vérifiées le 24 octobre, puis les offres gratuites le 27 octobre. Les conditions, langues et droits applicables restent ceux affichés dans le compte du fournisseur.
+Guide d’utilisation de la **0.5.2** ; état documentaire au **28 octobre 2026**. La publication et les résultats réels figurent dans les [notes 0.5.2](releases/0.5.2.md). Les références commerciales initiales ont été vérifiées le 24 octobre, puis les offres gratuites le 27 octobre. Les conditions, langues et droits applicables restent ceux affichés dans le compte du fournisseur.
 
 ## Fonctions disponibles
 
-La **traduction complète avant lecture** reste le choix initial. Le mode **progressif**, activé explicitement, permet de commencer avec au moins une minute de tampon validé avant la première occurrence non traduite. Si la lecture rattrape ce travail, le lecteur attend ; la fin d’un lot ne reprend pas automatiquement la vidéo. Les textes manquants ne sont pas remplacés silencieusement par l’original.
+La **traduction complète avant lecture** reste disponible. Le mode **progressif** permet de commencer avec un préfixe validé et une avance de **30 secondes par défaut**, réglable de **10 à 120 secondes**. La vidéo attend avant une occurrence indisponible. Une reprise automatique exige une attente créée par la traduction et une intention Lire toujours valide ; Pause utilisateur, déplacement, erreur ou changement de contexte empêchent une reprise tardive. Les textes manquants ne sont pas remplacés silencieusement par l’original. Le [guide Google et lecture progressive](TRADUCTION_GOOGLE_052.md) décrit ce comportement.
 
 La narration utilise les occurrences françaises validées. L’affichage propose indépendamment **original, français, bilingue ou masqué**. Le profil Lecture intégrale préserve toutes les occurrences textuelles extraites de la piste choisie ; les filtres d’exclusion exigent sa désactivation explicite. Moteur vocal et traducteur sont distincts : la voix prononce le résultat fourni par le traducteur.
 
 | Choix affiché | Où travaille le traducteur ? | Ce qu'il faut fournir | Installation de poids sur Android |
 | --- | --- | --- | --- |
+| Google en ligne sans clé | Serveurs Google, accès web non officiel | Langue source et confirmation ; aucune clé Cloud | Aucune |
+| Google local — ML Kit | Téléphone | Paire de langues compatible ; modèles nécessaires | Téléchargement intégré, Wi-Fi par défaut |
 | Microsoft Azure Translator | Serveurs Microsoft | Clé API personnelle et région selon la ressource | Aucune |
 | DeepL — point d'accès API Free | Serveurs DeepL, endpoint `api-free.deepl.com` | Clé API autorisée pour ce point d'accès | Aucune |
 | DeepL — point d'accès API payant | Serveurs DeepL, endpoint `api.deepl.com` | Clé API autorisée pour ce point d'accès | Aucune |
 | LibreTranslate — serveur personnel HTTPS | Serveur choisi par l'utilisateur | Adresse HTTPS, clé si l'instance l'exige | Aucune dans cette application |
 
-**Aucun moteur de traduction exécuté sur le téléphone et aucun import de modèle
-Hugging Face ne sont intégrés pour l'instant.** Les modèles locaux présentés plus
-loin sont des candidats documentés pour une étape future. Leur téléchargement
-ne les active pas dans ce lecteur.
+**ML Kit est intégré pour la traduction exécutée sur le téléphone.** Les autres modèles locaux présentés plus loin restent des candidats ; aucun import Hugging Face, GGUF ou paquet Argos n’est proposé. Google Cloud Translation et Apps Script restent distincts des choix Google intégrés et ne sont pas disponibles dans le lecteur.
 
 Les résultats ont trois usages distincts :
 
@@ -28,7 +27,7 @@ Les résultats ont trois usages distincts :
 - **Progression** : lots déjà validés conservés pour reprendre avec la même piste et les mêmes paramètres. Un lot au résultat incertain demande une confirmation avant un éventuel renvoi.
 - **Conservation et export** : conservation durable explicite d’une traduction complète, ou export SRT/VTT à l’emplacement choisi. L’export peut ensuite être réimporté comme piste française.
 
-Ces fonctions réutilisent un texte déjà traduit ; elles n’ajoutent pas de moteur de traduction local. La conservation privée dépend du stockage de l’application ; un export constitue un fichier séparé.
+Ces trois fonctions réutilisent un texte déjà traduit ; elles restent distinctes du calcul d’une nouvelle traduction locale avec ML Kit. La conservation privée dépend du stockage de l’application ; un export constitue un fichier séparé.
 
 ## Parcours depuis le téléphone
 
@@ -41,7 +40,7 @@ Ces fonctions réutilisent un texte déjà traduit ; elles n’ajoutent pas de m
 3. Renseigne les informations du fournisseur décrites ci-dessous. La clé
    personnelle se saisit dans l'application, jamais dans une issue GitHub,
    une capture publique ou un message de diagnostic.
-4. Choisis éventuellement **Traduction progressive** et un plafond de nouveaux caractères UTF-16. Appuie sur **« Indexer la piste et estimer la traduction »**. Le lecteur se
+4. Choisis éventuellement **Traduction progressive**, son avance de 10 à 120 secondes et un plafond de nouveaux caractères UTF-16. Appuie sur **« Indexer la piste et estimer la traduction »**. Le lecteur se
    met en pause et indexe la piste entière.
    Cette première opération sert à contrôler les occurrences et leur volume ;
    elle n'envoie pas encore le texte au traducteur.
@@ -49,7 +48,7 @@ Ces fonctions réutilisent un texte déjà traduit ; elles n’ajoutent pas de m
    de confirmer avec **« Traduire / réutiliser le cache »**. L'estimation en
    unités UTF-16 n'est pas une facture
    garantie : les règles de comptage du fournisseur restent applicables.
-6. Attends la piste complète, ou le tampon validé si tu as choisi le mode progressif. Une réponse incomplète n’est jamais présentée comme une piste complète. En 0.5.1, DeepL peut réessayer un refus de débit **429/529** ; les autres erreurs nécessitent une reprise explicite.
+6. Attends la piste complète, ou le tampon validé si tu as choisi le mode progressif. Une réponse incomplète n’est jamais présentée comme une piste complète. DeepL conserve ses reprises bornées après **429/529**. Google en ligne possède sa politique distincte décrite plus bas ; l’arrivée d’un résultat ne doit jamais annuler une Pause utilisateur.
 7. Si la vocalisation est activée, sélectionne une voix française prête dans
    **« Voix et confort »**. Appuie ensuite sur **« Lire »** quand la piste
    française ou le tampon progressif est annoncé prêt. L'application vérifie la voix française avant
@@ -83,6 +82,16 @@ en charge par une langue voisine, notamment le serbe par le croate.
 Sources : [langues Azure](https://learn.microsoft.com/en-us/azure/ai-services/translator/language-support),
 [langues DeepL](https://developers.deepl.com/docs/getting-started/supported-languages),
 [langues LibreTranslate](https://docs.libretranslate.com/guides/supported_languages/).
+
+## Google en ligne sans clé et Google local
+
+Ces deux choix disposent de parcours distincts, avec une attribution Google et une langue source explicite. L’utilisateur confirme l’initialisation de ML Kit et le téléchargement de ses modèles. Les textes restent sur le téléphone avec ML Kit, mais Google déclare une télémétrie technique : appareil, application, identifiants d’installation, performances, tailles d’entrées/sorties, langues et événements. Voir la [déclaration de collecte ML Kit](https://developers.google.com/ml-kit/android-data-disclosure).
+
+- **En ligne** : accès web non officiel, sans compte Cloud ni clé à saisir. Intervalle minimal de **1 000 ms** par défaut, réglable de **500 à 10 000 ms** ; appels sérialisés, au plus trois reprises temporaires et budget cumulé de 120 secondes d’attente par requête, hors réseau, avec respect de `Retry-After`. Un refus ne déclenche ni rotation d’IP ni autre point d’accès de contournement. Aucune disponibilité permanente n’est promise.
+- **Local** : bibliothèque **ML Kit 17.0.3**, contrôle de la paire de langues et téléchargement des modèles nécessaires. Le Wi-Fi est requis par défaut ; une option explicite permet le réseau mobile. Une fois les modèles prêts, les textes sont traduits sur l’appareil. La qualité peut différer de Google en ligne et les langues disponibles ne sont pas identiques.
+- **Réutilisation** : le cache/progrès compatible évite les demandes déjà validées. La réutilisation en mémoire d’une traduction de texte strictement identique n’enlève aucune occurrence de la piste et aucune vocalisation.
+
+Le [guide Google 0.5.2](TRADUCTION_GOOGLE_052.md) détaille les paramètres, la lecture pendant la traduction, les téléchargements, les limites de preuve et les projets examinés. Une préparation ou une restauration de séance démarre en pause ; la reprise progressive est réservée à l’attente causée par la traduction avec une intention de lecture encore valide.
 
 ## Microsoft Azure Translator : configuration complète
 
@@ -333,22 +342,22 @@ Un abonnement Hugging Face n'est pas automatiquement nécessaire pour téléchar
 des poids publics autorisés. Un bouton de déploiement, un endpoint dédié ou un
 fournisseur d'inférence peut en revanche engager un service distinct : vérifier
 l'offre avant activation. Il n'existe pas de compatibilité universelle entre
-les API de ces fournisseurs et les quatre adaptateurs actuels.
+les API de ces fournisseurs et les adaptateurs actuels.
 
 Sources : [téléchargement de modèles](https://huggingface.co/docs/hub/models-downloading),
 [modèles à accès contrôlé](https://huggingface.co/docs/hub/models-gated).
 
-## Modèles et solutions locales envisageables
+## ML Kit intégré et autres modèles locaux envisageables
 
 Cette sélection couvre plusieurs architectures utiles à comparer ; elle n'est
 pas un inventaire de tous les modèles existants. **Aucun résultat de débit,
 d'autonomie, de qualité ou d'accélération NPU sur OnePlus 15 n'est établi par ce
-guide.** Les candidats n'ont pas été installés ni évalués sur ce téléphone.
+guide.** Les candidats autres que ML Kit restent non intégrés ; aucune mesure sur ce téléphone n’est déduite de l’intégration du SDK.
 
 | Candidat et source primaire | Caractéristiques documentées | Licence / distribution | Intérêt et condition pour Android |
 | --- | --- | --- | --- |
 | [Index-Translate-2B](https://huggingface.co/IndexTeam/Index-Translate-2B), [GGUF de l'équipe](https://huggingface.co/IndexTeam/Index-Translate-2B-GGUF) | 2 milliards de paramètres, famille fondée sur Qwen3.5 ; couverture annoncée de 150 langues | Apache-2.0 annoncée ; GGUF quantifiés publiés par IndexTeam | Premier candidat spécialisé à mesurer avec un runtime natif prenant réellement en charge cette architecture et son gabarit |
-| [Google ML Kit Translation](https://developers.google.com/ml-kit/language/translation/android) | SDK Android et modèles à la demande ; plus de 50 langues | SDK et modèles soumis aux conditions Google, attribution et métriques à déclarer | Option compacte ; EN/DE/ES/IT/FR, **serbe absent** ; ajout non réalisé et collecte du SDK à décider explicitement |
+| [Google ML Kit Translation](https://developers.google.com/ml-kit/language/translation/android) | SDK Android et modèles à la demande ; plus de 50 langues | SDK et modèles soumis aux conditions Google, attribution et métriques à déclarer | **Intégré en 0.5.2** ; langues validées par le SDK, modèles à la demande et attribution Google ; vérifier la disponibilité exacte d’une langue avant préparation |
 | [TranslateGemma 4B IT](https://huggingface.co/google/translategemma-4b-it), [annonce Google](https://blog.google/innovation-and-ai/technology/developers-tools/translategemma/) | Famille Gemma 3 de traduction ; tailles 4B, 12B et 27B, 55 langues annoncées | Conditions Gemma applicables à ce modèle ; accès aux poids à accepter | 4B à comparer ; runtime et conversion mobile exacts nécessaires, ne pas confondre avec Gemini Nano ou ML Kit |
 | [NLLB-200 distilled 600M](https://huggingface.co/facebook/nllb-200-distilled-600M) | Encodeur-décodeur de traduction multilingue ; variante distillée 600M ; codes de langue et d'écriture propres | **CC-BY-NC-4.0**, modèle présenté pour la recherche | Comparateur relativement compact ; tokenizer, jeton cible et runtime doivent être adaptés ; licence non commerciale à vérifier avant distribution/usage commercial |
 | [MADLAD-400 3B MT](https://huggingface.co/google/madlad400-3b-mt) | Modèle T5 de traduction ; large couverture annoncée, plus de 450 langues dans la description d'entraînement | Apache-2.0 annoncée ; fiche décrivant une conversion et un chargement quantifié avec Candle | Comparateur large couverture, plus volumineux ; un GGUF T5/Candle n'est pas une preuve de compatibilité avec llama.cpp |
@@ -376,8 +385,7 @@ et recommande une évaluation pour les besoins de fidélité élevée. Les
 des échanges de métriques et de données de performance : « traitement local »
 ne signifie donc pas « aucun contact réseau ». Les
 [obligations d'attribution](https://developers.google.com/ml-kit/language/translation/translation-terms)
-sont à appliquer. Ajouter ce SDK nécessite une décision distincte sur ces
-conditions et cette collecte.
+sont prises en compte par l’intégration. Ce moteur est désormais disponible en 0.5.2 avec la version 17.0.3 ; le choix local n’annonce aucune accélération NPU ni mesure de débit sur le téléphone.
 
 **TranslateGemma.** Le compte officiel Google et les
 [conditions Gemma](https://ai.google.dev/gemma/terms) constituent le point de
@@ -405,11 +413,9 @@ absent, avec un risque supplémentaire de perte de sens. Le
 montre le format `.argosmodel` dans son propre logiciel. Les menus qu'il décrit
 ne sont pas des menus de ce lecteur Android.
 
-## Comment une future installation locale devra fonctionner
+## Futurs imports de modèles autres que ML Kit
 
-Le parcours souhaité reste entièrement utilisable sur téléphone. Pour le rendre
-réel, une prochaine étape de développement devra fournir les éléments suivants,
-avant de demander à l'utilisateur d'importer un gros modèle :
+ML Kit possède déjà son téléchargement intégré. Pour ajouter d’autres familles de modèles avec un import entièrement utilisable sur téléphone, une étape future devra fournir les éléments suivants avant de demander l’import d’un gros fichier :
 
 1. Un moteur Android ARM64 embarqué et versionné, compatible avec l'architecture
    exacte du modèle. Le CPU, le GPU et le NPU doivent être des capacités mesurées
@@ -431,14 +437,15 @@ avant de demander à l'utilisateur d'importer un gros modèle :
    narration que pour les services en ligne. La réutilisation hors ligne doit
    être testée séparément du téléchargement initial.
 
-Ces points sont un cahier de travail, pas des commandes présentes. D'ici là,
-les options concrètes de cette étape sont les adaptateurs réseau configurables
-et la conservation locale de leurs résultats complets.
+Ces points concernent les futurs imports, pas les commandes ML Kit déjà intégrées. Les options actuelles comprennent les adaptateurs réseau, ML Kit et la conservation locale de leurs résultats complets.
 
 ## Dépannage et choix raisonnable pour démarrer
 
 | Symptôme | Vérification à faire |
 | --- | --- |
+| Google en ligne limité ou refusé | Respecter l’attente annoncée ; augmenter l’intervalle pour une prochaine tâche ; aucun réglage ne garantit l’acceptation du service |
+| Modèles ML Kit indisponibles | Vérifier le Wi-Fi par défaut, l’option réseau mobile si souhaitée, l’espace et la langue ; ne pas annoncer une traduction prête pendant le téléchargement |
+| Lecture en attente de traduction | Tampon validé insuffisant ; le lecteur attend pour conserver les textes, avec reprise uniquement si l’intention Lire reste valide |
 | Clé refusée | Compte API, clé révoquée, endpoint du plan, région Azure ; ne pas publier la clé |
 | Débit temporaire DeepL, 429/529 | Attente et reprises bornées en 0.5.1 ; consulter le statut avant une reprise manuelle |
 | Quota atteint, 456 | Tableau de bord du fournisseur et plafond propre à la clé ; décider avant toute nouvelle tentative |
@@ -447,14 +454,13 @@ et la conservation locale de leurs résultats complets.
 | Préparation impossible | Piste textuelle chargée et index complet ; des pixels ne deviennent pas du texte sans OCR |
 | Français prêt mais lecture refusée | Voix française prête dans « Voix et confort » |
 | Changement de vidéo ou de piste | Préparer une nouvelle traduction correspondant à la nouvelle sélection |
-| Fichier Hugging Face téléchargé mais inutilisable | Aucun import local n'existe encore ; vérifier le futur couple runtime/modèle avant de télécharger autre chose |
+| Fichier Hugging Face téléchargé mais inutilisable | Aucun import de poids arbitraires n’existe ; ML Kit gère ses propres modèles, distincts de ces fichiers |
 
 Pour commencer sans achat, **Azure F0 est un premier choix en ligne cohérent si
 l'ouverture de la ressource convient**. DeepL peut servir de comparaison avec
 l'accès réellement disponible sur ton compte. Un serveur LibreTranslate contrôlé
 est pertinent quand tu en as déjà un ou souhaites administrer cette solution.
-Pour le local, Index-Translate-2B mérite un prototype mesuré ; ML Kit est une
-autre piste compacte avec des limites et métriques à accepter explicitement.
+Google en ligne sans clé constitue une option supplémentaire à disponibilité non garantie. Pour le local, **ML Kit est utilisable après téléchargement des modèles compatibles** ; Index-Translate-2B et les autres familles restent des candidats à mesurer.
 
 Le meilleur choix linguistique se décide sur les mêmes extraits et les mêmes
 langues vers le français. Il faut comparer fidélité, omissions, cohérence des
@@ -470,7 +476,7 @@ l'application refuse l'enregistrement au lieu de stocker le secret en clair.
 Ce mécanisme protège le stockage ; il ne rend pas inoffensive une clé copiée
 dans un autre logiciel ou exposée par une capture. Les comptes Azure, DeepL et
 LibreTranslate restent distincts. Aucun jeton Hugging Face n'est nécessaire pour
-les quatre adaptateurs intégrés.
+les adaptateurs intégrés ; les deux choix Google ne demandent pas de clé API personnelle.
 
 La case **« Mémoriser cette clé, chiffrée avec Android Keystore sur ce téléphone »**
 est facultative. Le bouton **« Effacer la clé mémorisée pour ce moteur »** retire
@@ -481,13 +487,12 @@ les accès requis et peut consommer le quota de nouveau.
 
 Le transport de traduction utilise HTTPS, la validation des certificats du
 système, des délais réseau et des réponses bornées. Il refuse les redirections.
-Seuls les refus explicites de débit DeepL **429/529** autorisent les nouvelles
-tentatives bornées décrites plus haut ; les autres erreurs ne sont pas relancées. Les messages destinés
+DeepL **429/529** et Google en ligne suivent leurs politiques bornées respectives décrites plus haut ; elles ne doivent pas être confondues. Les erreurs ambiguës des fournisseurs facturables ne sont pas renvoyées automatiquement. Les messages destinés
 à l'utilisateur ne recopient ni le corps d'erreur du prestataire ni ses secrets.
 Le cache de traduction contient toutefois du texte privé de sous-titres : un
 stockage privé d'application n'est pas synonyme de chiffrement de ce cache.
 
-La confirmation montre le fournisseur et le volume estimé avant l'envoi. Elle
+La confirmation montre le moteur et le volume estimé avant la traduction ; l’envoi des textes concerne seulement les moteurs en ligne. Elle
 ne peut pas garantir le solde restant chez le prestataire ni modifier son
 contrat : contrôle le tableau de bord du compte et ses plafonds. Une annulation
 arrête le travail restant sans annuler une requête déjà traitée. Avant de

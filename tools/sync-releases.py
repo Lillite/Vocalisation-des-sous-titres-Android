@@ -140,6 +140,66 @@ def asset_snapshot(release):
     return sorted(({key: asset.get(key) for key in keys} for asset in release["assets"]), key=lambda asset: asset["id"])
 
 
+def include_declared_release(client, path, entries, report):
+    """Resolve one explicitly declared new version only after it is published.
+
+    GitHub assigns release/asset IDs at publication, after the verified merge.
+    Read those IDs and the server digest instead of inventing them in a second
+    documentation commit. The regular preflight still verifies the public
+    bytes, source version, refs and assets before any write.
+    """
+    declaration = json.loads(path.read_text(encoding="utf-8")).get("next_release")
+    if declaration is None:
+        return entries
+    require(isinstance(declaration, dict), "Invalid next_release declaration.")
+    require(set(declaration) == {"tag", "title", "notes", "asset"}, "Unexpected next_release fields.")
+    tag, expected = declaration["tag"], declaration["asset"]
+    require(isinstance(tag, str) and re.fullmatch(r"v\d+\.\d+\.\d+", tag), "Invalid declared release tag.")
+    require(tag not in {entry["tag"] for entry in entries} and
+            tag not in {entry.get("old_tag") for entry in entries}, "Declared tag overlaps release history.")
+    require(isinstance(declaration["title"], str) and declaration["title"].strip(), "Missing declared title.")
+    require(isinstance(expected, dict) and set(expected) == {"name", "version_name", "version_code", "application_id"},
+            "Invalid declared APK fields.")
+    require(isinstance(expected["name"], str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.apk", expected["name"]),
+            "Invalid declared APK name.")
+    require(expected["version_name"] == tag[1:] and type(expected["version_code"]) is int and expected["version_code"] > 0,
+            "Invalid declared APK version.")
+    require(expected["application_id"] == "fr.soustitresvoix.player.translation", "Unexpected declared Android identity.")
+    require(isinstance(declaration["notes"], str), "Missing declared notes.")
+    notes = (ROOT / declaration["notes"]).resolve()
+    require(notes.is_relative_to(ROOT / "docs/releases") and notes.suffix == ".md", "Declared notes outside docs/releases.")
+    body = notes.read_text(encoding="utf-8").strip()
+    require(0 < len(body) <= 65536, "Invalid declared notes length.")
+    release = client.request("GET", "/releases/tags/" + quote(tag, safe=""), optional=True)
+    if release is None or release.get("draft") is True:
+        report["declared_release"] = {"tag": tag, "status": "not-published"}
+        return entries
+    require(release.get("tag_name") == tag and release.get("draft") is False and release.get("prerelease") is False,
+            "Declared release is not a published stable version.")
+    require(type(release.get("id")) is int and release["id"] > 0 and
+            release["id"] not in {entry["id"] for entry in entries}, "Invalid declared release ID.")
+    assets = [asset for asset in release.get("assets", []) if asset.get("name", "").endswith(".apk")]
+    require(len(assets) == 1 and assets[0].get("name") == expected["name"], "Unexpected declared APK assets.")
+    asset = assets[0]
+    require(all(type(asset.get(key)) is int and asset[key] > 0 for key in ("id", "size")) and
+            asset["id"] not in {entry["asset"]["id"] for entry in entries}, "Invalid declared asset ID or size.")
+    digest = asset.get("digest", "")
+    require(isinstance(digest, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", digest), "Invalid declared asset digest.")
+    reference = client.ref(tag)
+    require(reference is not None and SHA.fullmatch(reference.get("commit", "")), "Missing declared release tag.")
+    source = reference["commit"]
+    comparison = client.request("GET", "/compare/" + source + "...main")
+    require(comparison.get("status") in ("identical", "ahead") and
+            comparison.get("merge_base_commit", {}).get("sha") == source,
+            "Declared release source is not contained in main.")
+    entry = {**declaration, "id": release["id"], "source_commit": source,
+             "prerelease": False, "latest": True, "body": body,
+             "asset": {**expected, "id": asset["id"], "size": asset["size"], "sha256": digest[7:]}}
+    report["declared_release"] = {"tag": tag, "status": "published", "id": entry["id"],
+                                  "source_commit": source, "asset": entry["asset"]}
+    return [{**previous, "latest": False} for previous in entries] + [entry]
+
+
 def snapshot(release):
     keys = ("id", "tag_name", "target_commitish", "name", "body", "prerelease", "draft", "html_url")
     result = {key: release.get(key) for key in keys}
@@ -312,8 +372,9 @@ def main():
         if args.apply:
             require(repository == REPOSITORY and os.environ.get("GITHUB_REF") == "refs/heads/main", "Apply is permitted only on this repository's main branch.")
             require(bool(token), "GITHUB_TOKEN is required for apply.")
-        entries = load_manifest(args.manifest)
-        synchronize(GitHub(token), entries, args.apply, report)
+        client = GitHub(token)
+        entries = include_declared_release(client, args.manifest, load_manifest(args.manifest), report)
+        synchronize(client, entries, args.apply, report)
         print(json.dumps({"status": report["status"], "plan": report["plan"], "actions": report["actions"]}, ensure_ascii=False, indent=2))
         return 0
     except (SyncError, OSError, ValueError, KeyError, TypeError) as error:

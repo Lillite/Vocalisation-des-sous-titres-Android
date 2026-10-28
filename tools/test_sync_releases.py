@@ -70,6 +70,9 @@ class Client:
             tag = path.removeprefix('/releases/tags/')
             found = next((release for release in self.releases.values() if release['tag_name'] == tag), None)
             return deepcopy(found)
+        if method == 'GET' and path.startswith('/compare/'):
+            source = path.removeprefix('/compare/').split('...')[0]
+            return {"status": "ahead", "merge_base_commit": {"sha": source}}
         if path.startswith('/releases/'):
             identity = int(path.rsplit('/', 1)[1])
             if method == 'GET':
@@ -243,6 +246,94 @@ class SynchronizeTests(unittest.TestCase):
         with patch.object(sync, 'verify_download'):
             with self.assertRaisesRegex(sync.SyncError, 'Unexpected current tag'):
                 sync.verify_release(client, entry)
+
+
+class DeclaredReleaseTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='declared-release-fixture-')
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        (self.root / 'docs/releases').mkdir(parents=True)
+        self.path = self.root / 'manifest.json'
+        self.old = fixture_entry(1)
+        self.new = fixture_entry(2)
+        for entry in (self.old, self.new):
+            entry['body'] = 'Synthetic notes.'
+            entry['asset']['application_id'] = 'fr.soustitresvoix.player.translation'
+            (self.root / entry['notes']).write_text(entry['body'], encoding='utf-8')
+        self.declaration = {key: self.new[key] for key in ('tag', 'title', 'notes')}
+        self.declaration['asset'] = {key: self.new['asset'][key]
+                                     for key in ('name', 'version_name', 'version_code', 'application_id')}
+
+    def resolve(self, client, declaration=None):
+        self.path.write_text(json.dumps({'next_release': declaration or self.declaration}), encoding='utf-8')
+        report = {}
+        with patch.object(sync, 'ROOT', self.root):
+            result = sync.include_declared_release(client, self.path, [self.old], report)
+        return result, report
+
+    def test_before_publication_keeps_existing_latest_without_writes(self):
+        client = Client([self.old])
+        result, report = self.resolve(client)
+        self.assertEqual([self.old], result)
+        self.assertEqual('not-published', report['declared_release']['status'])
+        self.assertEqual([], client.mutations)
+
+    def test_published_version_is_verified_without_recommending_previous_release(self):
+        client = Client([dict(self.old, latest=False), self.new])
+        result, report = self.resolve(client)
+        self.assertEqual([False, True], [entry['latest'] for entry in result])
+        self.assertEqual(self.new['asset'], result[-1]['asset'])
+        self.assertTrue(self.old['latest'], 'The source manifest entry must not be mutated')
+        with patch.object(sync, 'verify_download') as download:
+            sync.synchronize(client, result, True, report)
+        self.assertTrue(download.called)
+        self.assertEqual(2, report['after_latest_id'])
+        self.assertEqual([], client.mutations)
+
+    def test_draft_does_not_replace_current_latest(self):
+        client = Client([self.old, self.new])
+        client.releases[2]['draft'] = True
+        result, report = self.resolve(client)
+        self.assertEqual([self.old], result)
+        self.assertEqual('not-published', report['declared_release']['status'])
+
+    def test_wrong_asset_or_missing_server_digest_refuses_before_mutation(self):
+        for corruption in ('name', 'digest', 'extra-apk'):
+            with self.subTest(corruption=corruption):
+                client = Client([self.old, self.new])
+                asset = client.releases[2]['assets'][0]
+                if corruption == 'name': asset['name'] = 'Other.apk'
+                if corruption == 'digest': asset['digest'] = None
+                if corruption == 'extra-apk': client.releases[2]['assets'].append(dict(asset, id=999, name='Other.apk'))
+                with self.assertRaises(sync.SyncError):
+                    self.resolve(client)
+                self.assertEqual([], client.mutations)
+
+    def test_source_outside_main_refuses_before_mutation(self):
+        client = Client([self.old, self.new])
+        original = client.request
+        def request(method, path, *args, **kwargs):
+            if path.startswith('/compare/'):
+                return {'status': 'diverged', 'merge_base_commit': {'sha': 'f' * 40}}
+            return original(method, path, *args, **kwargs)
+        client.request = request
+        with self.assertRaisesRegex(sync.SyncError, 'not contained in main'):
+            self.resolve(client)
+        self.assertEqual([], client.mutations)
+
+    def test_declaration_rejects_wrong_version_identity_and_notes_escape(self):
+        for corruption in ('version', 'identity', 'notes', 'extra'):
+            with self.subTest(corruption=corruption):
+                declaration = deepcopy(self.declaration)
+                if corruption == 'version': declaration['asset']['version_name'] = '9.9.9'
+                if corruption == 'identity': declaration['asset']['application_id'] = 'other.app'
+                if corruption == 'notes': declaration['notes'] = '../outside.md'
+                if corruption == 'extra': declaration['source_commit'] = 'a' * 40
+                client = Client([self.old, self.new])
+                with self.assertRaises(sync.SyncError):
+                    self.resolve(client, declaration)
+                self.assertEqual([], client.calls)
 
 
 if __name__ == '__main__':

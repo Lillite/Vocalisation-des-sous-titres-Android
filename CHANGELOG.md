@@ -2,6 +2,20 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
+## 0.5.2 — Google et traduction pendant la lecture
+
+Cette version ajoute les moteurs Google, le réglage du tampon progressif et la correction du panneau audio. Les preuves de validation sont rattachées aux sources exactes dans [GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml). [Notes de version](docs/releases/0.5.2.md) · [Guide Google](docs/TRADUCTION_GOOGLE_052.md).
+
+- Google en ligne sans clé : adaptateur Kotlin natif d’un accès web non officiel ; délai minimal configurable de 500 à 10 000 ms, défaut 1 000 ms ; trois nouvelles tentatives temporaires au maximum, attente cumulée de 120 s par requête, hors réseau, et respect de `Retry-After`, sans rotation d’IP ni point d’accès de contournement.
+- Économie d’appels par cache, reprise et réutilisation en mémoire de textes strictement identiques ; chaque occurrence conserve cependant son identité, son minutage et sa vocalisation. Progression Google conservée par occurrence validée.
+- Google local ML Kit 17.0.3 : langues contrôlées, modèles téléchargés sur demande avec Wi-Fi par défaut et option réseau mobile, traitement local des textes et attribution Google. Aucun basculement automatique de fournisseur.
+- Traduction progressive : avance de 30 s par défaut, réglable de 10 à 120 s ; pause à la frontière d’une occurrence manquante, reprise uniquement pour une attente causée par la traduction et une intention Lire encore valide. Pause volontaire, déplacement, erreur ou changement de contexte restent prioritaires.
+- Audio avancé : correction du propriétaire détaché du bouton DSP dans la rubrique Son ; ouverture depuis le vrai panneau, fermeture en cascade et maintien des règles de narration et de transport.
+- Consignes durables : préserver toutes les occurrences textuelles ; regrouper code, tests et documentation ; valider l’APK dans GitHub Actions avant chaque fusion ; reconstruire et publier après fusion sans refaire les suites, avec vérification de provenance et du contenu.
+- Documentation courante actualisée, avec limites de Google web/ML Kit et distinction des projets étudiés. Azure, DeepL et LibreTranslate conservés ; Google Cloud, Apps Script et OCR non intégrés.
+
+Les tests précédents restent historiques ; aucun effectif, benchmark, empreinte ou succès d’une version antérieure n’est attribué à cette nouvelle version.
+
 ## 0.5.1 — Réglages stables et traduction résiliente
 
 - Réglages : neutralisation du focus de saisie resté sur un champ éloigné lorsque l’utilisateur touche un curseur, une case ou un bouton. Les widgets sont conservés et la saisie explicite reste possible.

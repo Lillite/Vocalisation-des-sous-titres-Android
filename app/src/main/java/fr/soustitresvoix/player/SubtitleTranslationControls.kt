@@ -69,11 +69,11 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
         close(); session.pause(); clearLocalStatus()
         val generation = panelGeneration
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8)) }
-        column.addView(text("Traduit la piste textuelle choisie vers le français avant lecture, ou progressivement sur choix explicite. Chaque réplique, panneau et répétition conserve son identité et son minutage. Le choix d’affichage est indépendant de la voix. Une préparation ou une reprise ne lance jamais la lecture."))
+        column.addView(text("Traduit la piste textuelle choisie vers le français avant lecture, ou progressivement sur choix explicite. Chaque réplique, panneau et répétition conserve son identité et son minutage. Le choix d’affichage est indépendant de la voix. La préparation initiale ne lance jamais la lecture. Seule une attente de traduction pendant une lecture demandée peut reprendre automatiquement."))
         status = text(session.translation.status).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         column.addView(status)
         val providers = TranslationProvider.values()
-        column.addView(text("Moteur de traduction en ligne — aucun envoi avant confirmation"))
+        column.addView(text("Moteur de traduction — en ligne ou sur le téléphone ; aucun envoi avant confirmation"))
         val spinner = Spinner(activity).apply {
             contentDescription = "Moteur de traduction"
             adapter = ArrayAdapter(activity, android.R.layout.simple_spinner_dropdown_item, providers.map { it.label })
@@ -90,9 +90,20 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
             AlertDialog.Builder(activity).setTitle("Langue source — disponibilité selon moteur").setItems(names) { _, i -> language.setText(codes[i]) }
                 .setNegativeButton("Fermer", null).show()
         })
-        val progressive = CheckBox(activity).apply { text = "Traduction progressive : autoriser la lecture avec au moins une minute de tampon validé"; textSize = 18f; isChecked = false }
+        val progressive = CheckBox(activity).apply { text = "Traduction progressive : regarder pendant la traduction"; textSize = 18f; isChecked = storage.getBoolean("progressive", false) }
         column.addView(progressive)
-        column.addView(text("Désactivé par défaut : attend la piste entière. En progressif, la lecture s’arrête avant une réplique indisponible ; appuie sur Lire après préparation, aucune reprise automatique. Un déplacement loin dans la vidéo peut attendre la traduction précédente."))
+        val (bufferLabel, buffer) = field("Avance de traduction avant lecture ou reprise — 10 à 120 secondes, défaut 30", storage.getInt("buffer-seconds", 30).toString())
+        buffer.inputType = InputType.TYPE_CLASS_NUMBER
+        column.addView(bufferLabel); column.addView(buffer)
+        column.addView(text("En progressif, appuie sur Lire dès que le tampon est prêt. Si la vidéo rattrape la traduction, elle attend avant le premier sous-titre manquant puis reprend lorsque le tampon est suffisant. Une pause demandée par toi reste une pause. Chaque occurrence est conservée. Désactive ce choix pour attendre la piste complète."))
+        val (googleIntervalLabel, googleInterval) = field("Google en ligne : délai minimal entre requêtes — 500 à 10 000 ms, défaut 1 000", storage.getLong("google-interval-ms", 1_000L).toString())
+        googleInterval.inputType = InputType.TYPE_CLASS_NUMBER
+        column.addView(googleIntervalLabel); column.addView(googleInterval)
+        val mobileModels = CheckBox(activity).apply {
+            text = "Google local : autoriser les données mobiles pour télécharger les modèles"; textSize = 18f
+            isChecked = storage.getBoolean("mobile-models", false)
+        }
+        column.addView(mobileModels)
         val (budgetLabel, budget) = field("Plafond de nouveaux caractères UTF-16 pour cette tâche — vide : aucune limite locale supplémentaire", "")
         budget.inputType = InputType.TYPE_CLASS_NUMBER
         column.addView(budgetLabel); column.addView(budget)
@@ -120,28 +131,37 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
         val (endpointLabel, endpoint) = field("Adresse de base du serveur LibreTranslate — HTTPS, sans identifiant, paramètres ou fragment", storage.getString("endpoint", "") ?: "")
         column.addView(endpointLabel); column.addView(endpoint)
         fun selected() = providers[spinner.selectedItemPosition]
-        fun configuration() = TranslationProviderConfig(selected(), key.text.toString().trim(),
+        fun configuration() = TranslationProviderConfig(selected(), if (selected().isGoogle) "" else key.text.toString().trim(),
             if (selected() == TranslationProvider.AZURE) region.text.toString().trim() else "",
             if (selected() == TranslationProvider.LIBRE) endpoint.text.toString().trim() else "",
             if (selected() == TranslationProvider.DEEPL_FREE || selected() == TranslationProvider.DEEPL_PRO)
                 TranslationOptions(translationContext.text.toString(), glossary.text.toString().trim(),
                     model.text.toString().trim(), formality.text.toString().trim(), glossaryRevision.text.toString().trim())
-            else TranslationOptions())
+            else TranslationOptions(),
+            TranslationExecutionOptions(if (selected() == TranslationProvider.GOOGLE_WEB) googleInterval.text.toString().toLongOrNull() ?: -1L else 1_000L,
+                selected() == TranslationProvider.GOOGLE_LOCAL && mobileModels.isChecked))
         fun credentialScope(): String? = if (selected() != TranslationProvider.LIBRE) selected().id else
             try { providerIdentity(TranslationProviderConfig(TranslationProvider.LIBRE, endpoint = endpoint.text.toString().trim())) }
             catch (_: Exception) { null }
         var currentCredentialScope: String? = null
+        var forgetKeyButton: Button? = null
         fun loadCredentials() {
             // Clear first: a key from server A must never follow the user to server B.
             key.setText(""); remember.isChecked = false
             val scope = credentialScope(); currentCredentialScope = scope
-            if (scope != null) try { key.setText(credentials.read(scope).orEmpty()) }
+            if (scope != null && !selected().isGoogle) try { key.setText(credentials.read(scope).orEmpty()) }
             catch (_: Exception) { showLocalStatus("La clé enregistrée ne peut pas être déchiffrée. Saisis-la à nouveau ou efface-la.") }
         }
         fun providerChanged() {
             clearLocalStatus()
             val provider = selected()
             providerDescription.text = description(provider)
+            val keyVisibility = if (provider.isGoogle) View.GONE else View.VISIBLE
+            listOf(keyLabel, key, remember).forEach { it.visibility = keyVisibility }
+            forgetKeyButton?.visibility = keyVisibility
+            googleInterval.visibility = if (provider == TranslationProvider.GOOGLE_WEB) View.VISIBLE else View.GONE
+            googleIntervalLabel.visibility = googleInterval.visibility
+            mobileModels.visibility = if (provider == TranslationProvider.GOOGLE_LOCAL) View.VISIBLE else View.GONE
             region.visibility = if (provider == TranslationProvider.AZURE) View.VISIBLE else View.GONE
             regionLabel.visibility = region.visibility
             endpoint.visibility = if (provider == TranslationProvider.LIBRE) View.VISIBLE else View.GONE
@@ -164,40 +184,56 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
             override fun onNothingSelected(parent: AdapterView<*>?) { }
         }
         providerChanged()
-        column.addView(button("Effacer la clé mémorisée pour ce moteur") {
+        forgetKeyButton = button("Effacer la clé mémorisée pour ce moteur") {
             clearLocalStatus()
             val scope = credentialScope()
             if (scope == null) showLocalStatus("Indique d’abord l’adresse HTTPS valide du serveur dont tu veux effacer la clé.")
             else try { credentials.remove(scope); key.setText(""); remember.isChecked = false; showLocalStatus("Clé mémorisée effacée pour ce moteur et ce serveur.") }
             catch (_: Exception) { showLocalStatus("La clé n’a pas pu être effacée. Réessaie après fermeture du panneau.") }
-        })
+        }.also { it.visibility = if (selected().isGoogle) View.GONE else View.VISIBLE; column.addView(it) }
         column.addView(button("Indexer la piste et estimer la traduction") {
             clearLocalStatus()
             val provider = selected()
             val config = configuration()
             val sourceLanguage = language.text.toString().trim()
+            val bufferSeconds = buffer.text.toString().toIntOrNull()
+            if (bufferSeconds == null || bufferSeconds !in 10..120) {
+                showLocalStatus("Avance invalide : indique entre 10 et 120 secondes."); return@button
+            }
+            if (provider == TranslationProvider.GOOGLE_LOCAL && MlKitTranslationEngine.canonicalLanguage(sourceLanguage) == null) {
+                showLocalStatus("Cette langue n’est pas prise en charge par Google local. Choisis un moteur en ligne compatible ; aucun texte ni modèle n’a été téléchargé."); return@button
+            }
             val credentialIdentity = try { providerIdentity(config) } catch (_: Exception) {
                 showLocalStatus("Adresse LibreTranslate invalide. Utilise une adresse HTTPS sans identifiant, paramètres ou fragment."); return@button
             }
-            storage.edit().putString("provider", provider.id).putString("language", sourceLanguage)
-                .putString("region", region.text.toString().trim()).putString("endpoint", endpoint.text.toString().trim()).apply()
             val identity = try { TranslationEngines.translationIdentity(config) } catch (_: Exception) {
                 showLocalStatus("Options invalides ou non prises en charge par le moteur choisi."); return@button
             }
             val cap = budget.text.toString().trim().let { if (it.isEmpty()) Long.MAX_VALUE else it.toLongOrNull() }
             if (cap == null || cap < 0) { showLocalStatus("Plafond invalide : indique un entier positif ou laisse vide."); return@button }
+            val choices = storage.edit().putString("provider", provider.id).putString("language", sourceLanguage)
+                .putString("region", region.text.toString().trim()).putString("endpoint", endpoint.text.toString().trim())
+                .putBoolean("progressive", progressive.isChecked).putInt("buffer-seconds", bufferSeconds)
+                .putBoolean("mobile-models", mobileModels.isChecked)
+            if (provider == TranslationProvider.GOOGLE_WEB) choices.putLong("google-interval-ms", config.execution.googleIntervalMillis)
+            choices.apply()
             val saveKey = remember.isChecked
             pendingPreview = true
-            session.translation.prepareWithOptions(sourceLanguage, identity, progressive = progressive.isChecked, maximumNewCharacters = cap) { preview ->
+            session.translation.prepareWithOptions(sourceLanguage, identity, progressive = progressive.isChecked, maximumNewCharacters = cap, bufferSeconds = bufferSeconds) { preview ->
                 latestPreview = preview
                 if (activity.isDestroyed || activity.isFinishing || generation != panelGeneration || panel?.isShowing != true) {
                     pendingPreview = false; session.translation.cancel(); return@prepareWithOptions
                 }
                 val destination = if (provider == TranslationProvider.LIBRE) TranslationEngines.libreEndpoint(config.endpoint).host else provider.label
+                val privacy = when (provider) {
+                    TranslationProvider.GOOGLE_LOCAL -> "Traduction automatique par Google Traduction (ML Kit) sur le téléphone. Le texte, la vidéo et l’audio ne sont pas envoyés au traducteur. Les modèles nécessaires seront téléchargés ${if (config.execution.allowMobileModelDownload) "en Wi-Fi ou avec les données mobiles autorisées" else "en Wi-Fi seulement"} (environ 30 Mo par modèle). Le SDK peut terminer un téléchargement déjà commencé même après annulation de l’attente ; il peut transmettre à Google des données techniques sur l’appareil, les performances et les langues, sans envoyer le texte au traducteur."
+                    TranslationProvider.GOOGLE_WEB -> "Le texte sera envoyé directement à Google par un accès non officiel sans clé. Une requête à la fois, délai minimal ${config.execution.googleIntervalMillis} ms, ralentissement adaptatif et attentes bornées. Aucun blocage ne sera contourné. Le cache réduit les appels mais ne garantit pas la disponibilité de Google. La vidéo et l’audio ne sont pas envoyés."
+                    else -> "Le texte intégral sera envoyé à $destination si aucun cache complet correspondant n’existe. La vidéo et l’audio ne sont pas envoyés. Vérifie le quota et les plafonds de ton compte. DeepL : 500 ms minimum entre appels, cinq nouvelles tentatives maximum après refus de débit, deux minutes d’attente cumulée maximum par lot ; aucune relance automatique des quotas épuisés ou des réponses réseau perdues."
+                }
                 confirmation?.dismiss()
                 confirmation = AlertDialog.Builder(activity).setTitle("Confirmer la traduction vers le français")
-                    .setMessage("${preview.plan.cues.size} occurrences, ${preview.plan.estimatedCharacters} unités UTF-16 pour la piste. Nouveaux caractères estimés après reprise/cache : ${preview.estimatedNewCharacters}. Plafond local : ${if (preview.maximumNewCharacters == Long.MAX_VALUE) "non limité" else preview.maximumNewCharacters.toString()}. Décompte final du fournisseur distinct. Les caractères Unicode supplémentaires peuvent être comptés différemment par son service.\n\nLe texte intégral de cette piste sera envoyé à $destination si aucun cache complet correspondant n’existe. La vidéo et l’audio ne sont pas envoyés. La clé autorise l’usage de TON compte : vérifie son quota et ses plafonds de dépense. Aucun tarif en euros ni solde de compte n’est déduit ici. DeepL : les appels sont espacés ; un refus temporaire de débit (HTTP 429/529) est réessayé au maximum cinq fois, avec une attente croissante et au plus deux minutes d’attente cumulée par lot. Un quota épuisé (456) ou une réponse réseau perdue n’est pas relancé automatiquement ; cette dernière peut avoir été facturée.\n\nUne piste complète en cache ou conservée est réutilisée sans requête et sans clé. ${preview.resumedOccurrences} occurrences validées peuvent être reprises. ${if (preview.uncertainRequest) "Une requête interrompue a un état de facturation inconnu : sa reprise peut être facturée de nouveau." else "Les lots validés sont enregistrés pour reprise."} Les caractères restants doivent respecter ton plafond local. Le travail peut être interrompu par Android ; rouvre la même piste et confirme pour reprendre. La lecture restera en pause. Choisis ensuite une voix française dans Voix et confort.")
-                    .setPositiveButton("Traduire / réutiliser le cache") { _, _ ->
+                    .setMessage("${preview.plan.cues.size} occurrences, ${preview.plan.estimatedCharacters} unités UTF-16 pour la piste. Nouveaux caractères estimés après reprise/cache : ${preview.estimatedNewCharacters}. Plafond local : ${if (preview.maximumNewCharacters == Long.MAX_VALUE) "non limité" else preview.maximumNewCharacters.toString()}. Décompte du fournisseur distinct.\n\n$privacy\n\nUne piste complète en cache ou conservée est réutilisée sans requête et sans clé. ${preview.resumedOccurrences} occurrences validées peuvent être reprises. ${if (preview.uncertainRequest && !provider.isGoogle) "Une requête interrompue a un état de facturation inconnu : sa reprise peut être facturée de nouveau." else "Les lots validés sont enregistrés pour reprise."} Le travail peut être interrompu par Android ; rouvre la même piste et confirme pour reprendre. ${if (preview.progressive) "Tu pourras regarder pendant la traduction, après $bufferSeconds secondes d’avance validée, en appuyant sur Lire." else "La lecture française attend la piste complète."} Choisis une voix française dans Voix et confort.")
+                    .setPositiveButton(if (provider.isGoogle) "Traduire avec Google" else "Traduire / réutiliser le cache") { _, _ ->
                         if (generation != panelGeneration || panel?.isShowing != true) { session.translation.cancel(); return@setPositiveButton }
                         pendingPreview = false; clearLocalStatus()
                         if (saveKey && config.apiKey.isNotBlank()) {
@@ -205,7 +241,7 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                             catch (_: Exception) { showLocalStatus("La clé n’a pas pu être mémorisée. Elle sera utilisée uniquement pour cette demande.") }
                         }
                         session.translation.start(preview) {
-                            TranslationEngines.create(config)
+                            TranslationEngines.create(config, context = activity.applicationContext)
                         }
                     }.setNegativeButton("Annuler") { _, _ -> pendingPreview = false; clearLocalStatus(); session.translation.cancel() }
                     .setOnCancelListener { pendingPreview = false; clearLocalStatus(); session.translation.cancel() }.show()
@@ -261,17 +297,17 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                     val sampleTrack = samplePreview?.track
                     val destinations = configs.mapIndexed { i, config -> "Configuration ${i+1} : " + if (config.provider == TranslationProvider.LIBRE) TranslationEngines.libreEndpoint(config.endpoint).host else config.provider.label }.joinToString("\n")
                     AlertDialog.Builder(activity).setTitle("Confirmer tous les destinataires du comparatif")
-                        .setMessage("${sample.size} occurrences (${sample.sumOf { it.length }} unités UTF-16) seront envoyées séparément à :\n$destinations\n\nChaque service peut facturer cet essai. Les résultats sont comparés visuellement, sans classement automatique de fidélité. Texte, contexte et glossaire selon chaque configuration.")
-                        .setPositiveButton("Envoyer cet échantillon") { _, _ ->
+                        .setMessage("${sample.size} occurrences (${sample.sumOf { it.length }} unités UTF-16) seront envoyées séparément à :\n$destinations\n\nLes moteurs en ligne reçoivent cet essai et peuvent le facturer selon leur offre ; Google local traite le texte sur le téléphone et peut télécharger des modèles. Les résultats sont comparés visuellement, sans classement automatique de fidélité. Texte, contexte et glossaire selon chaque configuration.")
+                        .setPositiveButton(if (configs.any { it.provider.isGoogle }) "Comparer avec Google" else "Envoyer cet échantillon") { _, _ ->
                             if (generation != panelGeneration || sampleGeneration != session.generation || sampleTrack != session.selectedTextId() || panel?.isShowing != true) {
                                 showLocalStatus("La vidéo ou la piste a changé. Indexe le nouvel échantillon avant tout envoi."); return@setPositiveButton
                             }
                             showLocalStatus("Comparaison en cours…")
                             background {
-                                val result = runCatching { TranslationSampleComparator.compareConfirmedSample(configs, sample, plan.sourceLanguage, cancelled = { generation != panelGeneration || sampleGeneration != session.generation || sampleTrack != session.selectedTextId() || Thread.currentThread().isInterrupted }) }
+                                val result = runCatching { TranslationSampleComparator.compareConfirmedSample(configs, sample, plan.sourceLanguage, cancelled = { generation != panelGeneration || sampleGeneration != session.generation || sampleTrack != session.selectedTextId() || Thread.currentThread().isInterrupted }, context = activity.applicationContext) }
                                 main.post { if (generation == panelGeneration && panel?.isShowing == true) result.fold({ results ->
                                     val comparison = results.mapIndexed { number, value -> "Configuration ${number+1} — " + value.providerLabel + " — " + value.elapsedMillis + " ms\n" + (value.failure?.message ?: value.translations.mapIndexed { i, text -> "${i+1}. Source : ${sample[i]}\nTraduction : $text" }.joinToString("\n")) }.joinToString("\n\n")
-                                    AlertDialog.Builder(activity).setTitle("Comparer les traductions — jugement humain requis").setView(ScrollView(activity).apply { addView(text(comparison)) }).setPositiveButton("Fermer", null).show()
+                                    AlertDialog.Builder(activity).setTitle("Comparer les traductions — jugement humain requis").setView(ScrollView(activity).apply { addView(GoogleTranslationAttribution.results(activity, text(comparison), configs.any { it.provider.isGoogle })) }).setPositiveButton("Fermer", null).show()
                                 }, { showLocalStatus((it as? TranslationFailure)?.message ?: "Comparaison interrompue ; vérifie les quotas avant une nouvelle tentative.") }) }
                             }
                         }.setNegativeButton("Annuler", null).show()
@@ -306,7 +342,9 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
             val message = if (hints.isEmpty()) "Aucun indice détecté. Cela ne prouve pas la fidélité linguistique de la traduction." else hints.take(100).joinToString("\n\n") { hint ->
                 val index = session.translation.sourceCues.indexOfFirst { it.id == hint.cueId } + 1
                 "Occurrence $index : ${hint.reasons.joinToString(" ")}" } + if (hints.size > 100) "\nAutres alertes non affichées : ${hints.size - 100}." else ""
-            AlertDialog.Builder(activity).setTitle("Indices à vérifier, sans certitude de contresens").setView(ScrollView(activity).apply { addView(text(message)) }).setPositiveButton("Fermer", null).show()
+            AlertDialog.Builder(activity).setTitle("Indices à vérifier, sans certitude de contresens").setView(ScrollView(activity).apply {
+                addView(GoogleTranslationAttribution.results(activity, text(message), session.translation.googleTranslationActive))
+            }).setPositiveButton("Fermer", null).show()
         })
         column.addView(button("Corriger une réplique de la traduction complète") {
             val cues = session.translation.editableCues()
@@ -323,7 +361,11 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                             val (editLabel, edit) = field("Traduction — conserve le sens et les noms", cue.text)
                             edit.isSingleLine = false; edit.setLines(5)
                             val source = session.translation.sourceCues.firstOrNull { it.id == cue.id }?.text.orEmpty()
-                            AlertDialog.Builder(activity).setTitle("Occurrence ${index+1}").setView(ScrollView(activity).apply { addView(LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; addView(text("Source : $source")); addView(editLabel); addView(edit) }) })
+                            AlertDialog.Builder(activity).setTitle("Occurrence ${index+1}").setView(ScrollView(activity).apply {
+                                addView(GoogleTranslationAttribution.results(activity, LinearLayout(activity).apply {
+                                    orientation = LinearLayout.VERTICAL; addView(text("Source : $source")); addView(editLabel); addView(edit)
+                                }, session.translation.googleTranslationActive))
+                            })
                                 .setPositiveButton("Corriger et préparer cette voix") { _, _ ->
                                     if (session.translation.editCueAndPrepareVoice(cue.id, edit.text.toString())) showLocalStatus(session.translation.status + " Conserve ou exporte la piste pour garder cette modification.")
                                 }.setNegativeButton("Annuler", null).show()
@@ -341,9 +383,19 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                 TranslationProvider.AZURE -> "https://learn.microsoft.com/en-us/azure/ai-services/translator/text-translation/quickstart/rest-api"
                 TranslationProvider.DEEPL_FREE, TranslationProvider.DEEPL_PRO -> "https://developers.deepl.com/docs/getting-started/auth"
                 TranslationProvider.LIBRE -> "https://docs.libretranslate.com/guides/api_usage/"
+                TranslationProvider.GOOGLE_WEB -> "https://translate.google.com/"
+                TranslationProvider.GOOGLE_LOCAL -> "https://developers.google.com/ml-kit/language/translation"
             })
         })
-        column.addView(text("Modèles locaux et Hugging Face : aucun runtime local de traduction n’est encore intégré dans cette étape. Un fichier GGUF, SafeTensors ou ONNX ne peut pas être importé ici. Le guide du projet décrit les candidats, leurs limites et les étapes restant à développer. Une traduction en cache fonctionne hors ligne ; ce n’est pas un moteur local."))
+        column.addView(text("Google ML Kit traduit sur ce téléphone après téléchargement des modèles compatibles. La qualité peut différer du service en ligne ; entre langues autres que l’anglais, les modèles passent par l’anglais. Les fichiers GGUF, SafeTensors et ONNX ne peuvent pas être importés ici. Une traduction conservée reste lisible hors connexion quel que soit son moteur d’origine."))
+        column.addView(button("Google local : langues prises en charge") {
+            AlertDialog.Builder(activity).setTitle("Codes de langue Google ML Kit")
+                .setMessage(MlKitTranslationEngine.supportedLanguages().joinToString(", "))
+                .setPositiveButton("Fermer", null).show()
+        })
+        column.addView(button("Traductions Google : attribution et limites") {
+            GoogleTranslationAttribution.showInformation(activity)
+        })
         panel = AlertDialog.Builder(activity).setTitle("Traduire les sous-titres en français")
             .setView(ScrollView(activity).apply {
                 id = R.id.translation_controls_scroll
@@ -366,6 +418,8 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
             TranslationProvider.DEEPL_FREE -> "DeepL, endpoint api-free.deepl.com : nécessite une clé API affectée à ce point d’accès. Un abonnement au site ou à l’application DeepL ne remplace pas un accès API. Les offres ont changé : l’ancien API Free n’est plus ouvert aux nouveaux achats ; l’essai API Developer annonce 1 million de caractères au total, non renouvelable. Vérifie dans ton compte quel endpoint utiliser. Crée/copie ta clé dans les paramètres API, puis colle-la ici. Les lots sont espacés de 500 ms au minimum ; les refus de débit déclenchent des attentes bornées avant reprise. HTTP 456 signale un quota du compte ou une limite propre à la clé, même si le solde global reste positif. Aucun compte n’est créé par l’application."
             TranslationProvider.DEEPL_PRO -> "DeepL, endpoint api.deepl.com : nécessite une clé API correspondant à ce point d’accès. Les offres actuelles et historiques ont des règles distinctes : Growth, Enterprise ou ancien Pro selon ton compte. Consulte la facturation et configure une limite de dépense avant usage. Un abonnement DeepL pour le site ou l’application ne suffit pas. Chaque sous-titre est traduit séparément ; le tableau envoyé ne fournit pas automatiquement un contexte de scène partagé."
             TranslationProvider.LIBRE -> "LibreTranslate : traduction par un serveur que tu choisis. Indique son adresse HTTPS et sa clé si l’instance en exige une ; demande à son administrateur les langues installées, les quotas et la politique de conservation. La gratuité dépend de l’instance et de son hébergement. L’application appelle /translate et refuse les redirections. Ce serveur ne s’exécute pas sur le téléphone : même auto-hébergé, il reçoit les sous-titres. L’application ne crée ni ne déploie de serveur."
+            TranslationProvider.GOOGLE_WEB -> "Google Traduction en ligne sans clé : accès non officiel, facultatif. Les sous-titres sont envoyés directement à Google ; la vidéo et l’audio restent sur le téléphone. Une seule requête à la fois, délai minimal réglable de 500 à 10 000 ms (défaut 1 000), ralentissement après limitation, au plus trois nouvelles tentatives temporaires et deux minutes d’attente par requête. Un blocage explicite suspend le travail. Les résultats validés sont conservés pour reprise et les textes identiques peuvent réutiliser une traduction sans supprimer leurs occurrences. Aucun quota illimité ni fonctionnement permanent n’est garanti."
+            TranslationProvider.GOOGLE_LOCAL -> "Google Traduction sur le téléphone avec ML Kit : moteur local gratuit après téléchargement des modèles nécessaires, environ 30 Mo chacun. Wi-Fi par défaut ; les données mobiles demandent le choix explicite ci-dessus. Le texte n’est pas envoyé au service de traduction. Langues plus limitées qu’en ligne : consulte la liste. Entre langues autres que l’anglais, le modèle passe par l’anglais ; vérifie les résultats selon l’œuvre. Annuler arrête la traduction et l’attente, mais un téléchargement déjà lancé par le SDK peut finir en arrière-plan."
         }
     }
 }

@@ -2,43 +2,47 @@
 
 Lecteur vidéo Android destiné d’abord à **vocaliser intégralement les occurrences textuelles de la piste choisie** : dialogues, panneaux, chevauchements et répétitions réelles. Les modes Confort et Adaptatif donnent à la voix le temps de terminer ; une traduction manquante provoque une attente perceptible.
 
-**Version 0.5.1 publiée le 27 octobre 2026 — réglages stables et traduction résiliente.** **[Télécharger l’APK Android](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.1/SousTitresVoix-0.5.1-correctifs.apk)** · [Release et sommes de contrôle](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.1). Cette mise à jour corrige le défilement des paramètres et la gestion des limites DeepL, en conservant les fonctions précédentes.
+**Version 0.5.2 — Google et traduction pendant la lecture.** [Notes 0.5.2](docs/releases/0.5.2.md) · [Guide Google](docs/TRADUCTION_GOOGLE_052.md) · [Validation GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml).
 
-[Installation](#installer-et-commencer-sur-android) · [Tous les guides](docs/README.md) · [Correctifs 0.5.1](docs/releases/0.5.1.md) · [Tests et preuves](TESTING.md) · [Signaler un problème](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/issues/new/choose)
+**[Télécharger SousTitresVoix-0.5.2-google.apk](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.2/SousTitresVoix-0.5.2-google.apk)** · [Release et sommes de contrôle](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.2). Les archives « Source code » ne sont pas des APK.
 
-| Repère | Version 0.5.1 |
+[Installation](#installer-et-commencer-sur-android) · [Tous les guides](docs/README.md) · [Nouveautés 0.5.2](docs/releases/0.5.2.md) · [Tests et preuves](TESTING.md) · [Signaler un problème](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/issues/new/choose)
+
+| Repère | Sources 0.5.2 |
 | --- | --- |
-| Édition | **Réglages stables et traduction résiliente**, code 8 ; fonctions Confort intégral conservées |
+| Édition | **Google et traduction pendant la lecture**, code 9 ; fonctions précédentes conservées |
 | Android minimum | **Android 8.0 — API 26** |
 | Identité Android | **fr.soustitresvoix.player.translation**, conservée depuis la 0.4.0 |
 | Narration | Lecture intégrale, Confort, Adaptatif, suivi par occurrence et relecture explicite |
-| Traduction | Azure Translator, DeepL API Free/payant, serveur LibreTranslate HTTPS ; préparation complète ou progressive sur choix explicite |
+| Traduction | Google en ligne sans clé, Google local ML Kit, Azure Translator, DeepL API Free/payant et LibreTranslate HTTPS ; préparation complète ou progressive sur choix explicite |
 | Préparation | Anticipation vocale, cache réglable et conservation durable par œuvre |
-| Validation | **524 tests réussis avant fusion** : 178 noyau, 254 JVM application et 92 instrumentés Android 36 ; [preuves et limites](TESTING.md) |
+| Validation | APK de test et suites avant fusion ; [preuves, résultats et limites](TESTING.md), [exécutions Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml) |
 
 **Ce projet est réalisé intégralement par intelligence artificielle : la conception de l’application, l’écriture du code, les corrections, les tests automatisés et la documentation sont produits par IA à partir des demandes, des indications et des retours de son utilisateur.** Cette mention concerne le travail propre au projet. Android, Kotlin, Media3, les moteurs vocaux, les services de traduction et les autres composants tiers restent les créations de leurs auteurs respectifs.
 
-## Changements de la 0.5.1
+## Changements de la 0.5.2
 
-- **Paramètres** : modifier un curseur, une case ou un bouton ne doit plus ramener en haut du panneau à cause d’un ancien champ de saisie focalisé. La saisie précise reste disponible.
-- **DeepL** : distinction du débit temporaire 429/529 et du quota 456, espacement des appels et reprises bornées des refus de débit. Les lots validés sont réutilisés à la reprise ; une réponse réseau incertaine n’est pas renvoyée automatiquement.
-- **Traduction gratuite** : [guide Azure F0, Google et autres possibilités](docs/TRADUCTION_GRATUITE_ET_LIMITES.md), avec disponibilité réelle dans le lecteur et conditions des offres.
-- **Livraison** : construction et tests de l’APK avant chaque fusion ; reconstruction après fusion sans répéter les suites, avec vérification des sources et du contenu applicatif.
+- **Google en ligne sans clé** : adaptateur natif avec appels modérés, intervalle configurable, reprises temporaires bornées et résultats conservés. L’accès est non officiel ; aucun quota illimité ni fonctionnement permanent n’est garanti.
+- **Google local — ML Kit** : modèles téléchargés sur demande, Wi-Fi par défaut, option réseau mobile et langues vérifiées. La traduction s’exécute sur le téléphone lorsque les modèles nécessaires sont disponibles.
+- **Visionnage pendant la traduction** : tampon de 30 secondes par défaut, réglable de 10 à 120 secondes. Le lecteur attend avant un texte manquant et ne reprend automatiquement que sa propre attente de traduction, avec une intention Lire toujours valide.
+- **Audio avancé** : le bouton des traitements DSP de la rubrique Son ouvre maintenant une fenêtre rattachée au véritable panneau. L’égaliseur et ses éditeurs restent fermés avec leur parent.
+- **Vocalisation intégrale** : chaque occurrence, panneau, chevauchement et répétition réelle reste conservé. Réutiliser une traduction identique économise un appel sans supprimer une vocalisation.
+- **Livraison** : code, régressions et documentation regroupés ; APK construit et testé avant chaque fusion, puis release reconstruite sans répéter les suites, avec preuve de provenance et de contenu.
 
-Les [notes 0.5.1](docs/releases/0.5.1.md) donnent le détail des corrections. Le [guide Confort intégral](docs/CONFORT_INTEGRAL_050.md) décrit les fonctions conservées de la 0.5.0 ; les guides courants de traduction précisent les évolutions de la 0.5.1.
+Les [notes 0.5.2](docs/releases/0.5.2.md) et le [guide Google](docs/TRADUCTION_GOOGLE_052.md) donnent les limites précises. Les corrections de défilement et de limites DeepL de la [0.5.1](docs/releases/0.5.1.md), ainsi que les fonctions [Confort intégral](docs/CONFORT_INTEGRAL_050.md), restent conservées.
 
 ## Installer et commencer sur Android
 
-La 0.5.1 conserve l’identité des 0.4.0 et 0.5.0 et utilise le même certificat durable. Android peut ainsi mettre à jour cette édition en conservant ses données. **Ne pas désinstaller la 0.4.0 ou la 0.5.0 pour préparer cette mise à jour.** La 0.3.2 reste une autre application, avec sa propre identité et ses propres données.
+La 0.5.2 conserve l’identité Android de la série Traduction (0.4.0 et 0.5.x). Sa publication exige la vérification du même certificat durable pour permettre une mise à jour en conservant les données. **Ne pas désinstaller l’édition Traduction pour préparer cette mise à jour.** La 0.3.2 reste une autre application, avec sa propre identité et ses propres données.
 
-Le fichier installable est **[SousTitresVoix-0.5.1-correctifs.apk](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.1/SousTitresVoix-0.5.1-correctifs.apk)**. Les archives GitHub « Source code » ne sont pas des APK. Le fichier [SHA256SUMS](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.1/SHA256SUMS) fournit son empreinte.
+Télécharger **[SousTitresVoix-0.5.2-google.apk](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.2/SousTitresVoix-0.5.2-google.apk)** et comparer son empreinte au fichier [SHA256SUMS](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.2/SHA256SUMS) de la même release.
 
 1. Ouvrir **Réglages de la voix et du confort**.
 2. Dans **Voix**, choisir le moteur vocal de ce lecteur et une voix installée dans la langue à prononcer. Écouter un essai ; le choix ne modifie pas le moteur de TalkBack.
 3. Dans **Synchronisation**, utiliser **Préréglage : lecture intégrale** ou **Préréglage : compréhension confortable**.
 4. Lancer **Essai intégré : sous-titres et mire de cadrage** pour vérifier voix, commandes et image avec un contenu synthétique.
 5. Ouvrir une vidéo locale et sélectionner sa piste textuelle, ou ajouter un fichier SRT, VTT, ASS/SSA. Une piste française peut être vocalisée directement ; une traduction constitue une opération supplémentaire.
-6. Appuyer explicitement sur **Lire**. Une restauration, une préparation ou une fin de traduction ne doit pas démarrer seule la vidéo.
+6. Appuyer explicitement sur **Lire**. Une restauration ou une préparation ne démarre pas seule la vidéo. En mode progressif, seule une attente causée par la traduction peut reprendre automatiquement si cette intention Lire reste valide ; une Pause volontaire reste prioritaire.
 
 La lecture dépend des codecs disponibles et d’une voix Android réellement prête. Les sous-titres PGS/VobSub ou uniquement incrustés dans les pixels demandent un OCR qui reste absent de cette version.
 
@@ -116,11 +120,11 @@ Les corrections conservent les identités des occurrences et sont associées à 
 
 ## Traduire en français, entièrement ou progressivement
 
-La traduction complète reste le parcours par défaut. L’option **Traduction progressive** permet de commencer avec au moins une minute de tampon validé avant la prochaine occurrence non traduite. La traduction continue ensuite pendant le visionnage ; si le lecteur rattrape le travail, il s’arrête à une réplique indisponible et attend une commande **Lire** après progression. Aucune phrase manquante n’est remplacée silencieusement par l’original.
+La traduction complète reste disponible. L’option **Traduction progressive** permet de commencer avec un préfixe validé et **30 secondes d’avance par défaut**, réglables de **10 à 120 secondes**. Le travail continue pendant le visionnage. Si la lecture le rattrape, la vidéo attend avant une occurrence indisponible. Quand le tampon est reconstitué, elle peut reprendre uniquement si cette attente provenait de la traduction et si l’intention Lire reste valide. Une Pause utilisateur, un déplacement ou un changement de contexte empêchent une reprise tardive. Aucune phrase manquante n’est sautée ni remplacée silencieusement par l’original.
 
 1. Choisir une piste textuelle, puis ouvrir **Traduire les sous-titres en français**.
-2. Choisir fournisseur, langue source et accès de son compte ; la langue est celle des sous-titres, pas nécessairement celle de l’audio.
-3. Choisir éventuellement le mode progressif et un **plafond de nouveaux caractères UTF-16 pour cette tâche**.
+2. Choisir le moteur et la langue source ; fournir les accès seulement si ce moteur les demande. La langue est celle des sous-titres, pas nécessairement celle de l’audio.
+3. Choisir éventuellement le mode progressif, son avance et un **plafond de nouveaux caractères UTF-16 pour cette tâche**. Pour Google en ligne, l’intervalle conseillé est 1 000 ms ; pour ML Kit, les modèles se téléchargent par défaut en Wi-Fi.
 4. Utiliser **Indexer la piste et estimer la traduction** : cette phase n’envoie pas le texte.
 5. Examiner le volume restant après réutilisation du cache/progression, la destination et les limites ; confirmer l’envoi.
 6. Choisir une voix française prête, puis **Lire** lorsque la piste complète ou le tampon progressif est disponible.
@@ -131,11 +135,13 @@ Les lots validés sont enregistrés pour reprise avec la même source et les mê
 
 | Fournisseur | Configuration et fonctions |
 | --- | --- |
+| **Google en ligne sans clé** | Accès non officiel ; intervalle de 500 à 10 000 ms, défaut 1 000 ms ; trois nouvelles tentatives temporaires au maximum, avec attente cumulée bornée à 120 s par requête, hors réseau, et respect de `Retry-After`. |
+| **Google local — ML Kit** | SDK 17.0.3, modèles téléchargés sur demande, Wi-Fi par défaut ; paire de langues contrôlée et attribution Google. |
 | **Azure Translator** | Ressource Translator, clé et région selon le compte ; langue source explicite. |
 | **DeepL API Free ou payant** | Point d’accès correspondant au contrat ; contexte facultatif, identifiant/révision d’un glossaire déjà créé, modèle et registre lorsque pris en charge ; consultation réelle du quota. |
 | **LibreTranslate HTTPS** | Serveur choisi, paire de langues installée et clé éventuelle ; traitement sur ce serveur. |
 
-Le [guide des moteurs](docs/GUIDE_MOTEURS_TRADUCTION.md) détaille les comptes et points d’accès. Les offres et droits dépendent du fournisseur ; le lecteur ne crée ni compte ni abonnement. Le plafond local de caractères n’est pas un prix garanti, une limite contractuelle ou une réservation de quota. Pour Azure/LibreTranslate, consulter le tableau de bord ou l’administrateur pour les quotas.
+Le [guide Google et lecture progressive](docs/TRADUCTION_GOOGLE_052.md) explique les nouveaux moteurs et leurs limites ; le [guide des moteurs](docs/GUIDE_MOTEURS_TRADUCTION.md) détaille les autres comptes et points d’accès. Les offres et droits dépendent du fournisseur ; le lecteur ne crée ni compte ni abonnement. Le plafond local de caractères n’est pas un prix garanti, une limite contractuelle ou une réservation de quota. Pour Azure/LibreTranslate, consulter le tableau de bord ou l’administrateur pour les quotas.
 
 Le contexte DeepL est envoyé avec les lots. Les options et révisions font partie de l’identité des résultats conservés. Une proposition locale de langue doit être confirmée ; elle ne transforme pas automatiquement une langue refusée en une langue voisine.
 
@@ -171,6 +177,8 @@ La mire intégrée montre quatre coins colorés et un cercle : les coins permett
 
 ## Régler le son du film
 
+En 0.5.2, le bouton des traitements audio avancés de **Réglages de la voix et du confort → Son** utilise le véritable panneau comme propriétaire : la fenêtre peut s’ouvrir et ses sous-dialogues se ferment avec elle. Le parcours **Volumes rapides** reste disponible.
+
 Le volume de la voix reste séparé de celui du film. Dans **Volumes rapides**, ouvrir **Traitements audio avancés du film** pour la chaîne experte. Les [commandes audio](docs/COMMANDES_AUDIO_ETAPE_5.md) et le [guide audio expert](docs/AUDIO_EXPERT_ETAPE_6.md) expliquent les unités, les bornes, les transitions et les retours aux défauts.
 
 | Mixage | Utilisation et défaut |
@@ -200,13 +208,13 @@ La chaîne avancée traite le **PCM16 mono/stéréo effectivement reçu**. Elle 
 | Vidéos | Fichiers locaux, notamment MKV, MP4 et WebM ; codecs selon Media3 et les décodeurs de l’appareil. |
 | Sous-titres | Pistes textuelles intégrées et fichiers SRT, VTT, ASS/SSA ; import externe limité à 8 Mio, avec choix d’encodage pour les fichiers anciens. |
 | Narration | Moteur TTS Android externe et voix installée ; les modes intégraux attendent si nécessaire. |
-| Traduction | Services en ligne choisis ; français dans le parcours utilisateur ; qualité sémantique à évaluer. |
-| Hors ligne | Lecture locale avec voix prête ; traductions et voix préparées réutilisables après contrôle de disponibilité. |
-| Fonctions absentes | OCR PGS/VobSub/incrustations, traduction locale, import Hugging Face, audiodescription, accès aux DRM d’autres applications et lecture durable en arrière-plan. |
+| Traduction | Services en ligne choisis ou Google ML Kit sur le téléphone ; cible française ; langues et fidélité à vérifier pour chaque moteur. |
+| Hors ligne | ML Kit après téléchargement des modèles nécessaires ; voix Android prête et vidéo accessible ; traductions/voix préparées réutilisables après contrôle. |
+| Fonctions absentes | OCR PGS/VobSub/incrustations, import Hugging Face, Google Cloud/Apps Script, audiodescription, accès aux DRM d’autres applications et lecture durable en arrière-plan. |
 | Matériel | Aucune preuve d’usage neuronal GPU/NPU ou de performance sur OnePlus 15 déduite des profils de cache ou de tests sur émulateur. |
 
 - Ouverture par le sélecteur Android, sans permission microphone/caméra ni accès général au stockage.
-- La traduction confirmée envoie le texte et ses paramètres au fournisseur choisi ; elle n’envoie ni vidéo ni piste audio.
+- Un moteur en ligne confirmé envoie le texte et ses paramètres au fournisseur choisi ; il n’envoie ni vidéo ni piste audio. ML Kit traduit le texte sur l’appareil : Google déclare une collecte de télémétrie technique du SDK (appareil, application, performances, tailles, langues et événements), sans envoi du texte des sous-titres pour la traduction. Son initialisation et les téléchargements sont précédés d’une confirmation ; le mode local n’exclut pas toute activité réseau. Voir la [déclaration Google](https://developers.google.com/ml-kit/android-data-disclosure).
 - HTTPS, certificats système, tailles/délais bornés et redirections refusées ; erreurs sans clé ni corps privé.
 - Clés mémorisées facultativement par Android Keystore/AES-GCM, avec portée distincte par serveur LibreTranslate ; sauvegarde Android désactivée.
 - Sous-titres importés, traductions conservées et textes de préparation sont des données privées de l’application, sans chiffrement additionnel annoncé. Les journaux ordinaires de narration n’enregistrent pas les textes.
@@ -217,23 +225,20 @@ Le [guide 0.5.0](docs/CONFORT_INTEGRAL_050.md) détaille les contraintes de repr
 
 ## Validation et identité du téléchargement
 
-Les sources de la 0.5.1 sont le commit [`d5d5b63`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/d5d5b63ea37ca4be423f375e8e7a75e870d154e6), intégré par la [PR #16](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/16). Le [run préalable 40556708779](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40556708779) a réussi **524 tests**, sans échec, erreur ni test ignoré, avec contrôle des méthodes attendues, compilations et lint. Le [run après fusion 40560530124](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40560530124) a reconstruit la release et vérifié le même contenu applicatif hors signature, sans relancer ces suites.
+Les preuves de la **0.5.2** sont rattachées à son propre arbre de sources et à son APK. [TESTING.md](TESTING.md), les [exécutions GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml) et les fichiers de la [release](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.2) donnent les résultats, la provenance et les empreintes vérifiables. Les résultats antérieurs restent attachés à leurs versions.
 
-| APK 0.5.1 publié | Valeur vérifiée |
-| --- | --- |
-| Fichier | `SousTitresVoix-0.5.1-correctifs.apk` |
-| Taille | **5 242 523 octets** |
-| SHA-256 de l’APK | `75ed88b3198d4ea2bef9b837d870bb48db2624c8a8325e6f3d1fa8b9d2f5d881` |
-| SHA-256 du certificat | `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d` |
+Avant chaque fusion, GitHub Actions doit construire l’APK de test et l’exécuter sur l’émulateur en plus des tests du noyau, des tests JVM et de lint. Après réussite et fusion, la release est reconstruite sans rejouer ces suites ; le workflow contrôle l’arbre, les parents et le contenu applicatif par rapport à l’APK testé. La signature durable et les fichiers publiés sont ensuite vérifiés.
 
-Le [run de publication 40580117622](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40580117622) a réussi ; il a contrôlé la signature durable, la provenance et les fichiers téléchargés après leur envoi avant de rendre la release publique. Un téléchargement public indépendant a ensuite confirmé la taille et le SHA-256 du fichier. [TESTING.md](TESTING.md) distingue les résultats actuels et les preuves historiques. Les tests utilisent des contenus synthétiques, des réponses API contrôlées et un service vocal de test. Fidélité des fournisseurs, droits/quota d’un compte, voix commerciales, TalkBack réel, Bluetooth, HDR physique, autonomie et chauffe demandent leurs essais distincts.
+Les **524 tests de la 0.5.1** et son APK restent une [référence historique distincte](docs/releases/0.5.1.md), avec une [preuve structurée](docs/verification/0.5.1.json). Ils ne valident pas les ajouts de la 0.5.2.
+
+Les tests utilisent des contenus synthétiques, des réponses API contrôlées et un service vocal de test. Fidélité des fournisseurs, droits/quota d’un compte, voix commerciales, TalkBack réel, Bluetooth, HDR physique, autonomie et chauffe demandent leurs essais distincts. Une réponse réelle ponctuelle de Google ne prouve pas sa disponibilité permanente.
 
 ## Documentation et développement
 
 | Besoin | Point d’entrée |
 | --- | --- |
-| Utiliser les nouvelles fonctions | [Guide Confort intégral 0.5.0](docs/CONFORT_INTEGRAL_050.md) |
-| Lire les changements de cette version | [Notes 0.5.1](docs/releases/0.5.1.md), [changelog](CHANGELOG.md) |
+| Utiliser les nouvelles fonctions | [Google et lecture progressive 0.5.2](docs/TRADUCTION_GOOGLE_052.md), [fonctions Confort intégral](docs/CONFORT_INTEGRAL_050.md) |
+| Lire les changements de cette version | [Notes 0.5.2](docs/releases/0.5.2.md), [changelog](CHANGELOG.md) |
 | Parcourir tous les guides | [Index documentaire](docs/README.md) |
 | Configurer les comptes de traduction | [Moteurs et dépannage](docs/GUIDE_MOTEURS_TRADUCTION.md) |
 | Tester sur téléphone | [Parcours manuel](docs/TESTS_TELEPHONE.md) |
@@ -245,4 +250,4 @@ Le [run de publication 40580117622](https://github.com/Lillite/Vocalisation-des-
 
 Le dépôt contient l’application Android dans **app/**, le moteur indépendant d’Android dans **core/**, les guides dans **docs/**, les démonstrations synthétiques dans **examples/** et les contrôles dans **tools/**. La compilation utilise JDK 17 ; les tests Robolectric Android 36 utilisent JDK 21. FFmpeg génère le média de démonstration à la compilation ; il n’est pas nécessaire sur le téléphone.
 
-**Tout travail terminé et vérifié est intégré à main avant d’être annoncé livré.** Une proposition de fusion et ses contrôles précèdent cette intégration, puis le commit de main est vérifié. Les tags publiés conservent les sources exactes des APK antérieurs. Les guides des étapes 1 à 7 décrivent leur version de référence ; le guide Confort intégral décrit les fonctions ajoutées en 0.5.0 et les notes 0.5.1 précisent les derniers correctifs.
+**Tout travail terminé et vérifié est intégré à main avant d’être annoncé livré.** Une proposition de fusion et ses contrôles précèdent cette intégration, puis le commit de main est vérifié. Les tags publiés conservent les sources exactes des APK antérieurs. Les guides des étapes 1 à 7 décrivent leur version de référence ; le guide Confort intégral décrit les fonctions ajoutées en 0.5.0 et les notes 0.5.1 et 0.5.2 précisent les évolutions suivantes.

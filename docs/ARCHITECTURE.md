@@ -2,7 +2,7 @@
 
 [Index de la documentation](README.md) · [Compilation et validation](../TESTING.md)
 
-Cette vue décrit les sources **0.5.1**. Elles conservent les fonctions Confort intégral de la 0.5.0, les six premières étapes
+Cette vue décrit les sources **0.5.2**. Elles conservent les fonctions Confort intégral de la 0.5.0, les six premières étapes
 et le module de traduction de la 0.4.0. Le projet sépare la logique de
 narration indépendante d’Android, les adaptateurs du lecteur et l’interface. Les
 invariants ci-dessous sont des exigences à préserver lors des modifications ; les
@@ -12,11 +12,7 @@ La 0.5.0 ajoute `NarrationLedger` pour le suivi sans texte, `PlaybackFeatures`
 pour les séances et leurs repères de file inachevée, `SubtitleTimeline` et
 `SubtitleBoundarySchedule` pour parcourir toutes les occurrences corrigées,
 ainsi qu’une bibliothèque vocale durable distincte du cache évictable.
-La traduction complète reste le choix initial ; un mode progressif explicite
-expose seulement les préfixes validés et arrête avant la première occurrence
-manquante. Une restauration, un lot terminé ou un callback ancien ne lance pas
-la vidéo. Le [guide 0.5.0](CONFORT_INTEGRAL_050.md) et la
-[matrice des demandes](COUVERTURE_DEMANDES_050.md) détaillent ces parcours.
+La traduction complète reste disponible ; le mode progressif expose seulement les préfixes validés et attend avant la première occurrence manquante. En 0.5.2, une reprise automatique exige une attente détenue par la traduction et une intention Lire encore valide. Pause utilisateur, déplacement, erreur, changement de média/piste ou fermeture invalident cette permission ; ni restauration ni callback périmé ne lancent la vidéo. Le [guide Google 0.5.2](TRADUCTION_GOOGLE_052.md) décrit le fonctionnement courant ; le [guide 0.5.0](CONFORT_INTEGRAL_050.md) et la [matrice des demandes](COUVERTURE_DEMANDES_050.md) restent les références de l’étape antérieure.
 
 ## Composition des composants
 
@@ -27,7 +23,19 @@ générations, confirmations et traductions activées ; `TranslationPlan` et
 les lots et le cache atomique. Les adaptateurs HTTP n’accèdent ni à la vidéo,
 ni au lecteur, ni au moteur de voix. La session fournit seulement le texte
 traduit validé au contrôleur existant, avec les identités originales.
-Voir [Traduction — étape 7](TRADUCTION_ETAPE_7.md) pour le contrat complet.
+Voir [Traduction — étape 7](TRADUCTION_ETAPE_7.md) pour le contrat initial et le [guide Google 0.5.2](TRADUCTION_GOOGLE_052.md) pour ses extensions.
+
+### Adaptateurs Google et frontière de traduction
+
+`GoogleWebTranslationEngine` fournit un client Kotlin natif d’un accès Google non officiel ; `MlKitTranslationEngine` adapte le SDK Google 17.0.3 au même port. Aucun des deux n’obtient le contrôle de la vidéo ni du TTS. Les paramètres de transport/téléchargement de `TranslationExecutionOptions` restent distincts des options susceptibles de changer le contenu traduit.
+
+Google en ligne traite une occurrence par unité de travail pour enregistrer une progression validée sans perdre le reste d’un lot. Son cache en mémoire de textes strictement identiques économise des appels, sans fusionner les occurrences du plan. L’identification de la piste et les résultats de chaque occurrence restent contrôlés par le runner.
+
+L’intervalle Google est configurable de 500 à 10 000 ms, défaut 1 000 ms. Les appels sont sérialisés ; la politique augmente l’attente lors de réponses temporaires, borne les nouvelles tentatives à trois et le cumul d’attente à 120 s, respecte `Retry-After` et vérifie l’annulation. Une durée serveur trop grande provoque l’arrêt sans tentative anticipée. Aucun autre point d’accès ni rotation d’IP n’est utilisé pour contourner un refus.
+
+ML Kit contrôle les langues, possède un traducteur réutilisable et prépare les modèles nécessaires une fois pendant le travail. La préparation exige le Wi-Fi par défaut, avec autorisation mobile explicite. L’attente des tâches du SDK est bornée et annulable ; un résultat tardif ne peut pas activer une autre génération. Le SDK peut cependant terminer un téléchargement déjà lancé après annulation de l’attente côté lecteur.
+
+Le préfixe progressif conserve l’ordre, les identifiants et les minutages des occurrences. Le tampon de 30 s par défaut, configurable de 10 à 120 s, détermine l’avance nécessaire ; il ne mesure pas le débit de traduction. L’autorisation de reprendre après une attente de traduction appartient à la session, et les gardes existantes de narration, pause et génération restent applicables. Une fin de tâche ne donne jamais une autorisation générale de lecture.
 
 `PlaybackSession` reçoit un `PlaybackComponents`. Les factories par défaut créent
 des instances propres à cette session :
@@ -275,6 +283,12 @@ l’offload, le flottant et le multicanal ne constituent pas des parcours trait�
 par ce processeur. Les détails de chaque réglage et leurs limites figurent
 dans [Saisie et audio avancé — étape 6](AUDIO_EXPERT_ETAPE_6.md).
 
+### Propriétaire des dialogues audio
+
+En 0.5.2, le bouton DSP créé par `AdvancedSettings.populate()` emprunte la durée de vie du véritable `SettingsPanel`. La colonne temporaire de construction est vidée lors de la distribution des commandes entre rubriques ; elle ne doit donc pas être capturée comme propriétaire d’une fenêtre. Cette ancienne capture faisait échouer `isAttachedToWindow` et empêchait l’ouverture depuis Son.
+
+`AudioDialogOwner` continue de fermer les fenêtres enfant lors du détachement du parent et de la destruction de l’activité. Le ticket d’ouverture audio reste celui de la session initiale ; changer de média ne renouvelle pas implicitement les droits d’un éditeur ancien. Les tests couvrent le vrai parcours Paramètres > Son, distinct de Volumes rapides.
+
 ## Noyau indépendant d’Android
 
 Le module [`core`](../core/src/main/kotlin/fr/soustitresvoix/core/) contient la logique de narration, le traitement du texte, la planification adaptative, la validation des fichiers WAV, le cache, les mesures, les contrats de commande et le traitement audio avancé indépendant d’Android. Il définit également le port de traduction, le plan immuable des occurrences et la validation des pistes traduites ; les clients HTTPS et le stockage Android restent dans `app`.
@@ -323,7 +337,7 @@ La baisse de volume agit sur le mix du film. Le traitement expérimental de band
 
 Le sélecteur Android accorde un accès ciblé aux documents choisis. Les sous-titres externes sont copiés dans le répertoire privé de l’application ; les fichiers originaux ne sont pas modifiés. Le manifeste, depuis la 0.4.0, déclare **`android.permission.INTERNET` pour la traduction explicitement demandée**. Il ne demande pas d’autorisation de microphone, de caméra ou d’accès général au stockage. La déclaration Internet n’est pas une demande de permission à l’exécution ; la confirmation du lecteur reste le contrôle précédant l’envoi de la piste.
 
-L’indexation et l’estimation initiales restent locales. Après confirmation, si aucun cache complet correspondant n’est disponible, le fournisseur de traduction reçoit le texte des sous-titres, les langues et les paramètres nécessaires ; cette opération n’envoie ni vidéo ni audio. Le transport impose HTTPS, vérifie les certificats système, borne les délais et les réponses, refuse les redirections et ne relance pas automatiquement une requête potentiellement facturée. Les messages d’erreur ne recopient ni clé ni corps de réponse contenant du texte privé. Le traitement ultérieur des données dépend du fournisseur choisi.
+L’indexation et l’estimation initiales restent locales. Après confirmation avec un moteur en ligne, si aucun cache complet correspondant n’est disponible, le fournisseur de traduction reçoit le texte des sous-titres, les langues et les paramètres nécessaires ; cette opération n’envoie ni vidéo ni audio. Le transport impose HTTPS, vérifie les certificats système, borne les délais et les réponses, refuse les redirections et ne relance pas automatiquement une requête potentiellement facturée. Les messages d’erreur ne recopient ni clé ni corps de réponse contenant du texte privé. Le traitement ultérieur des données dépend du fournisseur choisi.
 
 Dans le **correctif 0.5.1**, `TranslationRequestPacing` espace les appels DeepL de 500 ms au minimum et réessaie seulement les refus explicites **429/529**. Les cinq nouvelles tentatives au maximum attendent 1/2/4/8/16 secondes avec aléa, ou le `Retry-After` fourni. L’attente cumulée est bornée à **120 secondes par lot**, hors temps réseau ; un délai serveur trop long provoque un arrêt, jamais un renvoi anticipé. Les attentes vérifient l’annulation par tranches d’au plus 100 ms. Les erreurs réseau, les réponses incomplètes, **456** et **500/502/503/504** restent sans renvoi automatique. La consultation du quota et les autres fournisseurs ne passent pas par cette politique. Voir le [guide des limites](TRADUCTION_GRATUITE_ET_LIMITES.md).
 
@@ -331,7 +345,7 @@ Dans le **correctif 0.5.1**, `TranslationRequestPacing` espace les appels DeepL 
 
 La mémorisation d’une clé API est facultative. `TranslationCredentials` chiffre les clés avec **AES-GCM et Android Keystore**, sans repli en clair. Les clés LibreTranslate sont isolées par serveur ; changer son adresse vide le champ avant le chargement de sa propre clé. Les sauvegardes Android de l’application sont désactivées. Ce stockage ne remplace ni la maîtrise des quotas du compte ni la protection de l’appareil. La clé privée de signature de l’APK reste séparée des clés API et hors du dépôt et des releases.
 
-Les liens documentaires s’ouvrent dans le navigateur sur demande ; le moteur vocal externe possède ses propres permissions. Aucun OCR, import de modèle Hugging Face ou runtime local de traduction CPU/GPU/NPU n’est intégré. Voir le [contrat de traduction](TRADUCTION_ETAPE_7.md) et le [guide des moteurs](GUIDE_MOTEURS_TRADUCTION.md) pour les parcours réellement disponibles.
+ML Kit traite le texte sur le téléphone, sans envoyer les sous-titres au service de traduction. Le fournisseur d’initialisation automatique est retiré du manifeste : l’application initialise le SDK après confirmation explicite. Google déclare une télémétrie technique (appareil, application, identifiants d’installation, performances, tailles, langues et événements) ; les modèles et la configuration utilisent le réseau. Voir la [déclaration ML Kit](https://developers.google.com/ml-kit/android-data-disclosure). L’attribution du fournisseur reste visible. L’intégration n’affirme aucune mesure d’accélération CPU/GPU/NPU sur l’appareil. Les liens documentaires s’ouvrent dans le navigateur sur demande ; le moteur vocal externe possède ses propres permissions. Aucun OCR, import de modèle Hugging Face, moteur Google Cloud ou déploiement Apps Script n’est intégré. Voir le [contrat de traduction](TRADUCTION_ETAPE_7.md) et le [guide des moteurs](GUIDE_MOTEURS_TRADUCTION.md) pour les parcours réellement disponibles.
 
 La synthèse des sous-titres reste distincte des annonces de l’interface. Le passage de l’activité en arrière-plan arrête la lecture. Les règles d’accessibilité et l’absence de reprise inattendue doivent aussi être vérifiées sur téléphone.
 
@@ -341,7 +355,9 @@ La [procédure de validation](../TESTING.md) distingue tests JVM, Lint, compilat
 
 La démonstration principale est générée par Gradle à partir du SRT versionné. Des petites fixtures ASS/MKV sont aussi conservées dans les ressources de test. FFmpeg sert à la génération de la démonstration dans l’environnement de compilation ; il n’est pas intégré au lecteur Android.
 
-Les sources **0.5.1** du commit [`d5d5b63`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/d5d5b63ea37ca4be423f375e8e7a75e870d154e6) ont été intégrées par la [PR #16](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/16) après **524 tests réussis** : 178 noyau, 254 JVM application et 92 instrumentés Android 36. Le [run préalable 40556708779](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40556708779) précède la fusion ; le [run 40560530124](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40560530124) reconstruit ensuite la release et vérifie le même contenu applicatif, hors signature, sans répéter les suites. L’état de la distribution signée reste indiqué dans [TESTING.md](../TESTING.md).
+La **0.5.2** doit être validée sur son propre arbre et son APK avant fusion. Le workflow après fusion réutilise la preuve seulement si l’arbre et les parents correspondent, puis compare le contenu applicatif reconstruit hors signature. Les chiffres et liens effectifs restent consignés dans [TESTING.md](../TESTING.md) ; aucun résultat antérieur ne couvre les nouveaux adaptateurs.
+
+À titre historique, les sources **0.5.1** du commit [`d5d5b63`](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/commit/d5d5b63ea37ca4be423f375e8e7a75e870d154e6) ont été intégrées par la [PR #16](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/16) après **524 tests réussis** : 178 noyau, 254 JVM application et 92 instrumentés Android 36. Le [run préalable 40556708779](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40556708779) précède la fusion ; le [run 40560530124](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40560530124) reconstruit ensuite la release et vérifie le même contenu applicatif, hors signature, sans répéter les suites. L’état de la distribution signée reste indiqué dans [TESTING.md](../TESTING.md).
 
 ### Références historiques
 

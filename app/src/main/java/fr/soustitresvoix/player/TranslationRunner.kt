@@ -86,7 +86,7 @@ class TranslationRunner(private val directory: File,
         checkCancelled(cancelled)
         if (engine.id != plan.providerId) throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
         // Validate the entire batching plan before sending even its first request.
-        val batches = plan.batches(MAX_BATCH_CHARACTERS, MAX_BATCH_ITEMS)
+        val batches = plan.batches(engine.maxBatchCharacters, engine.maxBatchItems)
         (readRetained(plan) ?: read(plan))?.let { track ->
             checkCancelled(cancelled)
             progress(plan.cues.size, plan.cues.size)
@@ -115,7 +115,8 @@ class TranslationRunner(private val directory: File,
                 // the validated prefix without falsely marking the request as lost.
                 if (failure.reason in setOf(TranslationFailure.Reason.RATE_LIMIT, TranslationFailure.Reason.QUOTA,
                     TranslationFailure.Reason.AUTHENTICATION, TranslationFailure.Reason.CONFIGURATION,
-                    TranslationFailure.Reason.LANGUAGE, TranslationFailure.Reason.REDIRECT)) {
+                    TranslationFailure.Reason.LANGUAGE, TranslationFailure.Reason.REDIRECT, TranslationFailure.Reason.GOOGLE_BLOCKED,
+                    TranslationFailure.Reason.MODEL_DOWNLOAD, TranslationFailure.Reason.LOCAL_TRANSLATION)) {
                     checkpoints?.let { if (!it.write(plan, texts, false))
                         cacheWarning = "La progression n’a pas pu être enregistrée ; garde cette session ouverte." }
                 }

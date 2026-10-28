@@ -135,5 +135,16 @@
         "application_id": "fr.soustitresvoix.player.translation"
       }
     }
-  ]
+  ],
+  "next_release": {
+    "tag": "v0.5.2",
+    "title": "Sous-titres en voix 0.5.2 — Google, traduction progressive et vocalisation intégrale",
+    "notes": "docs/releases/0.5.2.md",
+    "asset": {
+      "name": "SousTitresVoix-0.5.2-google.apk",
+      "version_name": "0.5.2",
+      "version_code": 9,
+      "application_id": "fr.soustitresvoix.player.translation"
+    }
+  }
 }

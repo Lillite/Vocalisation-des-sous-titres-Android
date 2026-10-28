@@ -143,7 +143,9 @@ class AdvancedSettings(private val activity: Activity, private val session: Play
         column.addView(button("Reprendre explicitement la voix et la vidéo") { session.resumeVoice() })
         section(SettingsSection.SOUND)
         column.addView(text("Mélange sonore"))
-        column.addView(AudioDspControls.openButton(activity, column, session.audioCommands, audioGeneration))
+        // Entries are moved out of the temporary column below. Nested audio
+        // dialogs must borrow the actual settings panel's attached lifetime.
+        column.addView(AudioDspControls.openButton(activity, panel, session.audioCommands, audioGeneration))
         column.addView(AudioSettingsControls(activity, session.audioCommands, includeLevels = false).view)
         section(SettingsSection.SUBTITLES)
         column.addView(text("Filtres facultatifs — désactivés en Lecture intégrale ; l’affichage original reste intact"))

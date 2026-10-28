@@ -148,6 +148,7 @@ class CinemaView(
             video.subtitleView?.setPadding(left + dp(8), 0, right + dp(8), down)
             video.findViewWithTag<androidx.media3.ui.SubtitleView>("narration-subtitle-overlay")
                 ?.setPadding(left + dp(8), 0, right + dp(8), down)
+            updateCaptionPosition()
             insets
         }
         val scale = ScaleGestureDetector(activity, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -269,11 +270,17 @@ class CinemaView(
         main.removeCallbacks(hide); updateCaptionPosition()
         if (show) scheduleHide()
     }
-    private fun updateCaptionPosition() {
+    internal fun updateCaptionPosition() {
         if (disposed) return
         val space = if (visibleControls && height > 0) (bottom.height.toFloat() / height + 0.02f).coerceIn(0.08f, 0.60f) else 0.08f
         video.subtitleView?.setBottomPaddingFraction(space)
-        video.findViewWithTag<androidx.media3.ui.SubtitleView>("narration-subtitle-overlay")?.setBottomPaddingFraction(space)
+        video.findViewWithTag<androidx.media3.ui.SubtitleView>("narration-subtitle-overlay")?.let { overlay ->
+            val badgeVisible = video.findViewWithTag<View>(GoogleTranslationAttribution.VIDEO_TAG)?.visibility == View.VISIBLE
+            GoogleTranslationAttribution.positionVideoBadge(video, overlay, overlay.paddingLeft, overlay.paddingRight,
+                bottom.paddingBottom, if (visibleControls) bottom.height else 0)
+            // The reserved strip already includes the controls when the badge is visible.
+            overlay.setBottomPaddingFraction(if (badgeVisible) 0.08f else space)
+        }
     }
     private fun setLocked(value: Boolean) {
         locked = value; showControls(!value); unlock.visibility = if (value) View.VISIBLE else View.GONE

@@ -1,6 +1,6 @@
 # Confort intégral — guide de la version 0.5.0
 
-> **Guide des fonctions introduites en 0.5.0 et conservées en 0.5.1.** Pour installer la version actuelle et connaître les derniers correctifs : [accueil](../README.md) et [notes 0.5.1](releases/0.5.1.md). Les résultats de validation cités pour la 0.5.0 restent historiques.
+> **Guide des fonctions introduites en 0.5.0 et conservées en 0.5.2.** Pour installer la version actuelle et connaître les derniers correctifs : [accueil](../README.md) et [notes 0.5.2](releases/0.5.2.md). Les résultats de validation cités pour la 0.5.0 restent historiques.
 
 [Accueil](../README.md) · [Documentation](README.md) · [Tests sur téléphone](TESTS_TELEPHONE.md) · [Notes de version](releases/0.5.0.md) · [Couverture des demandes](COUVERTURE_DEMANDES_050.md)
 

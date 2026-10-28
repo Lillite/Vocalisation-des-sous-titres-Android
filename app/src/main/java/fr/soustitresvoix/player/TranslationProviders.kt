@@ -1,5 +1,6 @@
 package fr.soustitresvoix.player
 
+import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -19,7 +20,12 @@ enum class TranslationProvider(val id: String, val label: String) {
     AZURE("azure", "Microsoft Azure Translator"),
     DEEPL_FREE("deepl-free", "DeepL — point d’accès API Free"),
     DEEPL_PRO("deepl-pro", "DeepL — point d’accès API payant"),
-    LIBRE("libre", "LibreTranslate — serveur personnel HTTPS")
+    LIBRE("libre", "LibreTranslate — serveur personnel HTTPS"),
+    GOOGLE_WEB("google-web-v1", "Google Traduction — en ligne sans clé (non officiel)"),
+    GOOGLE_LOCAL("google-local-v1", "Google Traduction — sur le téléphone (ML Kit)");
+
+    val isGoogle: Boolean get() = this == GOOGLE_WEB || this == GOOGLE_LOCAL
+    val needsKey: Boolean get() = this == AZURE || this == DEEPL_FREE || this == DEEPL_PRO
 }
 
 /** Never expose credentials in a generated data-class toString(). */
@@ -28,7 +34,8 @@ class TranslationProviderConfig(
     val apiKey: String = "",
     val region: String = "",
     val endpoint: String = "",
-    val options: TranslationOptions = TranslationOptions()
+    val options: TranslationOptions = TranslationOptions(),
+    val execution: TranslationExecutionOptions = TranslationExecutionOptions()
 ) {
     override fun toString(): String = "TranslationProviderConfig(provider=${provider.id}, credentials=hidden)"
 }
@@ -36,6 +43,8 @@ class TranslationProviderConfig(
 /** Runs off the UI thread. Closing invalidates an in-flight response. */
 interface TranslationEngine : Closeable {
     val id: String
+    val maxBatchCharacters: Int get() = TranslationRunner.MAX_BATCH_CHARACTERS
+    val maxBatchItems: Int get() = TranslationRunner.MAX_BATCH_ITEMS
     fun translate(texts: List<String>, sourceLanguage: String, targetLanguage: String = "fr",
         cancelled: () -> Boolean): List<String>
 }
@@ -54,7 +63,10 @@ class TranslationFailure(val reason: Reason) : IOException(reason.message) {
         REDIRECT("Redirection du service de traduction refusée. Vérifie l’adresse HTTPS configurée."),
         NETWORK("Connexion au traducteur impossible ou interrompue. Vérifie le réseau puis relance explicitement."),
         RESPONSE("Réponse du traducteur incomplète ou invalide. Aucune piste incomplète n’a été activée."),
-        SERVER("Service de traduction indisponible. Réessaie plus tard ; aucune relance automatique.")
+        SERVER("Service de traduction indisponible après les éventuelles attentes bornées. Les résultats validés sont conservés."),
+        GOOGLE_BLOCKED("Google limite ou bloque temporairement cet accès non officiel. Les résultats validés sont conservés. Attends avant de reprendre ou choisis explicitement un autre moteur."),
+        MODEL_DOWNLOAD("Modèles Google non disponibles ou téléchargement interrompu. Connecte le téléphone au Wi-Fi ou autorise explicitement les données mobiles, puis reprends."),
+        LOCAL_TRANSLATION("Le moteur local n’a pas pu terminer ce lot. Les sous-titres validés sont conservés ; reprends ou choisis un autre moteur.")
     }
 }
 
@@ -64,7 +76,8 @@ class TranslationHttpRequest(val uri: URI, headers: Map<String, String>, val bod
     override fun toString(): String = "TranslationHttpRequest(HTTPS request, content hidden)"
 }
 
-class TranslationHttpResponse(val status: Int, val body: String, val retryAfterMillis: Long? = null) {
+class TranslationHttpResponse(val status: Int, val body: String, val retryAfterMillis: Long? = null,
+    val googleBlocked: Boolean = false) {
     override fun toString(): String = "TranslationHttpResponse(status=$status, content hidden)"
 }
 
@@ -105,9 +118,23 @@ class HttpsTranslationTransport : TranslationHttpTransport {
             } else require(request.body.isEmpty())
             checkCancelled()
             val status = connection.responseCode
-            // Do not read error bodies, which may repeat private text or credentials.
-            if (status != 200) return TranslationHttpResponse(status, "",
-                TranslationRequestPacing.retryAfterMillis(connection.getHeaderField("Retry-After")))
+            // Never retain server error text. Inspect only a bounded Google HTML response,
+            // on its fixed credential-free endpoint, so a block page is not retried as overload.
+            if (status != 200) {
+                val blocked = if (request.uri.host == "translate.googleapis.com" && status == 429)
+                    runCatching { connection.errorStream?.use { stream ->
+                        val bytes = ByteArray(8192); var size = 0
+                        while (size < bytes.size) {
+                            checkCancelled(); val read = stream.read(bytes, size, bytes.size - size)
+                            if (read < 0) break
+                            size += read
+                        }
+                        GoogleWebTranslationEngine.isHtmlPage(String(bytes, 0, size, Charsets.UTF_8))
+                    } ?: false }.getOrDefault(false)
+                else request.uri.host == "translate.googleapis.com" && status == 403
+                return TranslationHttpResponse(status, "",
+                    TranslationRequestPacing.retryAfterMillis(connection.getHeaderField("Retry-After")), blocked)
+            }
             if (connection.contentLengthLong > MAX_RESPONSE_BYTES) throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
             val data = connection.inputStream.use { input ->
                 val output = ByteArrayOutputStream()
@@ -136,7 +163,17 @@ class HttpsTranslationTransport : TranslationHttpTransport {
 
 object TranslationEngines {
     fun create(config: TranslationProviderConfig,
-        transport: TranslationHttpTransport = HttpsTranslationTransport()): TranslationEngine = HttpEngine(config, transport, TranslationRequestPacing())
+        transport: TranslationHttpTransport = HttpsTranslationTransport(), context: Context? = null): TranslationEngine =
+        when (config.provider) {
+            TranslationProvider.GOOGLE_WEB -> GoogleWebTranslationEngine(config, transport)
+            TranslationProvider.GOOGLE_LOCAL -> {
+                config.execution.validate()
+                transport.close()
+                MlKitTranslationEngine(context ?: throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION),
+                    translationIdentity(config), config.execution.allowMobileModelDownload)
+            }
+            else -> HttpEngine(config, transport, TranslationRequestPacing())
+        }
 
     internal fun create(config: TranslationProviderConfig, transport: TranslationHttpTransport,
         pacing: TranslationRequestPacing): TranslationEngine = HttpEngine(config, transport, pacing)
@@ -152,18 +189,23 @@ object TranslationEngines {
 
     internal fun validateForRequest(config: TranslationProviderConfig, source: String, target: String) {
         config.options.validate(config.provider)
+        config.execution.validate()
         identity(config)
         if (!language.matches(source) || !language.matches(target) || target == "auto" ||
-            (config.provider != TranslationProvider.LIBRE && config.apiKey.isBlank()) ||
+            (config.provider.needsKey && config.apiKey.isBlank()) ||
             config.apiKey.length > 4096 || config.apiKey.any { it.code !in 33..126 } ||
             config.region.length > 100 || config.region.any { !(it.isLetterOrDigit() || it == '-') } ||
             config.options.glossaryId.isNotBlank() && source == "auto")
             throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
+        if (config.provider == TranslationProvider.GOOGLE_LOCAL &&
+            (MlKitTranslationEngine.canonicalLanguage(source) == null || MlKitTranslationEngine.canonicalLanguage(target) == null))
+            throw TranslationFailure(TranslationFailure.Reason.LANGUAGE)
     }
 
     /** Translation settings are separate from the credential scope; secrets never enter the digest. */
     fun translationIdentity(config: TranslationProviderConfig): String {
         config.options.validate(config.provider)
+        config.execution.validate()
         val scope = identity(config)
         if (config.options.isDefault) return scope
         val digest = MessageDigest.getInstance("SHA-256")
@@ -283,6 +325,8 @@ object TranslationEngines {
                         if (key.isNotEmpty()) body.put("api_key", key)
                         TranslationHttpRequest(libreEndpoint(config.endpoint), headers, body.toString())
                     }
+                    TranslationProvider.GOOGLE_WEB, TranslationProvider.GOOGLE_LOCAL ->
+                        throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
                 }
                 if (request.body.toByteArray(Charsets.UTF_8).size > 120 * 1024)
                     throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
@@ -327,6 +371,8 @@ object TranslationEngines {
                             throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
                         List(result.length()) { i -> result.get(i) as? String ?: throw TranslationFailure(TranslationFailure.Reason.RESPONSE) }
                     }
+                    TranslationProvider.GOOGLE_WEB, TranslationProvider.GOOGLE_LOCAL ->
+                        throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
                 }
                 if (output.any { it.isBlank() || it.length > 24_000 || !validText(it) })
                     throw TranslationFailure(TranslationFailure.Reason.RESPONSE)

@@ -68,8 +68,8 @@ class SubtitleTranslationControlsRobolectricTest {
 
     @Test fun everyProviderHasSpecificSetupCostsPrivacyAndCapabilityDescriptions() {
         val descriptions = TranslationProvider.entries.associateWith { SubtitleTranslationControls.description(it) }
-        assertEquals(4, descriptions.size)
-        assertEquals(4, descriptions.values.distinct().size)
+        assertEquals(6, descriptions.size)
+        assertEquals(6, descriptions.values.distinct().size)
         val azure = descriptions.getValue(TranslationProvider.AZURE)
         assertTrue(azure.contains("Clés et point de terminaison"))
         assertTrue(azure.contains("2 millions de caractères/mois"))
@@ -95,7 +95,7 @@ class SubtitleTranslationControlsRobolectricTest {
         Fixture().use { fixture ->
             val panel = fixture.open()
             val fields = views(panel).filterIsInstance<EditText>()
-            assertEquals(10, fields.size)
+            assertEquals(12, fields.size)
             for (input in fields) {
                 val labels = views(panel).filterIsInstance<TextView>().filter { it.labelFor == input.id }
                 assertEquals("Each editor needs its own accessible label", 1, labels.size)
@@ -125,7 +125,7 @@ class SubtitleTranslationControlsRobolectricTest {
             val panel = fixture.open()
             val spinner = views(panel).filterIsInstance<Spinner>().single()
             assertEquals("Moteur de traduction", spinner.contentDescription.toString())
-            assertEquals(4, spinner.count)
+            assertEquals(6, spinner.count)
             val region = field(panel, "Région Azure")
             val endpoint = field(panel, "Adresse de base du serveur LibreTranslate")
             for ((index, provider) in TranslationProvider.entries.withIndex()) {
@@ -151,6 +151,39 @@ class SubtitleTranslationControlsRobolectricTest {
         assertFalse(one.contains("key-one"))
         assertNotEquals(SubtitleTranslationControls.providerIdentity(TranslationProviderConfig(TranslationProvider.DEEPL_FREE)),
             SubtitleTranslationControls.providerIdentity(TranslationProviderConfig(TranslationProvider.DEEPL_PRO)))
+    }
+
+    @Test fun googleIntervalSurvivesOtherProviderPreparationAndInvalidEditsNeverReplaceIt() {
+        Fixture().use { fixture ->
+            val storage = fixture.activity.getSharedPreferences("translation-choices-v1", Context.MODE_PRIVATE)
+            storage.edit().putLong("google-interval-ms", 2_400L).commit()
+            val panel = fixture.open()
+            val spinner = views(panel).filterIsInstance<Spinner>().single()
+            val interval = field(panel, "Google en ligne : délai minimal")
+            assertEquals("2400", interval.text.toString())
+            button(panel, "Indexer la piste et estimer la traduction").performClick()
+            assertEquals(2_400L, storage.getLong("google-interval-ms", 0L))
+
+            spinner.setSelection(TranslationProvider.GOOGLE_WEB.ordinal)
+            shadowOf(Looper.getMainLooper()).idle()
+            interval.setText("3000")
+            button(panel, "Indexer la piste et estimer la traduction").performClick()
+            assertEquals(3_000L, storage.getLong("google-interval-ms", 0L))
+            spinner.setSelection(TranslationProvider.GOOGLE_LOCAL.ordinal)
+            shadowOf(Looper.getMainLooper()).idle()
+            button(panel, "Indexer la piste et estimer la traduction").performClick()
+            assertEquals(3_000L, storage.getLong("google-interval-ms", 0L))
+
+            spinner.setSelection(TranslationProvider.GOOGLE_WEB.ordinal)
+            shadowOf(Looper.getMainLooper()).idle()
+            interval.setText("499")
+            button(panel, "Indexer la piste et estimer la traduction").performClick()
+            assertTrue(text(panel).contains("Options invalides"))
+            assertEquals(3_000L, storage.getLong("google-interval-ms", 0L))
+            assertEquals("3000", field(fixture.open(), "Google en ligne : délai minimal").text.toString())
+            assertFalse(fixture.session.translation.busy)
+            assertFalse(fixture.session.translation.required)
+        }
     }
 
     @Test fun openingRefreshAndMissingMediaCannotStartTranslationOrPersistASecret() {
@@ -220,6 +253,8 @@ class SubtitleTranslationControlsRobolectricTest {
                 assertEquals(when (provider) {
                     TranslationProvider.AZURE -> "learn.microsoft.com"
                     TranslationProvider.LIBRE -> "docs.libretranslate.com"
+                    TranslationProvider.GOOGLE_WEB -> "translate.google.com"
+                    TranslationProvider.GOOGLE_LOCAL -> "developers.google.com"
                     else -> "developers.deepl.com"
                 }, url.host)
             }

@@ -126,6 +126,76 @@ class SubtitleTranslationAndroidTest {
             session.speech.language == "fr" && session.selectedTextId() == "external-subtitle"
     }
 
+    @Test fun progressivePlaybackStartsBeforeCompletionBuffersAndStillVocalizesEveryOccurrence() {
+        val observation = Observation()
+        ContextCompat.registerReceiver(context, observation, IntentFilter().apply {
+            addAction(FixtureSpeechService.ALL_REQUESTS_ACTION)
+            addAction(FixtureSpeechService.OBSERVATION_ACTION)
+        }, ContextCompat.RECEIVER_EXPORTED)
+        val activity = AtomicReference<MainActivity>()
+        val releaseLast = CountDownLatch(1)
+        val enteredLast = CountDownLatch(1)
+        try {
+            MediaFixture().use { fixture ->
+                ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                    scenario.onActivity { current -> activity.set(current); current.session.open(fixture.saved) }
+                    awaitReady(activity)
+                    val preview = AtomicReference<SubtitleTranslationSession.Preview>()
+                    scenario.onActivity { current ->
+                        current.session.translation.prepareWithOptions("en", "android-progressive-nonloss",
+                            progressive = true, bufferSeconds = 10) { preview.set(it) }
+                    }
+                    await("Progressive preview did not finish") { preview.get() != null }
+                    scenario.onActivity { current ->
+                        current.session.translation.start(requireNotNull(preview.get())) {
+                            object : TranslationEngine {
+                                override val id = "android-progressive-nonloss"
+                                override val maxBatchItems = 5
+                                private var calls = 0
+                                override fun translate(texts: List<String>, sourceLanguage: String,
+                                    targetLanguage: String, cancelled: () -> Boolean): List<String> {
+                                    if (++calls == 2) { enteredLast.countDown(); check(releaseLast.await(90, TimeUnit.SECONDS)) }
+                                    check(!cancelled())
+                                    return texts.map { translations.getValue(it) }
+                                }
+                                override fun close() = Unit
+                            }
+                        }
+                    }
+                    await("A validated partial track did not become playable") {
+                        enteredLast.count == 0L && activity.get().session.translation.ready
+                    }
+                    scenario.onActivity { current ->
+                        assertFalse(current.session.translation.complete)
+                        assertTrue(current.session.translation.busy)
+                        assertTrue(observation.requests().isEmpty())
+                        current.session.play()
+                        assertTrue(current.session.machine.snapshot().wantsPlayback)
+                    }
+                    await("Actual playback did not hold at the untranslated occurrence", 55_000) {
+                        activity.get().session.translation.waitingForTranslation
+                    }
+                    scenario.onActivity { current ->
+                        assertFalse(current.session.translation.complete)
+                        assertFalse(current.session.machine.snapshot().wantsPlayback)
+                        assertFalse(current.session.player.playWhenReady)
+                        assertEquals(frenchTexts.take(5), observation.requests())
+                    }
+                    releaseLast.countDown()
+                    await("Translation did not complete") { activity.get().session.translation.complete }
+                    await("Buffered playback did not finish all six translated occurrences", 45_000) {
+                        val session = activity.get().session
+                        session.player.playbackState == Player.STATE_ENDED &&
+                            session.machine.snapshot().speakingId == null && !session.machine.snapshot().wantsPlayback &&
+                            observation.completions().size >= 6
+                    }
+                    assertEquals(frenchTexts, observation.requests())
+                    assertEquals(frenchTexts, observation.completions())
+                }
+            }
+        } finally { releaseLast.countDown(); context.unregisterReceiver(observation) }
+    }
+
     private fun prepare(scenario: ActivityScenario<MainActivity>, activity: AtomicReference<MainActivity>,
         id: String): SubtitleTranslationSession.Preview {
         val result = AtomicReference<SubtitleTranslationSession.Preview>()
@@ -358,6 +428,8 @@ class SubtitleTranslationAndroidTest {
                     }
                     val expectedFieldLabels = listOf(
                         "Langue originale — code explicite, par exemple en, es, de, it, sr-Latn ou sr-Cyrl",
+                        "Avance de traduction avant lecture ou reprise — 10 à 120 secondes, défaut 30",
+                        "Google en ligne : délai minimal entre requêtes — 500 à 10 000 ms, défaut 1 000",
                         "Plafond de nouveaux caractères UTF-16 pour cette tâche — vide : aucune limite locale supplémentaire",
                         "DeepL : contexte de l’œuvre ou de la scène, facultatif — envoyé avec chaque lot, 24 000 caractères maximum",
                         "DeepL : identifiant d’un glossaire déjà créé dans TON compte, facultatif",
@@ -379,13 +451,14 @@ class SubtitleTranslationAndroidTest {
                         assertEquals(expectedFieldLabels, labels)
                         fieldsByLabel = labels.zip(fields).toMap()
                         assertEquals(1, fields.count { it.transformationMethod is PasswordTransformationMethod })
-                        assertTrue(fieldsByLabel.getValue(expectedFieldLabels[7]).transformationMethod is PasswordTransformationMethod)
+                        assertTrue(fieldsByLabel.getValue(expectedFieldLabels[9]).transformationMethod is PasswordTransformationMethod)
                         val progressive = views.filterIsInstance<CheckBox>().single {
-                            it.text.toString() == "Traduction progressive : autoriser la lecture avec au moins une minute de tampon validé"
+                            it.text.toString() == "Traduction progressive : regarder pendant la traduction"
                         }
                         assertFalse("Progressive translation must remain an explicit choice", progressive.isChecked)
                     }
                     val providers = TranslationProvider.values()
+                    assertEquals(listOf("azure", "deepl-free", "deepl-pro", "libre", "google-web-v1", "google-local-v1"), providers.map { it.id })
                     for ((index, provider) in providers.withIndex()) {
                         scenario.onActivity {
                             descendants(panel.get()).filterIsInstance<Spinner>().single().setSelection(index)
@@ -402,11 +475,25 @@ class SubtitleTranslationAndroidTest {
                                 .single { it.text.toString() == SubtitleTranslationControls.description(provider) }
                             assertTrue("Provider help must span several readable lines", help.layout.lineCount > 1)
                             for (line in 0 until help.layout.lineCount) assertEquals(0, help.layout.getEllipsisCount(line))
-                            val visibleLabels = expectedFieldLabels.take(2).toSet() + expectedFieldLabels[7] + when (provider) {
-                                TranslationProvider.AZURE -> setOf(expectedFieldLabels[8])
-                                TranslationProvider.DEEPL_FREE, TranslationProvider.DEEPL_PRO -> expectedFieldLabels.subList(2, 7).toSet()
-                                TranslationProvider.LIBRE -> setOf(expectedFieldLabels[9])
+                            val visibleLabels = setOf(expectedFieldLabels[0], expectedFieldLabels[1], expectedFieldLabels[3]) +
+                                (if (provider.isGoogle) emptySet() else setOf(expectedFieldLabels[9])) + when (provider) {
+                                    TranslationProvider.AZURE -> setOf(expectedFieldLabels[10])
+                                    TranslationProvider.DEEPL_FREE, TranslationProvider.DEEPL_PRO -> expectedFieldLabels.subList(4, 9).toSet()
+                                    TranslationProvider.LIBRE -> setOf(expectedFieldLabels[11])
+                                    TranslationProvider.GOOGLE_WEB -> setOf(expectedFieldLabels[2])
+                                    TranslationProvider.GOOGLE_LOCAL -> emptySet()
+                                }
+                            val remember = views.filterIsInstance<CheckBox>().single {
+                                it.text.toString() == "Mémoriser cette clé, chiffrée avec Android Keystore sur ce téléphone"
                             }
+                            assertEquals(if (provider.isGoogle) View.GONE else View.VISIBLE, remember.visibility)
+                            val mobileModels = views.filterIsInstance<CheckBox>().single {
+                                it.text.toString() == "Google local : autoriser les données mobiles pour télécharger les modèles"
+                            }
+                            assertEquals(if (provider == TranslationProvider.GOOGLE_LOCAL) View.VISIBLE else View.GONE, mobileModels.visibility)
+                            assertFalse("Model downloads on mobile data remain opt-in", mobileModels.isChecked)
+                            assertEquals("30", fieldsByLabel.getValue(expectedFieldLabels[1]).text.toString())
+                            assertEquals("1000", fieldsByLabel.getValue(expectedFieldLabels[2]).text.toString())
                             val scroll = requireNotNull(panel.get().findViewById<ScrollView>(R.id.translation_controls_scroll))
                             assertReachableInForm(scroll, help)
                             for ((labelText, field) in fieldsByLabel) {
@@ -423,7 +510,7 @@ class SubtitleTranslationAndroidTest {
                                 }
                             }
                             assertReachableInForm(scroll, views.filterIsInstance<CheckBox>().single {
-                                it.text.toString() == "Traduction progressive : autoriser la lecture avec au moins une minute de tampon validé"
+                                it.text.toString() == "Traduction progressive : regarder pendant la traduction"
                             })
                         }
                     }
