@@ -182,6 +182,8 @@ class TranslationSessionRobolectricTest {
                     requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).also { assertBadge(it); it.dismiss() }
                     button(panel, "Corriger une réplique de la traduction complète").performClick()
                     requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).getButton(DialogInterface.BUTTON_POSITIVE).performClick()
+                    // AlertDialog dispatches its positive-button listener through the main Handler.
+                    shadowOf(Looper.getMainLooper()).idle()
                     requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).also { assertBadge(it); it.dismiss() }
                     controls.close()
                 }
@@ -691,13 +693,14 @@ class TranslationSessionRobolectricTest {
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n" + lines + "\n"
     }
 
-    private fun Fixture.startPausedProgressive(release: CountDownLatch, entered: CountDownLatch) {
+    private fun Fixture.startPausedProgressive(release: CountDownLatch, entered: CountDownLatch,
+        providerId: String = "progressive-recovery") {
         var preview: SubtitleTranslationSession.Preview? = null
-        session.translation.prepareWithOptions("en", "progressive-recovery", progressive = true, bufferSeconds = 10) { preview = it }
+        session.translation.prepareWithOptions("en", providerId, progressive = true, bufferSeconds = 10) { preview = it }
         await("Progressive source not indexed") { preview != null }
         var calls = 0
         session.translation.start(requireNotNull(preview)) {
-            Engine(id = "progressive-recovery") { texts ->
+            Engine(id = providerId) { texts ->
                 if (++calls == 2) { entered.countDown(); assertTrue(release.await(15, TimeUnit.SECONDS)) }
                 texts.map { "Traduit $it" }
             }
@@ -744,7 +747,8 @@ class TranslationSessionRobolectricTest {
             Fixture(progressiveSubtitles()).use { fixture ->
                 val release = CountDownLatch(1); val entered = CountDownLatch(1)
                 try {
-                    fixture.startPausedProgressive(release, entered)
+                    // Each case must exercise a waiting worker, not the complete cache from the previous case.
+                    fixture.startPausedProgressive(release, entered, "progressive-recovery-$interruption")
                     when (interruption) {
                         "pause" -> fixture.session.pause()
                         "seek" -> fixture.session.seek(10_000)

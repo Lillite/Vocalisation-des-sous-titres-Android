@@ -105,9 +105,10 @@ class ExpertAudioAndroidTest {
             onView(withId(R.id.audio_dsp_open)).inRoot(isDialog()).perform(scrollTo(), click())
             onView(withId(R.id.audio_dsp_enabled)).inRoot(isDialog()).check(matches(isDisplayed()))
             onView(withId(R.id.audio_dsp_band_3)).inRoot(isDialog()).perform(scrollTo(), click())
+            onView(withId(R.id.audio_dsp_band_controls)).inRoot(isDialog()).check(matches(isDisplayed()))
             onView(withId(R.id.audio_dsp_gain_edit)).inRoot(isDialog()).perform(scrollTo(), click())
             onView(withId(R.id.audio_numeric_input)).inRoot(isDialog())
-                .perform(replaceText("2,5"), closeSoftKeyboard())
+                .check(matches(isDisplayed())).perform(replaceText("2,5"), closeSoftKeyboard())
             onView(withId(android.R.id.button1)).inRoot(isDialog()).perform(click())
             scenario.onActivity {
                 assertEquals(original.withBand(2, original.band(2).copy(gainDb = 2.5)),

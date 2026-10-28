@@ -104,6 +104,18 @@ class AudioDspUiRobolectricTest {
             .clear().putBoolean("narration", false).commit()
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup().visible()
         val dialogs = mutableListOf<AlertDialog>()
+        fun openChild(parent: AlertDialog, buttonId: Int): AlertDialog {
+            requireNotNull(parent.findViewById<Button>(buttonId)).performClick()
+            // In PAUSED mode, show() does not finish attaching the new window.
+            // Nested audio controls deliberately reject clicks before attachment.
+            shadowOf(Looper.getMainLooper()).idle()
+            return requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).also { child ->
+                assertNotSame("The clicked control must open a new child dialog", parent, child)
+                assertTrue(child.isShowing)
+                assertTrue(requireNotNull(child.window).decorView.isAttachedToWindow)
+                dialogs += child
+            }
+        }
         try {
             val activity = controller.get()
             val original = activity.session.audioCommands.snapshot().context.requested
@@ -115,18 +127,12 @@ class AudioDspUiRobolectricTest {
             val panel = descendants(requireNotNull(settings.window).decorView).filterIsInstance<SettingsPanel>().single()
             panel.select(SettingsSection.SOUND)
             assertTrue(panel.isAttachedToWindow)
-            settings.findViewById<Button>(R.id.audio_dsp_open).performClick()
-            shadowOf(Looper.getMainLooper()).idle()
-            val expert = requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).also { dialogs += it }
-            assertNotSame("The visible settings entry must open a new expert dialog", settings, expert)
-            assertTrue(expert.isShowing)
+            val expert = openChild(settings, R.id.audio_dsp_open)
             assertTrue(settings.isShowing)
             assertEquals(original, activity.session.audioCommands.snapshot().context.requested)
-            expert.findViewById<Button>(R.id.audio_dsp_band_3).performClick()
-            val band = requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).also { dialogs += it }
-            band.findViewById<Button>(R.id.audio_dsp_gain_edit).performClick()
-            val editor = requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).also { dialogs += it }
-            editor.findViewById<EditText>(R.id.audio_numeric_input).setText("2,5")
+            val band = openChild(expert, R.id.audio_dsp_band_3)
+            val editor = openChild(band, R.id.audio_dsp_gain_edit)
+            requireNotNull(editor.findViewById<EditText>(R.id.audio_numeric_input)).setText("2,5")
             settings.getButton(AlertDialog.BUTTON_NEGATIVE).performClick()
             shadowOf(Looper.getMainLooper()).idle()
             for (dialog in listOf(settings, expert, band, editor)) assertFalse(dialog.isShowing)

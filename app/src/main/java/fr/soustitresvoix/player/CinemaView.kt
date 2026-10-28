@@ -270,14 +270,24 @@ class CinemaView(
         main.removeCallbacks(hide); updateCaptionPosition()
         if (show) scheduleHide()
     }
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        val overlay = video.findViewWithTag<View>("narration-subtitle-overlay")
+        val previousBottom = overlay?.paddingBottom
+        // Size the reserved strip before laying out the badge and captions. Updating it only
+        // after layout leaves the badge at its previous position until another traversal.
+        updateCaptionPosition()
+        if (overlay?.paddingBottom != previousBottom) super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    }
     internal fun updateCaptionPosition() {
         if (disposed) return
-        val space = if (visibleControls && height > 0) (bottom.height.toFloat() / height + 0.02f).coerceIn(0.08f, 0.60f) else 0.08f
+        val controlsHeight = if (visibleControls) bottom.measuredHeight else 0
+        val space = if (visibleControls && measuredHeight > 0) (controlsHeight.toFloat() / measuredHeight + 0.02f).coerceIn(0.08f, 0.60f) else 0.08f
         video.subtitleView?.setBottomPaddingFraction(space)
         video.findViewWithTag<androidx.media3.ui.SubtitleView>("narration-subtitle-overlay")?.let { overlay ->
             val badgeVisible = video.findViewWithTag<View>(GoogleTranslationAttribution.VIDEO_TAG)?.visibility == View.VISIBLE
             GoogleTranslationAttribution.positionVideoBadge(video, overlay, overlay.paddingLeft, overlay.paddingRight,
-                bottom.paddingBottom, if (visibleControls) bottom.height else 0)
+                bottom.paddingBottom, controlsHeight)
             // The reserved strip already includes the controls when the badge is visible.
             overlay.setBottomPaddingFraction(if (badgeVisible) 0.08f else space)
         }

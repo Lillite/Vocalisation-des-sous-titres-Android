@@ -263,7 +263,8 @@ class SettingsPanelRobolectricTest {
             layout(cinema, dp(640), dp(720))
             val controls = cinema.findViewById<View>(R.id.cinema_controls)
             assertTrue(controls.height > 0)
-            assertTrue("The Google badge must be above the controls", badge.bottom < controls.top)
+            assertTrue("The Google badge (${badge.top}..${badge.bottom}) must be above the controls (${controls.top}..${controls.bottom})",
+                badge.bottom < controls.top)
             assertTrue("Captions must end above the badge strip", video.height - overlay.paddingBottom < badge.top)
             cinema.showControls(false)
             layout(cinema, dp(640), dp(720))
