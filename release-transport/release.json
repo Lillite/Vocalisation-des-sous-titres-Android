@@ -1,0 +1,9 @@
+{
+  "tag": "v0.5.6-opencl",
+  "source_sha": "1e982b907c6d322cb4066da743c9a8fefcabe7a2",
+  "apk_sha256": "58af4d6f4ae9efe65e21877e442275f74bdd6f1168e430dd623885a6eeb9aded",
+  "signer_sha256": "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d",
+  "apk_file": "release-upload/SousTitresVoix-0.5.6-opencl.apk",
+  "notes_file": "release-upload/notes.md",
+  "title": "Sous-titres en voix 0.5.6 — Diagnostic OpenCL précis (préversion)"
+}
