@@ -1,0 +1,9 @@
+{
+  "tag": "v0.5.4-local",
+  "source_sha": "6797e59a19053b375a24f8b7bb1c8e6beb48f478",
+  "apk_sha256": "d98184d6c54a0beccbe38ceff9fa7a6431037bb5a4c2d384781f6c540d628210",
+  "signer_sha256": "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d",
+  "apk_file": "release-upload/SousTitresVoix-0.5.4-local.apk",
+  "notes_file": "release-upload/notes.md",
+  "title": "Sous-titres en voix 0.5.4 — Traduction GGUF locale (préversion)"
+}
