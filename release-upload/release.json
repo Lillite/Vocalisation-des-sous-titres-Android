@@ -1,0 +1,9 @@
+{
+  "tag": "v0.5.7-directcl",
+  "source_sha": "cdeec9e590c35ca69035c67c1afd3b0a6cde2157",
+  "apk_sha256": "0aba11bb5eace394c91cbdbf8ab77c54750add6d89d0b3834eb60ed0667fe82c",
+  "signer_sha256": "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d",
+  "apk_file": "release-upload/SousTitresVoix-0.5.7-directcl.apk",
+  "notes_file": "release-upload/notes.md",
+  "title": "Sous-titres en voix 0.5.7 — Accès OpenCL direct (préversion)"
+}
