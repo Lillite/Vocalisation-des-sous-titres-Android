@@ -46,6 +46,7 @@ import kotlin.math.roundToInt
 class MainActivity : ComponentActivity() {
     private lateinit var translationControls: SubtitleTranslationControls
     private lateinit var localSrtTranslationControls: LocalSrtTranslationControls
+    private lateinit var localGgufBenchmarkControls: LocalGgufBenchmarkControls
     private lateinit var preparationDiagnostics: PreparationDiagnosticsController
     private lateinit var prefs: PlayerPreferences
     internal lateinit var session: PlaybackSession; private set
@@ -112,6 +113,11 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    // Append new launchers after the existing ones so their Activity Result
+    // registration keys keep matching an export already open before an update.
+    private val localBenchmarkModelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (::localGgufBenchmarkControls.isInitialized && !closed) localGgufBenchmarkControls.selectedModel(uri)
+    }
     private val ticker = object : Runnable {
         override fun run() {
             if (closed || stopped) return
@@ -153,17 +159,25 @@ class MainActivity : ComponentActivity() {
         }
         translationControls = SubtitleTranslationControls(this, session,
             launchLocalModelPicker = { translationModelPicker.launch(arrayOf("*/*")) },
-            otherLocalPreparationBusy = { ::localSrtTranslationControls.isInitialized && localSrtTranslationControls.busy },
+            otherLocalPreparationBusy = {
+                (::localSrtTranslationControls.isInitialized && localSrtTranslationControls.busy) ||
+                    (::localGgufBenchmarkControls.isInitialized && localGgufBenchmarkControls.busy)
+            },
             onExport = ::requestSubtitleExport)
         localSrtTranslationControls = LocalSrtTranslationControls(this,
-            otherPreparationBusy = { session.isPreparing },
+            otherPreparationBusy = { session.isPreparing || (::localGgufBenchmarkControls.isInitialized && localGgufBenchmarkControls.busy) },
             launchSubtitlePicker = { localSrtPicker.launch(arrayOf("*/*")) },
             launchModelPicker = { localSrtModelPicker.launch(arrayOf("*/*")) },
             onExport = ::requestSubtitleExport, onChanged = { refreshUi() })
+        localGgufBenchmarkControls = LocalGgufBenchmarkControls(this,
+            otherPreparationBusy = { session.isPreparing || localSrtTranslationControls.busy ||
+                (::preparationDiagnostics.isInitialized && preparationDiagnostics.isBusy) },
+            launchModelPicker = { localBenchmarkModelPicker.launch(arrayOf("*/*")) }, onChanged = { refreshUi() })
         preparationDiagnostics = PreparationDiagnosticsController(this,
             playbackIdle = {
                 val state = session.machine.snapshot()
-                !session.player.isPlaying && !state.wantsPlayback && state.speakingId == null && !session.isPreparing
+                !session.player.isPlaying && !state.wantsPlayback && state.speakingId == null && !session.isPreparing &&
+                    !localSrtTranslationControls.busy && !localGgufBenchmarkControls.busy
             },
             launchModelPicker = { diagnosticModelPicker.launch(arrayOf("*/*")) },
             launchVideoPicker = { diagnosticVideoPicker.launch(arrayOf("video/*", "application/octet-stream")) })
@@ -200,6 +214,7 @@ class MainActivity : ComponentActivity() {
         cinema?.close(); repairDialog?.dismiss(); resumeDialog?.dismiss(); resumeDialog = null
         if (::translationControls.isInitialized) translationControls.close()
         if (::localSrtTranslationControls.isInitialized) localSrtTranslationControls.close()
+        if (::localGgufBenchmarkControls.isInitialized) localGgufBenchmarkControls.close()
         if (::preparationDiagnostics.isInitialized) preparationDiagnostics.close()
         main.removeCallbacksAndMessages(null); io.shutdownNow()
         if (::playerView.isInitialized) playerView.player = null
@@ -396,6 +411,7 @@ class MainActivity : ComponentActivity() {
         column.addView(button("Choisir la piste de sous-titres") { chooseTrack(C.TRACK_TYPE_TEXT) })
         column.addView(button("Traduire les sous-titres en français") { translationControls.show() })
         column.addView(button("Traduire un fichier SRT hors ligne") { localSrtTranslationControls.show() })
+        column.addView(button("Comparer CPU et GPU — essai local intégré") { localGgufBenchmarkControls.show() })
         column.addView(button("Choisir la piste audio du film") { chooseTrack(C.TRACK_TYPE_AUDIO) })
         column.addView(button("Répéter la dernière phrase — met en pause") { session.repeatLast() })
         column.addView(button("Reprendre explicitement la voix") { session.resumeVoice() })
@@ -430,7 +446,8 @@ class MainActivity : ComponentActivity() {
         if (closed || !::session.isInitialized) return
         val state = session.machine.snapshot()
         if (state.wantsPlayback || state.speakingId != null || session.isPreparing ||
-            (::localSrtTranslationControls.isInitialized && localSrtTranslationControls.busy)) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            (::localSrtTranslationControls.isInitialized && localSrtTranslationControls.busy) ||
+            (::localGgufBenchmarkControls.isInitialized && localGgufBenchmarkControls.busy)) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         session.prepareTick()
         if (::translationControls.isInitialized) translationControls.refresh()
@@ -751,6 +768,7 @@ class MainActivity : ComponentActivity() {
         }
         action(SettingsSection.TRANSLATION, "Traduire les sous-titres en français", "traduction fournisseur export SRT VTT quota cache DeepL Azure LibreTranslate GGUF local") { translationControls.show() }
         action(SettingsSection.TRANSLATION, "Traduire un fichier SRT hors ligne", "GGUF modèle local sans vidéo export reprise") { localSrtTranslationControls.show() }
+        action(SettingsSection.TRANSLATION, "Comparer CPU et GPU — essai local intégré", "GGUF OpenCL CPU benchmark performances modèle thermique") { localGgufBenchmarkControls.show() }
         action(SettingsSection.IMAGE, "Image, cadrage, zoom et corrections", "étirement bandes noires marges contraste luminosité Lanczos proportions") {
             pendingImageSettings = true; dialog.dismiss()
         }

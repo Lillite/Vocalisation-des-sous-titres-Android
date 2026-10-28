@@ -10,22 +10,39 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** A small injectable boundary; production always uses the private native service. */
 internal interface LocalGgufBackend : AutoCloseable {
-    data class Info(val name: String, val architecture: String)
-    data class Generation(val output: String, val stopReason: String = "end_of_generation")
-    fun open(file: File, threads: Int, contextTokens: Int, cancelled: () -> Boolean): Info
+    data class Info(val name: String, val architecture: String,
+        val performance: LocalTranslationPerformance = LocalTranslationPerformance(phase = "load", backend = "CPU"))
+    data class Generation(val output: String, val stopReason: String = "end_of_generation",
+        val performance: LocalTranslationPerformance = LocalTranslationPerformance(backend = "CPU"))
+    fun open(file: File, threads: Int, contextTokens: Int, cancelled: () -> Boolean, executionMode: String): Info
     fun generate(prompt: String, maxOutputTokens: Int, cancelled: () -> Boolean): Generation
     fun cancel()
+    fun closeAndAwait(cancelled: () -> Boolean = { false }, timeoutMs: Long = 10_000) { close() }
 }
 
 private class NativeTranslationBackend(context: Context) : LocalGgufBackend {
     private val client = LocalGgufRuntime.Client(context)
-    override fun open(file: File, threads: Int, contextTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Info =
-        client.open(file, threads, contextTokens, cancelled).let { LocalGgufBackend.Info(it.name, it.architecture) }
+    override fun open(file: File, threads: Int, contextTokens: Int, cancelled: () -> Boolean, executionMode: String): LocalGgufBackend.Info =
+        client.open(file, threads, contextTokens, cancelled, executionMode = executionMode).let {
+            LocalGgufBackend.Info(it.name, it.architecture, LocalTranslationPerformance(phase = "load",
+                requestedMode = it.requestedMode, backend = it.backend, device = it.device,
+                gpuObserved = false, loadMs = it.loadMs, peakRssBytes = it.peakRssBytes,
+                currentRssBytes = it.residentBytes, availableRamBytes = it.availableRamBytes, fallbackReason = it.fallbackReason))
+        }
     override fun generate(prompt: String, maxOutputTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Generation =
         client.generate(prompt, maxOutputTokens, addSpecialTokens = false, cancelled = cancelled)
-            .let { LocalGgufBackend.Generation(it.output, it.stopReason) }
+            .let {
+                LocalGgufBackend.Generation(it.output, it.stopReason, LocalTranslationPerformance(
+                    requestedMode = it.requestedMode, backend = it.backend, device = it.device, gpuObserved = it.gpuObserved,
+                    promptMs = it.promptMs, generationMs = it.generationMs, promptTokens = it.promptTokens,
+                    generatedTokens = it.generatedTokens, cachedPromptTokens = it.cachedPromptTokens,
+                    promptEvaluatedTokens = it.promptEvaluatedTokens, peakRssBytes = it.peakRssBytes,
+                    currentRssBytes = it.residentBytes, availableRamBytes = it.availableRamBytes,
+                    gpuGraphNodes = it.gpuGraphNodes, fallbackReason = it.fallbackReason))
+            }
     override fun cancel() = client.cancel()
     override fun close() = client.close()
+    override fun closeAndAwait(cancelled: () -> Boolean, timeoutMs: Long) = client.closeAndAwait(cancelled, timeoutMs)
 }
 
 /**
@@ -38,21 +55,37 @@ class LocalGgufTranslationEngine internal constructor(
     private val store: LocalGgufModelStore,
     private val backendFactory: () -> LocalGgufBackend,
     private val threads: Int = 4,
-    private val context: String = ""
-) : ContextualTranslationEngine {
-    constructor(appContext: Context, model: LocalGgufModel, threads: Int = 4, context: String = "") :
-        this(model, LocalGgufModelStore(appContext), { NativeTranslationBackend(appContext) }, threads, context)
+    private val context: String = "",
+    private val profile: LocalGgufProfile = LocalGgufProfile.AUTO,
+    private val executionMode: String = "AUTO"
+) : ContextualTranslationEngine, LocalTranslationPerformanceSource {
+    constructor(appContext: Context, model: LocalGgufModel, threads: Int = 4, context: String = "",
+        profile: LocalGgufProfile = LocalGgufProfile.AUTO, executionMode: String = "AUTO") :
+        this(model, LocalGgufModelStore(appContext), { NativeTranslationBackend(appContext) }, threads, context, profile, executionMode)
 
-    override val id: String = identity(model, threads, context)
+    override val id: String = identity(model, threads, context, profile, executionMode)
     override val maxBatchItems: Int = 1
     override val maxBatchCharacters: Int = TranslationPlan.MAX_CUE_CHARACTERS
     override val requiresDurableResult: Boolean = true
     private val closed = AtomicBoolean(false)
     private val working = AtomicBoolean(false)
+    private val unloadAcknowledged = AtomicBoolean(false)
     private val state = Any()
     @Volatile private var backend: LocalGgufBackend? = null
+    @Volatile private var retiredBackend: LocalGgufBackend? = null
     private var lease: AutoCloseable? = null
     private var family: LocalGgufPrompts.Family? = null
+    @Volatile private var performanceListener: ((LocalTranslationPerformance) -> Unit)? = null
+    private var openPerformance = LocalTranslationPerformance(phase = "load")
+    private var runningMode = executionMode
+    private var cpuFallbackAttempted = false
+    private var fallbackMessage = ""
+
+    override fun setPerformanceListener(listener: ((LocalTranslationPerformance) -> Unit)?) { performanceListener = listener }
+    private fun measured(value: LocalTranslationPerformance) {
+        val message = if (fallbackMessage.isEmpty()) value.fallbackReason else fallbackMessage
+        runCatching { performanceListener?.invoke(value.copy(requestedMode = executionMode, fallbackReason = message)) }
+    }
 
     override fun translate(texts: List<String>, sourceLanguage: String, targetLanguage: String,
         cancelled: () -> Boolean): List<String> =
@@ -60,17 +93,20 @@ class LocalGgufTranslationEngine internal constructor(
 
     override fun translateWithContext(texts: List<String>, sourceLanguage: String, targetLanguage: String,
         previousSources: List<String>, previousTranslations: List<String>, cancelled: () -> Boolean): List<String> {
+        val occurrenceStart = System.nanoTime()
         checkCancelled(cancelled)
         if (!working.compareAndSet(false, true)) throw TranslationFailure(TranslationFailure.Reason.LOCAL_BUSY)
         try {
             if (texts.size != 1 || previousSources.size != previousTranslations.size)
                 throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
-            validateSettings(threads, context)
+            validateSettings(threads, context, executionMode)
             validateLanguages(sourceLanguage, targetLanguage)
             val source = texts.single()
             if (!validText(source) || source.isBlank() || source.length > TranslationPlan.MAX_CUE_CHARACTERS)
                 throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
-            val worker = open(cancelled)
+            val alreadyOpen = backend != null
+            var worker = openWithFallback(cancelled)
+            var occurrenceLoadMs = if (alreadyOpen) 0 else openPerformance.loadMs
             val kind = requireNotNull(family)
             LocalGgufPrompts.validateLanguage(kind, sourceLanguage)
             LocalGgufPrompts.validateLanguage(kind, targetLanguage)
@@ -94,8 +130,15 @@ class LocalGgufTranslationEngine internal constructor(
                     if (output.isBlank() || !validText(output) || output.length > TranslationPlan.MAX_CUE_CHARACTERS ||
                         LocalGgufPrompts.hasControlTokens(output))
                         throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
+                    measured(result.performance.copy(phase = "generation", loadMs = occurrenceLoadMs,
+                        endToEndMs = ((System.nanoTime() - occurrenceStart) / 1_000_000).coerceAtLeast(0)))
                     return output
                 } catch (failure: LocalGgufRuntime.Failure) {
+                    if (canRetryCpu(failure, cancelled)) {
+                        worker = retryCpu(failure, cancelled)
+                        occurrenceLoadMs += openPerformance.loadMs
+                        return generate(text, preceding, depth + 1)
+                    }
                     if (failure.code == LocalGgufRuntime.Code.INPUT_TOO_LONG && preceding.isNotEmpty())
                         return generate(text, preceding.drop(1), depth + 1)
                     if (failure.code == LocalGgufRuntime.Code.INPUT_TOO_LONG || failure.code == LocalGgufRuntime.Code.OUTPUT_LIMIT) {
@@ -116,11 +159,15 @@ class LocalGgufTranslationEngine internal constructor(
             return listOf(generate(source, history, 0))
         } catch (failure: TranslationFailure) { throw failure }
           catch (_: LocalGgufModelBusyException) { throw TranslationFailure(TranslationFailure.Reason.LOCAL_BUSY) }
+          catch (_: LocalGgufModelMissingException) { throw TranslationFailure(TranslationFailure.Reason.LOCAL_MODEL_MISSING) }
+          catch (_: LocalGgufModelChangedException) { throw TranslationFailure(TranslationFailure.Reason.LOCAL_MODEL_CHANGED) }
           catch (failure: LocalGgufRuntime.Failure) {
             if (failure.code == LocalGgufRuntime.Code.CANCELLED || closed.get() || cancelled()) throw TranslationCancelledException()
             throw TranslationFailure(when (failure.code) {
                 LocalGgufRuntime.Code.BUSY -> TranslationFailure.Reason.LOCAL_BUSY
-                LocalGgufRuntime.Code.MODEL, LocalGgufRuntime.Code.BACKEND -> TranslationFailure.Reason.LOCAL_MODEL
+                LocalGgufRuntime.Code.MODEL -> TranslationFailure.Reason.LOCAL_MODEL
+                LocalGgufRuntime.Code.BACKEND -> TranslationFailure.Reason.LOCAL_BACKEND
+                LocalGgufRuntime.Code.MEMORY -> TranslationFailure.Reason.LOCAL_MEMORY
                 LocalGgufRuntime.Code.CONTEXT, LocalGgufRuntime.Code.INPUT_TOO_LONG -> TranslationFailure.Reason.LOCAL_CONTEXT
                 LocalGgufRuntime.Code.OUTPUT_LIMIT -> TranslationFailure.Reason.LOCAL_TRUNCATED
                 LocalGgufRuntime.Code.DIED, LocalGgufRuntime.Code.TIMEOUT -> TranslationFailure.Reason.LOCAL_PROCESS
@@ -138,7 +185,14 @@ class LocalGgufTranslationEngine internal constructor(
     private fun open(cancelled: () -> Boolean): LocalGgufBackend {
         backend?.let { return it }
         checkCancelled(cancelled)
+        retiredBackend?.let { retired ->
+            retired.closeAndAwait({ closed.get() || cancelled() })
+            synchronized(state) { if (retiredBackend === retired) retiredBackend = null }
+        }
+        checkCancelled(cancelled)
         val acquired = store.acquire(model)
+        try { LocalGgufProfiles.preflight(model, profile) }
+        catch (failure: Exception) { acquired.close(); throw failure }
         val created = try { backendFactory() } catch (failure: Exception) { acquired.close(); throw failure }
         synchronized(state) {
             if (closed.get()) {
@@ -148,23 +202,79 @@ class LocalGgufTranslationEngine internal constructor(
             backend = created
         }
         try {
-            val metadata = created.open(model.file, threads, CONTEXT_TOKENS) { closed.get() || cancelled() }
+            val metadata = created.open(model.file, threads, CONTEXT_TOKENS, { closed.get() || cancelled() }, runningMode)
             checkCancelled(cancelled)
-            family = LocalGgufPrompts.family(metadata.name, metadata.architecture)
+            family = LocalGgufProfiles.select(profile, metadata.architecture, metadata.name, model.sha256, model.metadata)
+            openPerformance = metadata.performance
+            if (metadata.performance.backend == "CPU") runningMode = "CPU"
+            measured(metadata.performance.copy(phase = "load"))
             return created
         } catch (failure: Exception) {
-            synchronized(state) { if (backend === created) backend = null }
+            // Keep this live session available to retryCpu's unloading barrier.
+            if (failure is LocalGgufRuntime.Failure && canRetryCpu(failure, cancelled)) throw failure
+            synchronized(state) {
+                if (backend === created) backend = null
+                retiredBackend = created
+            }
             runCatching { created.close() }
             releaseLease()
             throw failure
         }
     }
 
+    private fun openWithFallback(cancelled: () -> Boolean): LocalGgufBackend = try { open(cancelled) }
+        catch (failure: LocalGgufRuntime.Failure) {
+            if (canRetryCpu(failure, cancelled)) retryCpu(failure, cancelled) else throw failure
+        }
+
+    private fun canRetryCpu(failure: LocalGgufRuntime.Failure, cancelled: () -> Boolean): Boolean =
+        executionMode == "AUTO" && runningMode != "CPU" && !cpuFallbackAttempted && !closed.get() && !cancelled() &&
+            !Thread.currentThread().isInterrupted && failure.code in setOf(LocalGgufRuntime.Code.BACKEND,
+                LocalGgufRuntime.Code.DIED, LocalGgufRuntime.Code.TIMEOUT)
+
+    private fun retryCpu(failure: LocalGgufRuntime.Failure, cancelled: () -> Boolean): LocalGgufBackend {
+        cpuFallbackAttempted = true
+        fallbackMessage = when (failure.code) {
+            LocalGgufRuntime.Code.BACKEND -> "Le calcul automatique accéléré n’a pas pu être exécuté. Nouvelle tentative sur CPU."
+            LocalGgufRuntime.Code.TIMEOUT -> "Le calcul automatique a dépassé son délai. Nouvelle tentative sur CPU."
+            else -> "Le processus du calcul automatique s’est arrêté. Nouvelle tentative sur CPU."
+        }
+        measured(LocalTranslationPerformance(phase = "fallback", requestedMode = executionMode))
+        val previous = backend ?: retiredBackend
+        // A returned cancellation is not proof of memory release. Wait for the
+        // service's native destruction acknowledgement before creating CPU state.
+        previous?.closeAndAwait({ closed.get() || cancelled() })
+        synchronized(state) {
+            if (backend === previous) backend = null
+            if (retiredBackend === previous) retiredBackend = null
+            family = null
+        }
+        releaseLease()
+        runningMode = "CPU"
+        checkCancelled(cancelled)
+        return open(cancelled)
+    }
+
     /** Native cancellation and Binder unbinding are asynchronous and never wait for a worker. */
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         backend?.let { runCatching { it.cancel() }; runCatching { it.close() } }
+        retiredBackend?.let { runCatching { it.cancel() }; runCatching { it.close() } }
         if (!working.get()) releaseLease()
+    }
+
+    /** Benchmark workers use the native acknowledgement before opening another backend. */
+    fun closeAndAwait(cancelled: () -> Boolean = { false }, timeoutMs: Long = 10_000) {
+        check(android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) { "Model unloading must run on a worker" }
+        if (working.get()) throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.BUSY)
+        closed.set(true)
+        if (unloadAcknowledged.get()) return
+        val active = listOfNotNull(backend, retiredBackend).distinct()
+        try { active.forEach { it.closeAndAwait(cancelled, timeoutMs) }; unloadAcknowledged.set(true) }
+        finally {
+            active.forEach { runCatching { it.close() } }
+            if (!working.get()) releaseLease()
+        }
     }
 
     private fun releaseLease() {
@@ -181,21 +291,22 @@ class LocalGgufTranslationEngine internal constructor(
         const val MAX_LOCAL_CONTEXT_CHARACTERS = 2000
         private const val MAX_REQUESTS_PER_CUE = 1024
 
-        fun validateSettings(threads: Int, context: String) {
+        fun validateSettings(threads: Int, context: String, executionMode: String = "AUTO") {
             if (threads !in 1..8 || context.length > MAX_LOCAL_CONTEXT_CHARACTERS || !validText(context) ||
-                LocalGgufPrompts.hasControlTokens(context))
+                LocalGgufPrompts.hasControlTokens(context) || executionMode !in setOf("AUTO", "CPU", "OPENCL"))
                 throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
         }
         fun validateLanguages(source: String, target: String = "fr") {
             LocalGgufPrompts.language(source)
             LocalGgufPrompts.language(target)
         }
-        fun identity(model: LocalGgufModel, threads: Int = 4, context: String = ""): String {
-            validateSettings(threads, context)
-            val input = "local-gguf-text-v1\n${model.sha256}\n${LocalModelProbe.REVISION}\n$threads\n$CONTEXT_TOKENS\n$OUTPUT_TOKENS\n$context"
+        fun identity(model: LocalGgufModel, threads: Int = 4, context: String = "", profile: LocalGgufProfile = LocalGgufProfile.AUTO,
+            executionMode: String = "AUTO"): String {
+            validateSettings(threads, context, executionMode)
+            val input = "local-gguf-text-v2\n${model.sha256}\n${LocalModelProbe.REVISION}\n$threads\n$CONTEXT_TOKENS\n$OUTPUT_TOKENS\n${profile.id}\n$executionMode\n$context"
             val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
                 .joinToString("") { "%02x".format(Locale.ROOT, it.toInt() and 255) }
-            return "local-gguf-v1-$digest"
+            return "local-gguf-v2-$digest"
         }
         internal fun validText(text: String): Boolean {
             var index = 0
@@ -256,12 +367,7 @@ internal object LocalGgufPrompts {
         "kk" to "Kazakh", "mn" to "Mongolian", "ug" to "Uyghur", "yue" to "Cantonese")
 
     fun family(name: String, architecture: String): Family {
-        val normalized = name.lowercase(Locale.ROOT).filter { it.isLetterOrDigit() }
-        return when {
-            architecture == "gemma3" && "translategemma" in normalized -> Family.TRANSLATE_GEMMA
-            architecture == "hunyuan-dense" && ("hymt" in normalized || "hunyuanmt" in normalized) -> Family.HY_MT
-            else -> throw TranslationFailure(TranslationFailure.Reason.LOCAL_MODEL)
-        }
+        return LocalGgufProfiles.select(LocalGgufProfile.AUTO, architecture, name, "")
     }
     fun hasControlTokens(text: String): Boolean = controls.any { it in text }
     fun language(value: String): Language {

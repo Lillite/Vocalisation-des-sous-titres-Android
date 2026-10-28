@@ -14,14 +14,16 @@ import android.os.Messenger
 import android.os.RemoteException
 import org.json.JSONObject
 import java.util.concurrent.Executors
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** A single private, bound CPU session; never starts playback, narration or network work. */
+/** One private bound model session; never starts playback, narration or network work. */
 class LocalGgufTranslationService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private val destroyed = AtomicBoolean(false)
     private val running = AtomicBoolean(false)
+    private val closing = AtomicBoolean(false)
     @Volatile private var nativeSession: LocalGgufRuntime.NativeSession? = null
     @Volatile private var ownerCancelled = AtomicBoolean(false)
     private var owner: Long? = null
@@ -33,7 +35,11 @@ class LocalGgufTranslationService : Service() {
         when (message.what) {
             GgufMessages.OPEN -> open(message, session)
             GgufMessages.GENERATE -> generate(message, session)
-            GgufMessages.CANCEL, GgufMessages.CLOSE -> if (owner == session) endSession()
+            GgufMessages.CANCEL -> if (owner == session) endSession()
+            GgufMessages.CLOSE -> {
+                if (owner == session) endSession(message.replyTo, message.data.getLong(GgufMessages.REQUEST), session)
+                else message.replyTo?.let { respond(it, message.data.getLong(GgufMessages.REQUEST), session, "{\"code\":\"OK\"}") }
+            }
         }
         true
     })
@@ -68,7 +74,9 @@ class LocalGgufTranslationService : Service() {
         val file = privateGgufFile(this, message.data.getString(GgufMessages.PATH).orEmpty())
         val threads = message.data.getInt(GgufMessages.THREADS)
         val context = message.data.getInt(GgufMessages.CONTEXT)
-        if (file == null || threads !in 1..8 || context !in 128..2048) { respond(reply, request, session, error(LocalGgufRuntime.Code.MODEL)); return }
+        val execution = message.data.getString(GgufMessages.EXECUTION) ?: "CPU"
+        val layers = message.data.getInt(GgufMessages.LAYERS, -1)
+        if (file == null || threads !in 1..8 || context !in 128..2048 || execution !in setOf("AUTO", "CPU", "OPENCL") || layers !in -1..1024) { respond(reply, request, session, error(LocalGgufRuntime.Code.MODEL)); return }
         registerOwner(reply, session)
         val cancelled = ownerCancelled
         running.set(true)
@@ -78,11 +86,15 @@ class LocalGgufTranslationService : Service() {
                 if (cancelled.get()) throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.CANCELLED)
                 val opened = LocalGgufRuntime.NativeSession().also { nativeSession = it }
                 if (cancelled.get()) opened.cancel()
-                opened.open(file, threads, context).also { LocalGgufRuntime.info(it); succeeded = true }
+                val cacheRoot = cacheDir.canonicalFile
+                val cache = File(cacheRoot, "local-gguf-opencl-kernels").canonicalFile.takeIf {
+                    it.path.startsWith(cacheRoot.path + File.separator) && (it.isDirectory || it.mkdirs())
+                }
+                opened.open(file, threads, context, execution, layers, cache).also { LocalGgufRuntime.info(it); succeeded = true }
             } catch (failure: LocalGgufRuntime.Failure) { error(failure.code) }
               catch (_: Exception) { error(LocalGgufRuntime.Code.MODEL) }
               catch (_: LinkageError) { error(LocalGgufRuntime.Code.BACKEND) }
-              catch (_: OutOfMemoryError) { error(LocalGgufRuntime.Code.MODEL) }
+              catch (_: OutOfMemoryError) { error(LocalGgufRuntime.Code.MEMORY) }
             if (!succeeded || cancelled.get() || destroyed.get()) {
                 nativeSession?.close(); nativeSession = null; succeeded = false
             }
@@ -111,36 +123,42 @@ class LocalGgufTranslationService : Service() {
             } catch (failure: LocalGgufRuntime.Failure) { error(failure.code) }
               catch (_: Exception) { error(LocalGgufRuntime.Code.RESPONSE) }
               catch (_: LinkageError) { error(LocalGgufRuntime.Code.BACKEND) }
-              catch (_: OutOfMemoryError) { error(LocalGgufRuntime.Code.RESPONSE) }
+              catch (_: OutOfMemoryError) { error(LocalGgufRuntime.Code.MEMORY) }
             main.post {
                 running.set(false)
                 respond(reply, request, session, if (cancelled.get()) error(LocalGgufRuntime.Code.CANCELLED) else json)
             }
         }
     }
-    private fun endSession() {
+    private fun endSession(reply: Messenger? = null, request: Long = 0L, session: Long? = null) {
         val previous = owner ?: return
         ownerCancelled.set(true)
         nativeSession?.cancel()
         // Keep ownership until the queued close has released all model resources.
+        closing.set(true)
         worker.execute {
             nativeSession?.close(); nativeSession = null
-            main.post { clearOwner(previous) }
+            closing.set(false)
+            main.post {
+                clearOwner(previous)
+                if (reply != null && session != null) respond(reply, request, session, "{\"code\":\"OK\"}")
+            }
         }
     }
     override fun onDestroy() {
         destroyed.set(true)
         ownerCancelled.set(true); nativeSession?.cancel()
         if (owner != null) clearOwner(requireNotNull(owner))
-        worker.execute { nativeSession?.close(); nativeSession = null }
+        closing.set(true)
+        worker.execute { nativeSession?.close(); nativeSession = null; closing.set(false) }
         worker.shutdown()
         // A native abort or OOM cannot take the reader down. A hung decode is
         // stopped in this private model process after cooperative cancellation.
-        if (running.get()) main.postDelayed({
+        if (running.get() || closing.get()) main.postDelayed({
             val process = if (Build.VERSION.SDK_INT >= 28) Application.getProcessName()
                 else getSystemService(ActivityManager::class.java)?.runningAppProcesses
                     ?.firstOrNull { it.pid == android.os.Process.myPid() }?.processName
-            if (running.get() && process == "$packageName:model_diagnostic")
+            if ((running.get() || closing.get()) && process == "$packageName:model_diagnostic")
                 android.os.Process.killProcess(android.os.Process.myPid())
         }, 2_000)
         super.onDestroy()

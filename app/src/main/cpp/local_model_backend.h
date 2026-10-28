@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <cstdint>
 
 namespace subtitle_native {
 // Both services live in the same private process. A loaded translation session
@@ -15,4 +16,8 @@ private:
     bool acquired_;
 };
 void initialize_backend();
+void reset_offload_observation();
+int observed_offload_layers();
+void reset_gpu_graph_observation();
+uint64_t observed_gpu_graph_nodes();
 }

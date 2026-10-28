@@ -21,7 +21,8 @@ class LocalGgufModel internal constructor(
     internal val file: File,
     val sha256: String,
     val bytes: Long,
-    internal val modifiedMillis: Long
+    internal val modifiedMillis: Long,
+    val metadata: LocalGgufMetadata = LocalGgufMetadata()
 ) {
     val identity: String get() = "local-gguf-v1-$sha256"
     override fun toString(): String = "LocalGgufModel(bytes=$bytes, identity=$identity)"
@@ -30,6 +31,8 @@ class LocalGgufModel internal constructor(
 class LocalGgufModelBusyException : IOException(
     "Le modèle local est utilisé par un autre traitement. Attends sa fin ou annule-le avant de remplacer le modèle."
 )
+internal class LocalGgufModelMissingException : IOException("La copie privée du modèle n’est plus disponible. Importe ou prépare le modèle actuel.")
+internal class LocalGgufModelChangedException : IOException("La copie privée du modèle ou son empreinte a changé. Prépare le modèle actuel avant de reprendre.")
 
 /**
  * The diagnostic and real translation share one private copy. Its SHA-256 is
@@ -66,10 +69,11 @@ class LocalGgufModelStore private constructor(
 
     fun acquire(model: LocalGgufModel): AutoCloseable = synchronized(gate) {
         if (gate.writer) throw LocalGgufModelBusyException()
+        if (!modelFile.isFile) throw LocalGgufModelMissingException()
         val prepared = readPrepared()
         if (prepared == null || prepared.sha256 != model.sha256 || prepared.bytes != model.bytes ||
             prepared.file != model.file)
-            throw IOException("Le modèle sélectionné a changé. Prépare le modèle actuel avant de reprendre.")
+            throw LocalGgufModelChangedException()
         gate.readers++
         Lease { synchronized(gate) { gate.readers-- } }
     }
@@ -86,8 +90,14 @@ class LocalGgufModelStore private constructor(
     fun prepareExisting(cancelled: () -> Boolean = { false }, onProgress: (Long) -> Unit = {}): LocalGgufModel {
         acquireMutationLease().use {
             checkCancellation(cancelled)
-            readPrepared()?.let { return it }
-            if (!modelFile.isFile) throw IOException("Aucun modèle GGUF privé n’est disponible.")
+            readPrepared()?.let { prepared ->
+                // Upgrading a v1 descriptor reads only the bounded GGUF header,
+                // not several gigabytes of weights on every model selection.
+                val hints = LocalGgufMetadataReader.read(modelFile, cancelled)
+                return LocalGgufModel(modelFile, prepared.sha256, prepared.bytes, prepared.modifiedMillis, hints)
+                    .also(::writePrepared)
+            }
+            if (!modelFile.isFile) throw LocalGgufModelMissingException()
             val size = modelFile.length()
             val modified = modelFile.lastModified()
             val digest = MessageDigest.getInstance("SHA-256")
@@ -117,7 +127,8 @@ class LocalGgufModelStore private constructor(
                     throw IOException("Le modèle a changé pendant sa préparation.")
             }
             checkCancellation(cancelled)
-            return LocalGgufModel(modelFile, hex(digest.digest()), size, modified).also(::writePrepared)
+            val hints = LocalGgufMetadataReader.read(modelFile, cancelled)
+            return LocalGgufModel(modelFile, hex(digest.digest()), size, modified, hints).also(::writePrepared)
         }
     }
 
@@ -154,7 +165,10 @@ class LocalGgufModelStore private constructor(
                     DiagnosticModelImport.copy(hashing, modelFile, expectedBytes, cancelled, onProgress)
                 }
                 replaced = true
-                return LocalGgufModel(modelFile, hex(digest.digest()), result.bytes, modelFile.lastModified())
+                // The atomic model replacement is already committed. A late
+                // cancellation must not falsely report that old weights remain.
+                val hints = LocalGgufMetadataReader.read(modelFile, respectInterruption = false)
+                return LocalGgufModel(modelFile, hex(digest.digest()), result.bytes, modelFile.lastModified(), hints)
                     .also(::writePrepared)
             } catch (failure: Exception) {
                 // An unsuccessful stream copy retains the previous completed
@@ -178,16 +192,20 @@ class LocalGgufModelStore private constructor(
     }
 
     private fun readPrepared(): LocalGgufModel? = try {
-        if (!modelFile.isFile || metadata.baseFile.length() > 4096) null
+        if (!modelFile.isFile || metadata.baseFile.length() > MAX_METADATA_BYTES) null
         else metadata.openRead().use { stream ->
             DataInputStream(stream).use { input ->
-                if (input.readInt() != MAGIC || input.readInt() != VERSION) return null
+                if (input.readInt() != MAGIC) return null
+                val version = input.readInt()
+                if (version !in 1..VERSION) return null
                 val digest = input.readUTF()
                 val bytes = input.readLong()
                 val modified = input.readLong()
+                val hints = if (version >= 2) LocalGgufMetadata(input.readUTF(), input.readUTF(), input.readUTF(),
+                    input.readUTF(), input.readUTF(), input.readBoolean()) else LocalGgufMetadata()
                 if (!SHA256.matches(digest) || bytes < 24 || bytes != modelFile.length() ||
                     modified != modelFile.lastModified() || input.read() != -1) null
-                else LocalGgufModel(modelFile, digest, bytes, modified)
+                else LocalGgufModel(modelFile, digest, bytes, modified, hints)
             }
         }
     } catch (_: Exception) { null }
@@ -199,6 +217,9 @@ class LocalGgufModelStore private constructor(
             DataOutputStream(stream).also {
                 it.writeInt(MAGIC); it.writeInt(VERSION); it.writeUTF(model.sha256)
                 it.writeLong(model.bytes); it.writeLong(model.modifiedMillis); it.flush()
+                it.writeUTF(model.metadata.architecture); it.writeUTF(model.metadata.name)
+                it.writeUTF(model.metadata.basename); it.writeUTF(model.metadata.finetune)
+                it.writeUTF(model.metadata.fileType); it.writeBoolean(model.metadata.translationTemplate); it.flush()
             }
             metadata.finishWrite(stream)
         } catch (failure: Exception) {
@@ -215,7 +236,8 @@ class LocalGgufModelStore private constructor(
     private class Gate { var readers = 0; var writer = false }
     companion object {
         private const val MAGIC = 0x4c474746
-        private const val VERSION = 1
+        private const val VERSION = 2
+        private const val MAX_METADATA_BYTES = 16 * 1024
         private val SHA256 = Regex("[0-9a-f]{64}")
         private val gates = HashMap<String, Gate>()
         private fun gateFor(key: String): Gate = synchronized(gates) { gates.getOrPut(key) { Gate() } }

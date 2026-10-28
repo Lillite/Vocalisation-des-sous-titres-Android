@@ -15,7 +15,7 @@ def string(value):
     return struct.pack('<Q', len(data)) + data
 
 
-def generate(destination, terminating=False):
+def generate(destination, terminating=False, context_sensitive=False):
     # GGUF types: UINT32=4, FLOAT32=6, BOOL=7, STRING=8, ARRAY=9.
     tokens = ['<unk>', '<s>', '</s>'] + [f'<0x{i:02X}>' for i in range(256)] + ['▁probe']
     n_vocab, embedding, hidden = len(tokens), 16, 32
@@ -65,15 +65,30 @@ def generate(destination, terminating=False):
         # greedy prediction is EOS, exercising true termination without training.
         token_embeddings[-embedding:] = [-1.0] * embedding
         output[2 * embedding:3 * embedding] = [-1.0] * embedding
+    attention_qk = [0.0] * (embedding * embedding)
+    attention_v = [0.0] * (embedding * embedding)
+    attention_out = [0.0] * (embedding * embedding)
+    if context_sensitive:
+        if not terminating:
+            raise ValueError('context-sensitive fixture also requires terminating mode')
+        for token in range(n_vocab - 1):
+            for dim in range(embedding):
+                token_embeddings[token * embedding + dim] = 1.0 + ((token + dim * 7) % 13 - 6) * 0.025
+                if token != 2:
+                    output[token * embedding + dim] = ((token * 3 + dim * 5) % 11 - 5) * 0.03
+        for dim in range(embedding):
+            attention_qk[dim * embedding + dim] = 0.0625
+            attention_v[dim * embedding + dim] = 0.125
+            attention_out[dim * embedding + dim] = 0.5
     tensors = [
         ('token_embd.weight', [embedding, n_vocab], values(token_embeddings)),
         ('output_norm.weight', [embedding], values([1.0] * embedding)),
         ('output.weight', [embedding, n_vocab], values(output)),
         ('blk.0.attn_norm.weight', [embedding], values([1.0] * embedding)),
-        ('blk.0.attn_q.weight', [embedding, embedding], values([0.0] * embedding * embedding)),
-        ('blk.0.attn_k.weight', [embedding, embedding], values([0.0] * embedding * embedding)),
-        ('blk.0.attn_v.weight', [embedding, embedding], values([0.0] * embedding * embedding)),
-        ('blk.0.attn_output.weight', [embedding, embedding], values([0.0] * embedding * embedding)),
+        ('blk.0.attn_q.weight', [embedding, embedding], values(attention_qk)),
+        ('blk.0.attn_k.weight', [embedding, embedding], values(attention_qk)),
+        ('blk.0.attn_v.weight', [embedding, embedding], values(attention_v)),
+        ('blk.0.attn_output.weight', [embedding, embedding], values(attention_out)),
         ('blk.0.ffn_norm.weight', [embedding], values([1.0] * embedding)),
         ('blk.0.ffn_gate.weight', [embedding, hidden], values([0.0] * embedding * hidden)),
         ('blk.0.ffn_down.weight', [hidden, embedding], values([0.0] * embedding * hidden)),
@@ -95,4 +110,4 @@ def generate(destination, terminating=False):
 
 
 if __name__ == '__main__':
-    print(f"Synthetic GGUF: {generate(sys.argv[1], '--terminating' in sys.argv[2:])} bytes")
+    print(f"Synthetic GGUF: {generate(sys.argv[1], '--terminating' in sys.argv[2:], '--context-sensitive' in sys.argv[2:])} bytes")

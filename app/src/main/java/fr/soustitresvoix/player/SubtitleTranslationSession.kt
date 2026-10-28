@@ -108,6 +108,7 @@ class SubtitleTranslationSession(
     private var closed = false
     var required = false; private set
     var status = "Traduction désactivée : vocalisation de la piste originale"; private set
+    var performance: String? = null; private set
     val busy: Boolean get() = job != null
     /** Result identity for reports/offline work; foreground TTS keys use voice settings and exact text. */
     val fingerprint: String get() = active?.fingerprint ?: partialFingerprint ?: if (required) "translation-required" else "original"
@@ -126,7 +127,7 @@ class SubtitleTranslationSession(
         val track = owner.selectedTextId() ?: run { message("Choisis une piste de sous-titres textuelle chargée avant de traduire.", true); return }
         finishRestore(false); invalidateRetentions()
         owner.pause(); owner.cancelIndexing(); cancelJob()
-        required = true; active = null; clearPartial(); activePlan = null; complete = false; observedSourcePositionUs = null; this.progressive = progressive; this.bufferSeconds = bufferSeconds; preview = null; requestedTrack = track
+        required = true; active = null; clearPartial(); activePlan = null; complete = false; performance = null; observedSourcePositionUs = null; this.progressive = progressive; this.bufferSeconds = bufferSeconds; preview = null; requestedTrack = track
         owner.resetNarrationForTranslation()
         val generation = owner.generation
         val ticket = ++sequence
@@ -181,7 +182,7 @@ class SubtitleTranslationSession(
             message("La vidéo ou la piste a changé. Prépare à nouveau la traduction.", true); return
         }
         owner.pause(); owner.resetNarrationForTranslation()
-        val current = Job(); job = current; preview = null; activePlan = value.plan; progressive = value.progressive; bufferSeconds = value.bufferSeconds; cueOrdinals = value.cueOrdinals
+        val current = Job(); job = current; preview = null; activePlan = value.plan; performance = null; progressive = value.progressive; bufferSeconds = value.bufferSeconds; cueOrdinals = value.cueOrdinals
         status = if (progressive) "Traduction progressive : la lecture sera disponible après $bufferSeconds secondes de tampon validé." else "Traduction en cours. La lecture française attend la piste complète."; changed()
         worker.execute {
             try {
@@ -195,6 +196,17 @@ class SubtitleTranslationSession(
                 var prefixHash = SpeechTools.key("translation-progressive-v2", value.plan.fingerprint)
                 val translated = engine().use { service ->
                     current.service = service
+                    (service as? LocalTranslationPerformanceSource)?.setPerformanceListener { observation ->
+                        val rendered = observation.render()
+                        main.post {
+                            // Measurements never grant playback intent, and an old task
+                            // cannot overwrite the diagnostics of a replacement task.
+                            if (isCurrent(current, value.generation, value.track, value.ticket)) {
+                                performance = rendered
+                                changed()
+                            }
+                        }
+                    }
                     runner.run(value.plan, service, { current.cancelled.get() || Thread.currentThread().isInterrupted }, { done, total ->
                         pendingProgress.set(done to total)
                         if (progressPosted.compareAndSet(false, true)) main.post {
@@ -321,7 +333,7 @@ class SubtitleTranslationSession(
     }
     fun trackChanged() {
         if (!required) return
-        finishRestore(false); invalidateRetentions(); cancelJob(); sequence++; preview = null; active = null; clearPartial(); activePlan = null; complete = false
+        finishRestore(false); invalidateRetentions(); cancelJob(); sequence++; preview = null; active = null; clearPartial(); activePlan = null; complete = false; performance = null
         status = "Piste modifiée : une nouvelle traduction est nécessaire avant la lecture française."
         changed()
     }
@@ -331,7 +343,7 @@ class SubtitleTranslationSession(
         }
     }
     fun reset() {
-        finishRestore(false); invalidateRetentions(); cancelJob(); sequence++; preview = null; active = null; clearPartial(); activePlan = null; complete = false; progressive = false; nextUntranslatedUs = Long.MAX_VALUE; observedSourcePositionUs = null; required = false; requestedTrack = null
+        finishRestore(false); invalidateRetentions(); cancelJob(); sequence++; preview = null; active = null; clearPartial(); activePlan = null; complete = false; performance = null; progressive = false; nextUntranslatedUs = Long.MAX_VALUE; observedSourcePositionUs = null; required = false; requestedTrack = null
         status = "Traduction désactivée : vocalisation de la piste originale"
     }
     fun setDisplayMode(mode: TranslationDisplayMode) {
@@ -553,7 +565,7 @@ class SubtitleTranslationSession(
     } catch (_: Exception) {
         if (!closed) {
             owner.pause(); finishRestore(false); invalidateRetentions(); cancelJob(); sequence++
-            preview = null; active = null; clearPartial(); activePlan = null; complete = false; required = true
+            preview = null; active = null; clearPartial(); activePlan = null; complete = false; performance = null; required = true
             requestedTrack = owner.selectedTextId()
             status = "Sélection de traduction indisponible. Choisis sa réparation ou Revenir à la piste originale."
             changed()

@@ -43,7 +43,8 @@ class LocalSrtTranslationJob(
         val done: Int = 0,
         val total: Int = 0,
         val complete: Boolean = false,
-        val encodingRequired: Boolean = false
+        val encodingRequired: Boolean = false,
+        val performance: String? = null
     ) {
         val hasSource: Boolean get() = sourceName != null
     }
@@ -55,7 +56,9 @@ class LocalSrtTranslationJob(
         val cancelled = AtomicBoolean(false)
         @Volatile var indexer: SubtitleIndexer? = null
         @Volatile var engine: TranslationEngine? = null
+        @Volatile var performance: String? = null
     }
+    private class ReplacedModelSelection : IOException()
     private val application = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
@@ -119,7 +122,7 @@ class LocalSrtTranslationJob(
         val current = Task(); active = current
         val ticket = ++sequence
         update(previous.copy(status = "Vérification et copie privée du fichier de sous-titres…",
-            busy = true, complete = false, encodingRequired = false))
+            busy = true, complete = false, encodingRequired = false, performance = null))
         worker.execute {
             synchronized(WORK_LOCK) {
                 try {
@@ -172,6 +175,13 @@ class LocalSrtTranslationJob(
             synchronized(WORK_LOCK) {
                 try {
                     ensureActive(current)
+                    // A panel can retain the descriptor of a model that was
+                    // replaced through another panel. Do not expose its old
+                    // cached translation as if it belonged to the new model.
+                    val selectedModel = config.localModel
+                    val preparedModel = LocalGgufModelStore(application).current()
+                    if (selectedModel != null && preparedModel != null && selectedModel.file == preparedModel.file &&
+                        selectedModel.sha256 != preparedModel.sha256) throw ReplacedModelSelection()
                     TranslationEngines.validateForRequest(config, sourceLanguage, "fr")
                     val identity = TranslationEngines.translationIdentity(config)
                     // Media3 remains the timing/parser authority, but it can
@@ -195,10 +205,18 @@ class LocalSrtTranslationJob(
                     val plan = TranslationPlan.create(cues, sourceLanguage, "fr", identity)
                     ensureActive(current)
                     val engine = engineFactory(config); current.engine = engine
+                    (engine as? LocalTranslationPerformanceSource)?.setPerformanceListener { performance ->
+                        val rendered = performance.render()
+                        current.performance = rendered
+                        main.post {
+                            if (isCurrent(current, ticket) && !current.cancelled.get())
+                                update(state.copy(performance = rendered))
+                        }
+                    }
                     ensureActive(current)
                     val result = runner.run(plan, engine, { current.cancelled.get() || closed }, { done, total ->
                         publish(current, ticket, State("Traduction locale : $done / $total occurrences validées.",
-                            busy = true, sourceName = selected.name, done = done, total = total))
+                            busy = true, sourceName = selected.name, done = done, total = total, performance = current.performance))
                     }, TranslationRunPolicy(requestMayConsumeRemoteQuota = false))
                     ensureActive(current)
                     val exports = SubtitleExportFormat.values().associateWith { TranslatedSubtitleExport.encode(result.cues, it) }
@@ -214,10 +232,14 @@ class LocalSrtTranslationJob(
                                 completedExports = exports
                                 update(State("Traduction complète : ${result.cues.size} occurrences. Export SRT disponible." +
                                     (warning?.let { "\n$it" } ?: ""), busy = false, sourceName = selected.name,
-                                    done = result.cues.size, total = result.cues.size, complete = true))
+                                    done = result.cues.size, total = result.cues.size, complete = true, performance = current.performance))
                             }
                         }
                     }
+                } catch (_: ReplacedModelSelection) {
+                    finishFailure(current, ticket, state.copy(status =
+                        "Le modèle local a été remplacé depuis sa sélection. Prépare ou sélectionne le modèle actuel avant de relancer ; les traductions précédentes restent conservées avec leur propre identité.",
+                        busy = false, complete = false))
                 } catch (_: SrtSourceIntegrity.InvalidSource) {
                     finishFailure(current, ticket, state.copy(status =
                         SrtSourceIntegrity.FAILURE_MESSAGE,
@@ -237,6 +259,7 @@ class LocalSrtTranslationJob(
                         busy = false, complete = false))
                 } finally {
                     current.indexer = null
+                    (current.engine as? LocalTranslationPerformanceSource)?.setPerformanceListener(null)
                     runCatching { current.engine?.close() }; current.engine = null
                 }
             }

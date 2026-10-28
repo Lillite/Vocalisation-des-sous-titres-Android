@@ -234,4 +234,24 @@ class TranslationProvidersRobolectricTest {
         }
         assertTrue(transport.requests.isEmpty())
     }
+
+    @Test fun ggufProfileAndExecutionKeepDistinctResultsAndReachTheLazyFactory() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val model = LocalGgufModel(java.io.File(context.filesDir, "synthetic-profile-fixture.gguf"),
+            "b".repeat(64), 24L, 0L)
+        val identities = mutableSetOf<String>()
+        for (profile in LocalGgufProfile.entries) for (mode in listOf("AUTO", "CPU", "OPENCL")) {
+            val config = TranslationProviderConfig(TranslationProvider.LOCAL_GGUF,
+                localModel = model, localProfile = profile, localExecution = mode)
+            val identity = TranslationEngines.translationIdentity(config)
+            assertTrue("Different execution/profile choices must not reuse a former result", identities.add(identity))
+            val transport = Transport(TranslationHttpResponse(200, "Never requested"))
+            TranslationEngines.create(config, transport, context).use { engine ->
+                assertEquals(identity, engine.id)
+                assertTrue(transport.closed)
+                assertTrue(transport.requests.isEmpty())
+            }
+        }
+        assertEquals(LocalGgufProfile.entries.size * 3, identities.size)
+    }
 }

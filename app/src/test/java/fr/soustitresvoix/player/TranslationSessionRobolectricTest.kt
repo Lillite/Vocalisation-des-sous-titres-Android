@@ -266,6 +266,47 @@ class TranslationSessionRobolectricTest {
         }
     }
 
+    @Test fun localPerformanceNeverStartsPlaybackAndLateMeasurementsCannotSurviveReset() {
+        Fixture().use { fixture ->
+            val preview = fixture.prepare("measured-local-fixture")
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val finished = CountDownLatch(1)
+            val observations = java.util.concurrent.atomic.AtomicReference<((LocalTranslationPerformance) -> Unit)?>(null)
+            val service = object : TranslationEngine, LocalTranslationPerformanceSource {
+                override val id = "measured-local-fixture"
+                override fun setPerformanceListener(listener: ((LocalTranslationPerformance) -> Unit)?) { observations.set(listener) }
+                override fun translate(texts: List<String>, sourceLanguage: String, targetLanguage: String,
+                    cancelled: () -> Boolean): List<String> {
+                    observations.get()?.invoke(LocalTranslationPerformance(backend = "CPU", generatedTokens = 4,
+                        generationMs = 100, promptTokens = 20, promptEvaluatedTokens = 20))
+                    entered.countDown()
+                    assertTrue(release.await(15, TimeUnit.SECONDS))
+                    return texts.map { french.getValue(it) }
+                }
+                override fun close() {
+                    if (Looper.myLooper() != Looper.getMainLooper()) finished.countDown()
+                }
+            }
+            try {
+                fixture.session.translation.start(preview) { service }
+                await("Current local measurement not displayed") {
+                    entered.count == 0L && fixture.session.translation.performance?.contains("CPU") == true
+                }
+                assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+                assertTrue(fixture.components.speech.requests.isEmpty())
+                fixture.session.translation.useOriginal()
+                assertNull(fixture.session.translation.performance)
+                observations.get()?.invoke(LocalTranslationPerformance(backend = "Obsolete GPU"))
+                shadowOf(Looper.getMainLooper()).idle()
+                assertNull("An obsolete worker cannot restore former diagnostics", fixture.session.translation.performance)
+                assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+                assertTrue(fixture.components.speech.requests.isEmpty())
+            } finally { release.countDown() }
+            await("Measured worker did not close") { finished.count == 0L }
+        }
+    }
+
     @Test fun lateTranslationAfterCancelTrackChangeMediaReplacementOrCloseNeverActivatesOrResumes() {
         for (action in listOf("cancel", "track", "media", "close")) {
             Fixture().use { fixture ->

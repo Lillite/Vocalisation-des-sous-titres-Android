@@ -34,6 +34,7 @@ internal class PreparationDiagnosticsController(
     private var ticket = 0L
     private var cancellation = AtomicBoolean(false)
     private var busy = false
+    val isBusy: Boolean get() = busy
     private var closed = false
     private var panelOpen = false
     private var pendingModel = false

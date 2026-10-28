@@ -4,7 +4,7 @@ Lecteur vidéo Android destiné d’abord à **vocaliser intégralement les occu
 
 **Version publiée recommandée : 0.5.2 — Google et traduction pendant la lecture.** [Notes 0.5.2](docs/releases/0.5.2.md) · [Guide Google](docs/TRADUCTION_GOOGLE_052.md) · [Validation GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml).
 
-**Candidate en préparation : 0.5.4-local / code 11.** Traduction des pistes textuelles avec un GGUF choisi sur le téléphone, progression conservée et export SRT/VTT. [Guide GGUF local](docs/TRADUCTION_GGUF_054.md) · [Notes et limites](docs/releases/0.5.4-local.md). La distribution exige la validation et la signature durable. La [0.5.3-diagnostic publiée](docs/releases/0.5.3-diagnostic.md) reste disponible pour les mesures locales.
+**Candidate en préparation : 0.5.5-perf / code 12.** Optimisation du calcul GGUF local, GPU facultatif à mesurer et correctif de reconnaissance Hy-MT2. [Guide des performances locales](docs/TRADUCTION_GGUF_055.md) · [Notes et limites](docs/releases/0.5.5-perf.md). La distribution exige sa propre validation et la signature durable. La [0.5.4-local publiée](docs/releases/0.5.4-local.md) fournit déjà la traduction GGUF CPU, la reprise et l’export SRT/VTT.
 
 **[Télécharger SousTitresVoix-0.5.2-google.apk](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.2/SousTitresVoix-0.5.2-google.apk)** · [Release et sommes de contrôle](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.2). Les archives « Source code » ne sont pas des APK.
 
@@ -22,21 +22,23 @@ Lecteur vidéo Android destiné d’abord à **vocaliser intégralement les occu
 
 **Ce projet est réalisé intégralement par intelligence artificielle : la conception de l’application, l’écriture du code, les corrections, les tests automatisés et la documentation sont produits par IA à partir des demandes, des indications et des retours de son utilisateur.** Cette mention concerne le travail propre au projet. Android, Kotlin, Media3, les moteurs vocaux, les services de traduction et les autres composants tiers restent les créations de leurs auteurs respectifs.
 
-## Candidate 0.5.4 — traduction GGUF locale
+Les [attributions du calcul GGUF natif](ATTRIBUTIONS.md) regroupent les versions, licences et copyrights conservés de llama.cpp, OpenCL et KleidiAI.
 
-Le moteur GGUF local s’intègre au parcours **Traduire les sous-titres en français**. Le modèle est choisi explicitement, copié dans l’espace privé et identifié par son contenu. Il est chargé directement par llama.cpp sur le CPU ; PocketPal, une clé API et un serveur ne sont pas nécessaires. Les poids ne sont pas inclus ni téléchargés automatiquement.
+## Candidate 0.5.5 — performances de la traduction locale
+
+Le moteur GGUF local s’intègre au parcours **Traduire les sous-titres en français**. Le modèle est choisi explicitement, copié dans l’espace privé et identifié par son contenu. Il est chargé directement par llama.cpp ; PocketPal, une clé API et un serveur ne sont pas nécessaires. Le calcul CPU reste disponible. La candidate prépare un GPU facultatif et des mesures explicites du backend réellement utilisé. Les poids ne sont pas inclus ni téléchargés automatiquement.
 
 La préparation conserve les identifiants et minutages de chaque occurrence. Les résultats validés sont enregistrés pour reprise ; une sortie interrompue ou tronquée ne devient pas une traduction complète. L’export produit un nouveau SRT ou VTT sans remplacer l’original. Le mode progressif utilise les mêmes protections d’attente, de Pause et de déplacement que les moteurs existants.
 
 Pour un premier essai sans vidéo, ouvrir **Traduire un fichier SRT hors ligne**, puis **Charger l’exemple SRT anglais intégré**. Cet exemple contient huit occurrences synthétiques et ne lance ni lecture ni traduction avant confirmation.
 
-Le choix définitif du meilleur modèle reste ouvert. Le [guide GGUF](docs/TRADUCTION_GGUF_054.md) précise les familles prises en charge, le contexte borné et les limites CPU. L’OCR, le GPU et le NPU ne sont pas intégrés par cette étape. Les tests synthétiques ne mesurent pas la qualité linguistique ni le débit soutenu du téléphone.
+Le choix définitif du meilleur modèle reste ouvert. Le [guide des performances GGUF](docs/TRADUCTION_GGUF_055.md) précise les optimisations, le correctif Hy-MT2, les mesures et les limites. La présence d’un GPU ou d’un backend compilé ne prouve pas que le modèle y calcule effectivement. L’OCR et le NPU restent hors de cette étape. Aucun gain de vitesse ni maintien de qualité n’est déduit des seuls tests synthétiques.
 
 ## Préversion publiée 0.5.3 — diagnostic local
 
 La [préversion 0.5.3 publiée](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.3-diagnostic) propose **Réglages de la voix et du confort → Diagnostic → Diagnostic local : appareil, vidéo et modèle** : RAM et codecs déclarés, décodage d’au plus 8 images sur 10 secondes, puis import consenti et essai synthétique d’un modèle GGUF avec llama.cpp sur CPU dans un processus distinct. Le rapport est copiable ; aucun modèle ni film n’est téléversé, aucun poids n’est téléchargé automatiquement et aucun nouveau service Internet n’est ajouté.
 
-Le GPU/NPU n’est pas exécuté. Le diagnostic ne produit ni OCR ni traduction de film ; l’intégration de traduction GGUF de la candidate 0.5.4 est une étape distincte. Le [guide](docs/DIAGNOSTIC_LOCAL_053.md) distingue les essais de la qualité d’une traduction ; les [notes](docs/releases/0.5.3-diagnostic.md) conservent les preuves de cette publication.
+Le GPU/NPU n’est pas exécuté. Le diagnostic ne produit ni OCR ni traduction de film ; la traduction GGUF publiée en 0.5.4 est une étape distincte. Le [guide](docs/DIAGNOSTIC_LOCAL_053.md) distingue les essais de la qualité d’une traduction ; les [notes](docs/releases/0.5.3-diagnostic.md) conservent les preuves de cette publication.
 
 ## Changements de la 0.5.2
 
@@ -155,7 +157,7 @@ Les lots validés sont enregistrés pour reprise avec la même source et les mê
 | --- | --- |
 | **Google en ligne sans clé** | Accès non officiel ; intervalle de 500 à 10 000 ms, défaut 1 000 ms ; trois nouvelles tentatives temporaires au maximum, avec attente cumulée bornée à 120 s par requête, hors réseau, et respect de `Retry-After`. |
 | **Google local — ML Kit** | SDK 17.0.3, modèles téléchargés sur demande, Wi-Fi par défaut ; paire de langues contrôlée et attribution Google. |
-| **GGUF local — candidate 0.5.4** | Modèle choisi et copié sur le téléphone, calcul CPU et reprise par occurrence ; [guide GGUF](docs/TRADUCTION_GGUF_054.md). |
+| **GGUF local — 0.5.4 publiée / candidate 0.5.5** | Modèle choisi sur le téléphone, reprise par occurrence et export ; [parcours publié](docs/TRADUCTION_GGUF_054.md), [optimisations de la candidate](docs/TRADUCTION_GGUF_055.md). |
 | **Azure Translator** | Ressource Translator, clé et région selon le compte ; langue source explicite. |
 | **DeepL API Free ou payant** | Point d’accès correspondant au contrat ; contexte facultatif, identifiant/révision d’un glossaire déjà créé, modèle et registre lorsque pris en charge ; consultation réelle du quota. |
 | **LibreTranslate HTTPS** | Serveur choisi, paire de langues installée et clé éventuelle ; traitement sur ce serveur. |
@@ -227,14 +229,14 @@ La chaîne avancée traite le **PCM16 mono/stéréo effectivement reçu**. Elle 
 | Vidéos | Fichiers locaux, notamment MKV, MP4 et WebM ; codecs selon Media3 et les décodeurs de l’appareil. |
 | Sous-titres | Pistes textuelles intégrées et fichiers SRT, VTT, ASS/SSA ; import externe limité à 8 Mio, avec choix d’encodage pour les fichiers anciens. |
 | Narration | Moteur TTS Android externe et voix installée ; les modes intégraux attendent si nécessaire. |
-| Traduction | Services en ligne choisis, Google ML Kit sur le téléphone ou GGUF local dans la candidate 0.5.4 ; cible française ; langues et fidélité à vérifier pour chaque moteur. |
-| Hors ligne | ML Kit après téléchargement ou GGUF local compatible choisi dans la candidate 0.5.4 ; voix Android prête et vidéo accessible pour la lecture ; traductions/voix préparées réutilisables après contrôle. |
+| Traduction | Services en ligne choisis, Google ML Kit sur le téléphone ou GGUF local publié en 0.5.4 ; cible française ; langues et fidélité à vérifier pour chaque moteur. |
+| Hors ligne | ML Kit après téléchargement ou GGUF local compatible choisi depuis la 0.5.4 ; voix Android prête et vidéo accessible pour la lecture ; traductions/voix préparées réutilisables après contrôle. |
 | Fonctions absentes | OCR PGS/VobSub/incrustations, catalogue/téléchargement automatique Hugging Face, Google Cloud/Apps Script, audiodescription, accès aux DRM d’autres applications et lecture durable en arrière-plan. |
 | Matériel | Aucune preuve d’usage neuronal GPU/NPU ou de performance sur OnePlus 15 déduite des profils de cache ou de tests sur émulateur. |
 
 - Ouverture par le sélecteur Android, sans permission microphone/caméra ni accès général au stockage.
 - Un moteur en ligne confirmé envoie le texte et ses paramètres au fournisseur choisi ; il n’envoie ni vidéo ni piste audio. ML Kit traduit le texte sur l’appareil : Google déclare une collecte de télémétrie technique du SDK (appareil, application, performances, tailles, langues et événements), sans envoi du texte des sous-titres pour la traduction. Son initialisation et les téléchargements sont précédés d’une confirmation ; le mode local n’exclut pas toute activité réseau. Voir la [déclaration Google](https://developers.google.com/ml-kit/android-data-disclosure).
-- Le moteur GGUF de la candidate 0.5.4 charge la copie locale choisie et ne crée aucun échange réseau. Il reste indépendant de l’initialisation de ML Kit et des moteurs en ligne.
+- Le moteur GGUF local charge la copie locale choisie et ne crée aucun échange réseau. Il reste indépendant de l’initialisation de ML Kit et des moteurs en ligne.
 - HTTPS, certificats système, tailles/délais bornés et redirections refusées ; erreurs sans clé ni corps privé.
 - Clés mémorisées facultativement par Android Keystore/AES-GCM, avec portée distincte par serveur LibreTranslate ; sauvegarde Android désactivée.
 - Sous-titres importés, traductions conservées et textes de préparation sont des données privées de l’application, sans chiffrement additionnel annoncé. Les journaux ordinaires de narration n’enregistrent pas les textes.

@@ -45,11 +45,17 @@ Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeDestroy(JNIEnv *, jobject, 
     if (retained) retained->cancel();
 }
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeOpen(JNIEnv * env, jobject, jlong id, jbyteArray path, jint threads, jint context) {
+Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeOpen(JNIEnv * env, jobject, jlong id, jbyteArray path,
+        jint threads, jint context, jstring execution, jint gpu_layers, jbyteArray cache_path) {
     try {
-        const auto session = find(id); std::string filename;
-        if (!session || !read(env, path, filename, 32768)) return nullptr;
-        return bytes(env, session->open(filename, threads, context).json());
+        const auto session = find(id); std::string filename, cache;
+        if (!session || !read(env, path, filename, 32768) || !execution || !cache_path) return nullptr;
+        if (env->GetArrayLength(cache_path) > 0 && !read(env, cache_path, cache, 32768)) return nullptr;
+        const char * mode_chars = env->GetStringUTFChars(execution, nullptr);
+        if (!mode_chars) return nullptr;
+        const std::string mode(mode_chars);
+        env->ReleaseStringUTFChars(execution, mode_chars);
+        return bytes(env, session->open(filename, threads, context, mode, gpu_layers, cache).json());
     } catch (...) { return nullptr; }
 }
 extern "C" JNIEXPORT jbyteArray JNICALL

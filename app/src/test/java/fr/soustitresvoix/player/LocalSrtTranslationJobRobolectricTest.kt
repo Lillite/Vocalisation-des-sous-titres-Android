@@ -19,6 +19,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.io.File
+import java.io.ByteArrayInputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -178,6 +179,66 @@ class LocalSrtTranslationJobRobolectricTest {
         assertTrue(restored.state.status, restored.state.complete)
         assertEquals(output, restored.completedExport())
         assertEquals(0, computations)
+    }
+
+    @Test fun nativePerformanceIsPublishedOnMainAndLateMeasurementsCannotReplaceANewerSourceState() {
+        val measured = LocalTranslationPerformance(requestedMode = "AUTO", backend = "CPU", device = "CPU",
+            promptTokens = 40, cachedPromptTokens = 30, promptEvaluatedTokens = 10,
+            generatedTokens = 9, generationMs = 1500, endToEndMs = 2000)
+        var lateListener: ((LocalTranslationPerformance) -> Unit)? = null
+        val job = job({ config -> object : Engine(config), LocalTranslationPerformanceSource {
+            private var listener: ((LocalTranslationPerformance) -> Unit)? = null
+            override fun setPerformanceListener(listener: ((LocalTranslationPerformance) -> Unit)?) {
+                this.listener = listener
+                if (listener != null) lateListener = listener
+            }
+            override fun translateWithContext(texts: List<String>, sourceLanguage: String, targetLanguage: String,
+                previousSources: List<String>, previousTranslations: List<String>, cancelled: () -> Boolean): List<String> {
+                listener?.invoke(measured)
+                return super.translateWithContext(texts, sourceLanguage, targetLanguage, previousSources, previousTranslations, cancelled)
+            }
+        } })
+        import(job)
+        job.start("en", configuration())
+        await { !job.state.busy }
+        assertTrue(job.state.status, job.state.complete)
+        assertEquals(measured.render(), job.state.performance)
+        assertNotNull(job.completedExport())
+        lateListener?.invoke(measured.copy(backend = "VULKAN", gpuObserved = true))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals("A completed task cannot be changed by a late native reply", measured.render(), job.state.performance)
+        job.importExample()
+        assertNull(job.state.performance)
+        await { !job.state.busy }
+        assertNull(job.state.performance)
+        assertFalse(job.state.complete)
+    }
+
+    @Test fun anOldModelDescriptorCannotSilentlyRestoreItsCachedResultAfterAnotherModelWasImported() {
+        fun fixture(tag: Byte) = byteArrayOf(71, 71, 85, 70, 3, 0, 0, 0) + ByteArray(16) + byteArrayOf(tag)
+        val store = LocalGgufModelStore(application)
+        model = store.importModel(ByteArrayInputStream(fixture(1)))
+        val previousConfig = configuration()
+        var constructions = 0
+        val job = job({ Engine(it).also { constructions++ } })
+        import(job)
+        job.start("en", previousConfig)
+        await { !job.state.busy }
+        assertTrue(job.state.status, job.state.complete)
+        assertEquals(1, constructions)
+        val replacement = store.importModel(ByteArrayInputStream(fixture(2)))
+        assertNotEquals(previousConfig.localModel?.sha256, replacement.sha256)
+        job.start("en", previousConfig)
+        await { !job.state.busy }
+        assertFalse(job.state.complete)
+        assertTrue(job.state.status, job.state.status.contains("remplacé depuis sa sélection"))
+        assertNull(job.completedExport())
+        assertEquals(1, constructions)
+        model = replacement
+        job.start("en", configuration())
+        await { !job.state.busy }
+        assertTrue(job.state.status, job.state.complete)
+        assertEquals(2, constructions)
     }
 
     @Test fun cancellationKeepsOnlyValidatedOccurrencesAndARecreatedOwnerResumesWithTheirContext() {

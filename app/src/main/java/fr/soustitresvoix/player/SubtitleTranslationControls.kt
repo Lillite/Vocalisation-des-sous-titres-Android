@@ -161,7 +161,9 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                 selected() == TranslationProvider.GOOGLE_LOCAL && mobileModels.isChecked),
             localModel = if (selected() == TranslationProvider.LOCAL_GGUF) localModels.model else null,
             localThreads = if (selected() == TranslationProvider.LOCAL_GGUF) localThreads.text.toString().toIntOrNull() ?: 0 else 4,
-            localContext = if (selected() == TranslationProvider.LOCAL_GGUF) localContext.text.toString() else "")
+            localContext = if (selected() == TranslationProvider.LOCAL_GGUF) localContext.text.toString() else "",
+            localExecution = if (selected() == TranslationProvider.LOCAL_GGUF) localModels.execution else "AUTO",
+            localProfile = if (selected() == TranslationProvider.LOCAL_GGUF) localModels.profile else LocalGgufProfile.AUTO)
         fun credentialScope(): String? = if (selected() != TranslationProvider.LIBRE) selected().id else
             try { providerIdentity(TranslationProviderConfig(TranslationProvider.LIBRE, endpoint = endpoint.text.toString().trim())) }
             catch (_: Exception) { null }
@@ -220,7 +222,7 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
             clearLocalStatus()
             val provider = selected()
             if (provider == TranslationProvider.LOCAL_GGUF && otherLocalPreparationBusy()) {
-                showLocalStatus("Termine ou annule la traduction du fichier SRT hors ligne avant de lancer une autre traduction GGUF.")
+                showLocalStatus("Termine ou annule l’autre traitement local avant de lancer une autre traduction GGUF.")
                 return@button
             }
             if (provider == TranslationProvider.LOCAL_GGUF && (localModels.busy || localModels.model == null)) {
@@ -262,7 +264,7 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                 }
                 val destination = if (provider == TranslationProvider.LIBRE) TranslationEngines.libreEndpoint(config.endpoint).host else provider.label
                 val privacy = when (provider) {
-                    TranslationProvider.LOCAL_GGUF -> "Traduction locale avec le fichier GGUF préparé et le moteur CPU intégré. Le texte, le contexte, la vidéo et l’audio restent sur le téléphone ; aucun serveur, clé API ou téléchargement de modèle n’est utilisé. Le modèle reste chargé pendant cette tâche puis ses ressources sont libérées. Le téléphone peut chauffer et Android peut interrompre un traitement ; les occurrences validées sont enregistrées pour reprise."
+                    TranslationProvider.LOCAL_GGUF -> "Traduction locale avec le fichier GGUF préparé. Exécution demandée : ${config.localExecution}. Les mesures afficheront le moteur réellement utilisé et un éventuel repli CPU. Le texte, le contexte, la vidéo et l’audio restent sur le téléphone ; aucun serveur, clé API ou téléchargement de modèle n’est utilisé. Le modèle reste chargé pendant cette tâche puis ses ressources sont libérées. Le téléphone peut chauffer et Android peut interrompre un traitement ; les occurrences validées sont enregistrées pour reprise."
                     TranslationProvider.GOOGLE_LOCAL -> "Traduction automatique par Google Traduction (ML Kit) sur le téléphone. Le texte, la vidéo et l’audio ne sont pas envoyés au traducteur. Les modèles nécessaires seront téléchargés ${if (config.execution.allowMobileModelDownload) "en Wi-Fi ou avec les données mobiles autorisées" else "en Wi-Fi seulement"} (environ 30 Mo par modèle). Le SDK peut terminer un téléchargement déjà commencé même après annulation de l’attente ; il peut transmettre à Google des données techniques sur l’appareil, les performances et les langues, sans envoyer le texte au traducteur."
                     TranslationProvider.GOOGLE_WEB -> "Le texte sera envoyé directement à Google par un accès non officiel sans clé. Une requête à la fois, délai minimal ${config.execution.googleIntervalMillis} ms, ralentissement adaptatif et attentes bornées. Aucun blocage ne sera contourné. Le cache réduit les appels mais ne garantit pas la disponibilité de Google. La vidéo et l’audio ne sont pas envoyés."
                     else -> "Le texte intégral sera envoyé à $destination si aucun cache complet correspondant n’existe. La vidéo et l’audio ne sont pas envoyés. Vérifie le quota et les plafonds de ton compte. DeepL : 500 ms minimum entre appels, cinq nouvelles tentatives maximum après refus de débit, deux minutes d’attente cumulée maximum par lot ; aucune relance automatique des quotas épuisés ou des réponses réseau perdues."
@@ -275,6 +277,7 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                         pendingPreview = false; clearLocalStatus()
                         if (provider == TranslationProvider.LOCAL_GGUF)
                             storage.edit().putString("local-context", config.localContext).putInt("local-threads", config.localThreads).apply()
+                        if (provider == TranslationProvider.LOCAL_GGUF) localModels.saveChoices(config.localExecution, config.localProfile)
                         if (saveKey && config.apiKey.isNotBlank()) {
                             try { credentials.save(credentialIdentity, config.apiKey) }
                             catch (_: Exception) { showLocalStatus("La clé n’a pas pu être mémorisée. Elle sera utilisée uniquement pour cette demande.") }
@@ -446,7 +449,7 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
             }
     }
     fun refresh() { status?.let {
-        val message = localStatus ?: session.translation.status
+        val message = (localStatus ?: session.translation.status) + (session.translation.performance?.let { "\n\nDernières mesures reçues du moteur local :\n$it" } ?: "")
         if (panel?.isShowing == true && it.text.toString() != message) it.text = message
     } }
     fun selectedLocalModel(uri: Uri?) { localModelControls?.selected(uri) }
@@ -461,7 +464,7 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
             TranslationProvider.LIBRE -> "LibreTranslate : traduction par un serveur que tu choisis. Indique son adresse HTTPS et sa clé si l’instance en exige une ; demande à son administrateur les langues installées, les quotas et la politique de conservation. La gratuité dépend de l’instance et de son hébergement. L’application appelle /translate et refuse les redirections. Ce serveur ne s’exécute pas sur le téléphone : même auto-hébergé, il reçoit les sous-titres. L’application ne crée ni ne déploie de serveur."
             TranslationProvider.GOOGLE_WEB -> "Google Traduction en ligne sans clé : accès non officiel, facultatif. Les sous-titres sont envoyés directement à Google ; la vidéo et l’audio restent sur le téléphone. Une seule requête à la fois, délai minimal réglable de 500 à 10 000 ms (défaut 1 000), ralentissement après limitation, au plus trois nouvelles tentatives temporaires et deux minutes d’attente par requête. Un blocage explicite suspend le travail. Les résultats validés sont conservés pour reprise et les textes identiques peuvent réutiliser une traduction sans supprimer leurs occurrences. Aucun quota illimité ni fonctionnement permanent n’est garanti."
             TranslationProvider.GOOGLE_LOCAL -> "Google Traduction sur le téléphone avec ML Kit : moteur local gratuit après téléchargement des modèles nécessaires, environ 30 Mo chacun. Wi-Fi par défaut ; les données mobiles demandent le choix explicite ci-dessus. Le texte n’est pas envoyé au service de traduction. Langues plus limitées qu’en ligne : consulte la liste. Entre langues autres que l’anglais, le modèle passe par l’anglais ; vérifie les résultats selon l’œuvre. Annuler arrête la traduction et l’attente, mais un téléchargement déjà lancé par le SDK peut finir en arrière-plan."
-            TranslationProvider.LOCAL_GGUF -> "Modèle GGUF sur le téléphone : traduction hors ligne avec llama.cpp sur CPU. Choisis un modèle compatible, notamment TranslateGemma ou Hy-MT2, ou prépare le modèle déjà importé dans le diagnostic. Aucun compte, clé API, serveur ou téléchargement automatique. Les langues dépendent du modèle ; une langue refusée n’est pas remplacée. Chaque occurrence et son minutage sont conservés. Les textes et le contexte restent locaux. La préparation peut continuer pendant le visionnage en mode progressif, dans les limites de mémoire et de vitesse du téléphone."
+            TranslationProvider.LOCAL_GGUF -> "Modèle GGUF sur le téléphone : traduction hors ligne avec llama.cpp, en mode automatique, CPU ou GPU OpenCL. Le moteur réellement utilisé et le repli éventuel sont affichés. Choisis un modèle compatible, notamment TranslateGemma ou Hy-MT2, ou prépare le modèle déjà importé dans le diagnostic. Aucun compte, clé API, serveur ou téléchargement automatique. Les langues dépendent du modèle ; une langue refusée n’est pas remplacée. Chaque occurrence et son minutage sont conservés. Les textes et le contexte restent locaux. La préparation peut continuer pendant le visionnage en mode progressif, dans les limites de mémoire et de vitesse du téléphone."
         }
     }
 }

@@ -40,7 +40,9 @@ class TranslationProviderConfig(
     val execution: TranslationExecutionOptions = TranslationExecutionOptions(),
     val localModel: LocalGgufModel? = null,
     val localThreads: Int = 4,
-    val localContext: String = ""
+    val localContext: String = "",
+    val localProfile: LocalGgufProfile = LocalGgufProfile.AUTO,
+    val localExecution: String = "AUTO"
 ) {
     override fun toString(): String = "TranslationProviderConfig(provider=${provider.id}, credentials=hidden)"
 }
@@ -72,7 +74,12 @@ class TranslationFailure(val reason: Reason) : IOException(reason.message) {
         GOOGLE_BLOCKED("Google limite ou bloque temporairement cet accès non officiel. Les résultats validés sont conservés. Attends avant de reprendre ou choisis explicitement un autre moteur."),
         MODEL_DOWNLOAD("Modèles Google non disponibles ou téléchargement interrompu. Connecte le téléphone au Wi-Fi ou autorise explicitement les données mobiles, puis reprends."),
         LOCAL_TRANSLATION("Le moteur local n’a pas pu terminer ce lot. Les sous-titres validés sont conservés ; reprends ou choisis un autre moteur."),
-        LOCAL_MODEL("Le modèle GGUF sélectionné est absent, a changé ou n’est pas compatible avec ce moteur. Choisis à nouveau un modèle pris en charge ; les occurrences validées restent conservées."),
+        LOCAL_MODEL("Le moteur n’a pas pu charger ce modèle GGUF. Son format, ses tenseurs ou les ressources nécessaires peuvent être en cause. Les occurrences validées restent conservées."),
+        LOCAL_MODEL_MISSING("La copie privée du modèle GGUF est absente ou inaccessible. Choisis à nouveau son fichier ; les occurrences validées restent conservées."),
+        LOCAL_MODEL_CHANGED("Le modèle préparé a été remplacé ou son empreinte a changé. Sélectionne le modèle actuel avant de reprendre ; les anciens résultats restent liés à leur modèle."),
+        LOCAL_PROFILE("Le profil de traduction de ce modèle GGUF n’a pas pu être reconnu. Choisis explicitement TranslateGemma ou Hy-MT si le fichier appartient à cette famille ; son architecture sera encore vérifiée."),
+        LOCAL_BACKEND("Le moteur de calcul local demandé n’est pas disponible ou n’a pas pu exécuter ce modèle. Pour un échec GPU OpenCL, choisis Automatique afin d’autoriser un repli CPU signalé, ou CPU pour un essai séparé."),
+        LOCAL_MEMORY("La mémoire nécessaire au modèle local n’a pas pu être allouée. Les occurrences validées restent conservées ; libère des ressources ou choisis un modèle moins volumineux avant de reprendre."),
         LOCAL_BUSY("Un autre calcul ou import de modèle local est en cours. Attends sa fin ou annule-le avant de reprendre cette traduction."),
         LOCAL_CONTEXT("Cette occurrence dépasse le contexte que le modèle peut traiter. Sa traduction n’a pas été validée ; aucune partie manquante n’est ignorée."),
         LOCAL_TRUNCATED("Le modèle a atteint sa limite de sortie avant de terminer cette occurrence. Le texte incomplet est refusé ; les occurrences déjà validées sont conservées."),
@@ -189,7 +196,7 @@ object TranslationEngines {
                 LocalGgufTranslationEngine(
                     context ?: throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION),
                     config.localModel ?: throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION),
-                    config.localThreads, config.localContext)
+                    config.localThreads, config.localContext, config.localProfile, config.localExecution)
             }
             else -> HttpEngine(config, transport, TranslationRequestPacing())
         }
@@ -201,7 +208,7 @@ object TranslationEngines {
     fun identity(config: TranslationProviderConfig): String {
         if (config.provider == TranslationProvider.LOCAL_GGUF) return LocalGgufTranslationEngine.identity(
             config.localModel ?: throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION),
-            config.localThreads, config.localContext)
+            config.localThreads, config.localContext, config.localProfile, config.localExecution)
         if (config.provider != TranslationProvider.LIBRE) return config.provider.id
         val endpoint = libreEndpoint(config.endpoint).toASCIIString()
         val digest = MessageDigest.getInstance("SHA-256").digest(endpoint.toByteArray(Charsets.UTF_8))

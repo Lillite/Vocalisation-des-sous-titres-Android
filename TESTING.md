@@ -2,26 +2,60 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Essais sur téléphone](docs/TESTS_TELEPHONE.md) · [Contribution](CONTRIBUTING.md)
 
-## Candidate 0.5.4-local — validation à établir
+## Candidate 0.5.5-perf — validation à établir
 
-Les sources de la candidate préparent **0.5.4-local / code 11**, avec l’identité Android conservée. Le [guide](docs/TRADUCTION_GGUF_054.md) décrit l’import et l’identification d’un GGUF, la traduction CPU d’un SRT indépendant ou de la piste choisie, la reprise et l’export. La traduction reste indépendante de l’OCR. Aucune exécution GPU/NPU ni qualité linguistique universelle n’est revendiquée.
-
-Les contrôles de cette étape doivent couvrir :
+Les sources de la candidate préparent **0.5.5-perf / code 12**, avec l’identité Android conservée. Le [guide des performances](docs/TRADUCTION_GGUF_055.md) décrit les optimisations CPU, le GPU facultatif à mesurer, le cache de préfixe exact et le correctif de reconnaissance Hy-MT2. Traduction et OCR restent indépendants ; le NPU et l’OCR ne sont pas intégrés. Aucun gain de vitesse ou de qualité linguistique n’est déduit des tests synthétiques.
 
 | Groupe | Vérifications requises |
 | --- | --- |
-| Modèle | Import consenti, copie atomique, empreinte du contenu, annulation, ancienne copie conservée, exclusion d’une mutation pendant l’usage, préparation du modèle déjà importé et refus d’une identité périmée. |
-| Runtime JNI | Chargement réel une fois pour plusieurs générations, fin EOS distincte d’une limite de sortie, entrées longues et Unicode, contexte réinitialisé, annulation, fermeture, indisponibilité du service et erreur explicite. |
-| Traduction | Consignes et langues prises en charge, contexte récent borné, segmentation sans perte, source non modifiée, conservation des identifiants, répétitions et chevauchements, refus des réponses incomplètes. |
-| Progression | Sauvegarde de chaque occurrence validée, reprise après recréation sans renvoyer le préfixe, identité liée au modèle et aux options, distinction des requêtes locales et des reprises facturables en ligne. |
-| Lecteur et export | SRT autonome, export complet UTF-8 réimportable, tampon progressif, attente avant un texte manquant, Pause volontaire et déplacement prioritaires, réponses tardives sans reprise. |
-| Interface | Choix local explicite, clés et options réseau masquées lorsqu’elles ne s’appliquent pas, progression et erreurs perceptibles, grands caractères et défilement. |
+| Profil et erreurs | Métadonnées du GGUF officiel Hy-MT2, refus des profils ambigus, distinction accès/copie périmée/profil/chargement/backend/génération, détail technique expurgé. |
+| CPU et GPU | Chemin CPU conservé, backend GPU facultatif, absence de pilote et échecs perceptibles, backend demandé distinct de l’exécution et du déport réellement constatés. |
+| Empaquetage natif | ARM64 OpenCL/KleidiAI et x86_64 CPU ; `libOpenCL.so` facultative au manifeste, aucune copie de ce pilote dans l’APK et aucun `DT_NEEDED` obligatoire vers lui ; licences et copyrights conservés. |
+| Préfixe natif | Identité exacte des tokens, résultat équivalent au chemin sans réutilisation, bornes de contexte, remise à zéro après interruption/erreur et exclusion des états périmés. |
+| Mesures | Temps de chargement, consigne et génération séparés ; nombre de tokens calculés et réutilisés ; aucune affirmation GPU ou gain arbitraire à partir du seul inventaire. |
+| Occurrences et lecteur | SRT autonome, répétitions, chevauchements, segmentation Unicode, sorties incomplètes, annulation/reprise, export complet ; pause, déplacement et callbacks périmés toujours prioritaires. |
+| Interface et stockage | Choix explicite CPU/GPU, état du modèle fiable, paramètres de reprise compatibles, progression et erreurs perceptibles, grands caractères et défilement. |
 
-Le modèle miniature terminant est généré dans les **assets de l’APK d’instrumentation seulement**. Il n’est pas un modèle entraîné et n’est pas distribué dans l’APK principal. Son exécution JNI vérifie le moteur et le cycle de vie, pas la fidélité d’une traduction. Les autres réponses contrôlées des tests JVM restent distinguées d’une vraie génération native.
+L’inventaire final contient **178 tests noyau, 410 tests JVM application et 110 tests Android**, soit **698 méthodes distinctes attendues**. Les lanceurs exigent ces effectifs et les identités exactes dans les XML du run concerné. Cet inventaire n’annonce pas leur réussite. Les **662 tests réussis de la 0.5.4**, les **600 de la 0.5.3** et les **567 de la 0.5.2 ci-dessous sont historiques** ; ils ne valident pas cette candidate. Aucun succès de compilation, de test, de TalkBack réel, de qualité linguistique ou de performance du téléphone n’est annoncé avant son exécution correspondante. Aucun modèle de production ni texte personnel n’est téléchargé ou téléversé pour ces régressions.
 
-L’inventaire de cette candidate contient **178 tests noyau, 375 tests JVM application et 109 tests Android**, soit **662 méthodes distinctes attendues**. Les lanceurs exigent ces effectifs et les identités exactes dans les XML du run concerné. Cet inventaire n’annonce pas leur réussite. Les **600 méthodes réussies de la 0.5.3** et les **567 méthodes de la 0.5.2 ci-dessous sont historiques**. Aucun succès de compilation, de test, de TalkBack réel, de qualité linguistique ou de performance du téléphone n’est déduit de la présence des tests. Les poids de production ne sont pas téléchargés automatiquement et les nouveaux essais n’envoient ni vidéo ni texte personnel à un service.
+Le modèle miniature terminant reste généré dans les **assets de l’APK d’instrumentation seulement**, jamais dans l’APK principal. Ses générations réelles vérifient JNI et le cycle de vie ; les doubles contrôlés JVM restent distincts. L’émulateur ne démontre pas un calcul GPU sur le OnePlus ni le gain d’un modèle de production.
 
-La distribution exige ensuite une reconstruction issue de la fusion validée, le même contenu applicatif que l’APK testé et le certificat durable `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d`. La signature éphémère de CI ne remplace pas ce certificat et aucun APK de cette candidate n’est annoncé comme livré avant vérification. La 0.5.2 publiée reste la stable recommandée.
+Avant fusion, la proposition exacte doit construire puis tester l’APK release dans GitHub Actions. Après la fusion à deux parents, une reconstruction vérifie la provenance et le même contenu applicatif hors signature, **sans rejouer les suites**. La distribution exige le certificat durable `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d`, puis le contrôle des fichiers publics. La 0.5.2 reste la stable recommandée.
+
+### Contrôles locaux exécutés sur l’outillage
+
+Les **59 tests Python hors réseau** ont réussi pour les scripts de cette candidate : **20** de publication, **23** de synchronisation de l’historique, **10** de nettoyage documentaire et **6** de provenance après fusion. Ils vérifient les refus, l’identité de la release, la préversion sans changement de dernière stable et le contenu applicatif hors signature. Ils ne compilent pas l’application et ne remplacent pas les suites Kotlin, JNI ou Android propres à la nouvelle candidate.
+
+### Contrôles locaux de construction et reprises ciblées
+
+Le passage des tâches requises `:core:test :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest` a réussi en **2 min 53 s**, avec les deux architectures natives, OpenCL et KleidiAI pour ARM64. Lint rapporte **0 erreur et 97 avertissements**. Les inspections des APK ont confirmé les alignements ELF/ZIP de 16 Kio, le manifeste attendu, le modèle terminant uniquement dans l’APK de tests, les licences conservées et l’absence de pilote OpenCL embarqué ou de dépendance `DT_NEEDED` obligatoire vers lui. Ces contrôles ne signifient pas que les tests Android ont été exécutés ni qu’un GPU de téléphone a calculé.
+
+Une première compilation Kotlin incrémentale a rencontré un doublon de cache de helper. La reprise de compilation principale, JVM et Android avec l’incrémentalité désactivée a réussi en **1 min 06 s**. Les sources n’ont pas été remplacées par des stubs et les protections applicatives n’ont pas été abaissées.
+
+Un premier lot ciblé de **141 méthodes JVM** a produit **133 réussites et 8 échecs** dus à l’espace temporaire : l’environnement overlay rapportait `File.usableSpace == 0`, donc les imports de fixtures étaient refusés par le garde-fou réel de stockage. Les huit échecs appartenaient à cinq essais de benchmark, deux de stockage du modèle et un de contrôles SRT. Les trois classes concernées ont ensuite été rejouées intégralement avec le répertoire temporaire Java sur un espace RAM réellement disponible : **5 + 13 + 5 = 23 réussites**, sans échec, erreur ni test ignoré. Aucun garde-fou de production ni mesure d’espace n’a été simulé pour obtenir ce résultat. Ces passages distincts ne sont pas présentés comme une nouvelle campagne complète de 141 réussites sur l’état final.
+
+La dernière reprise locale ciblée a réussi en **1 min 47 s** : **22 méthodes JVM**, réparties en **7** de runtime, **6** de contrôles du modèle, **5** de benchmark, **3** d’interface du benchmark et **1** de reconstruction de l’activité. La compilation incrémentale des deux architectures, l’APK AndroidTest et lint ont également réussi, avec **0 erreur et 97 avertissements** lint. Ce lot ciblé ne remplace pas l’inventaire complet de **698 méthodes attendu en CI**.
+
+L’essai natif hôte a comparé une réutilisation de préfixe avec un calcul neuf sur une fixture sensible au contexte, aux poids d’attention non nuls : différence maximale des logits **0** pour les cas testés. Cette vérification CPU hôte ne mesure ni traduction de production, ni GPU du téléphone, ni gain prolongé. Les suites finales de la proposition exacte restent à exécuter avant fusion.
+
+Le dernier smoke test natif hôte et l’ancienne sonde ont aussi réussi après les corrections de reconnaissance des messages d’offload. Le helper sensible au contexte est réservé à l’essai hôte et absent des APK. Ces essais ne transforment pas une déclaration de backend ou un chargement de couches en preuve de calcul GPU sur le téléphone.
+
+## Préversion publiée 0.5.4-local — résultats vérifiés
+
+La [PR #20](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/20) a été validée dans le [run 40700699288](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40700699288), avec **178 tests noyau, 375 tests JVM application et 109 tests instrumentés Android**, soit **662 réussites sans échec, erreur ni test ignoré**. L’instrumentation portait sur l’APK release de test et exécutait le runtime CPU avec le modèle miniature synthétique terminant.
+
+La fusion a produit `6797e59a19053b375a24f8b7bb1c8e6beb48f478`, arbre `2afa49e2be8d24f56c8430e7de0c0da99c3b62fc`. Le [run après fusion 40706287348](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40706287348) a vérifié le même arbre et les mêmes parents que la fusion testée, reconstruit la release et comparé son contenu applicatif hors signature, **sans rejouer les suites**. Le [run de publication 40708944236](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40708944236) a réussi après signature durable. Le téléchargement public indépendant a retrouvé exactement le fichier signé.
+
+| Repère | Valeur vérifiée |
+| --- | --- |
+| APK publié | `SousTitresVoix-0.5.4-local.apk`, **53 647 479 octets** |
+| Identité et version | `fr.soustitresvoix.player.translation`, `0.5.4-local`, code **11** |
+| SHA-256 APK | `d98184d6c54a0beccbe38ceff9fa7a6431037bb5a4c2d384781f6c540d628210` |
+| Certificat SHA-256 | `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d` |
+| Release / asset APK | `426794876` / `685300135` |
+| Publication | Préversion, sans remplacer la dernière stable 0.5.2 |
+
+Le [guide 0.5.4](docs/TRADUCTION_GGUF_054.md) conserve le parcours publié. CPU seul, traduction textuelle locale, reprise et export étaient validés techniquement ; ni GPU, NPU, OCR, qualité linguistique universelle ou débit prolongé du téléphone n’en sont déduits. Le refus lié aux métadonnées du GGUF officiel Hy-MT2 a été identifié après publication et fait l’objet de la candidate suivante.
 
 ### Contrôle local des assets de test
 
@@ -667,7 +701,7 @@ Contrôler ensuite chaque rapport JVM contre les méthodes attendues :
 
 ```sh
 python3 tools/verify-test-results.py --reports core/build/test-results/test --expected-count 178 --sources core/src/test/kotlin --output build/verification/local-debug-core-summary.json
-python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 375 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
+python3 tools/verify-test-results.py --reports app/build/test-results/testDebugUnitTest --expected-count 410 --sources app/src/test/java --output build/verification/local-debug-app-summary.json
 ```
 
 Pour une preuve finale, fournir aussi `--not-before-ns` avec l’instant de début

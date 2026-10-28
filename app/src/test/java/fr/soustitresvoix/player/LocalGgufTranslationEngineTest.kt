@@ -26,16 +26,21 @@ class LocalGgufTranslationEngineTest {
         var opens = 0
         var closes = 0
         var cancels = 0
+        var awaitedCloses = 0
+        val modes = mutableListOf<String>()
         val prompts = mutableListOf<String>()
         var generate: (String, () -> Boolean) -> LocalGgufBackend.Generation = { _, _ -> LocalGgufBackend.Generation("Bonjour.") }
-        override fun open(file: File, threads: Int, contextTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Info {
-            opens++; assertEquals(2048, contextTokens); return metadata
+        var onOpen: () -> Unit = {}
+        var onAwaitedClose: () -> Unit = {}
+        override fun open(file: File, threads: Int, contextTokens: Int, cancelled: () -> Boolean, executionMode: String): LocalGgufBackend.Info {
+            opens++; modes += executionMode; assertEquals(2048, contextTokens); onOpen(); return metadata
         }
         override fun generate(prompt: String, maxOutputTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Generation {
             prompts += prompt; assertEquals(512, maxOutputTokens); return generate(prompt, cancelled)
         }
         override fun cancel() { cancels++ }
         override fun close() { closes++ }
+        override fun closeAndAwait(cancelled: () -> Boolean, timeoutMs: Long) { awaitedCloses++; onAwaitedClose(); close() }
     }
     private data class Fixture(val store: LocalGgufModelStore, val model: LocalGgufModel)
     private fun fixture(): Fixture {
@@ -97,7 +102,7 @@ class LocalGgufTranslationEngineTest {
         val fixture = fixture()
         val backend = Backend(LocalGgufBackend.Info("Google Gemma 3 4B IT", "gemma3"))
         val failure = fails<TranslationFailure> { engine(fixture, backend).translate(listOf("Hello."), "en", "fr") { false } }
-        assertEquals(TranslationFailure.Reason.LOCAL_MODEL, failure.reason)
+        assertEquals(TranslationFailure.Reason.LOCAL_PROFILE, failure.reason)
         assertEquals(0, backend.prompts.size)
         assertEquals(1, backend.closes)
         assertTrue(fixture.store.remove())
@@ -109,7 +114,7 @@ class LocalGgufTranslationEngineTest {
         val engine = engine(fixture, backend)
         fixture.store.acquireMutationLease().use { fixture.store.invalidatePrepared() }
         val failure = fails<TranslationFailure> { engine.translate(listOf("Hello."), "en", "fr") { false } }
-        assertEquals(TranslationFailure.Reason.LOCAL_MODEL, failure.reason)
+        assertEquals(TranslationFailure.Reason.LOCAL_MODEL_CHANGED, failure.reason)
         assertEquals(0, backend.opens)
         engine.close()
     }
@@ -219,7 +224,9 @@ class LocalGgufTranslationEngineTest {
         assertNotEquals(base, LocalGgufTranslationEngine.identity(fixture.model, threads = 2))
         assertNotEquals(base, LocalGgufTranslationEngine.identity(fixture.model, context = "A synthetic scene."))
         assertFalse(LocalGgufTranslationEngine.identity(fixture.model, context = "A synthetic scene.").contains("synthetic"))
-        assertTrue(base.matches(Regex("local-gguf-v1-[0-9a-f]{64}")))
+        assertTrue(base.matches(Regex("local-gguf-v2-[0-9a-f]{64}")))
+        assertNotEquals(base, LocalGgufTranslationEngine.identity(fixture.model, profile = LocalGgufProfile.HY_MT))
+        assertNotEquals(base, LocalGgufTranslationEngine.identity(fixture.model, executionMode = "CPU"))
     }
 
     @Test fun googleLanguageCodesRejectScriptTagsUnknownRegionsAndInventedLanguages() {
@@ -232,5 +239,139 @@ class LocalGgufTranslationEngineTest {
         LocalGgufPrompts.validateLanguage(LocalGgufPrompts.Family.TRANSLATE_GEMMA, "en-GB")
         LocalGgufPrompts.validateLanguage(LocalGgufPrompts.Family.TRANSLATE_GEMMA, "pt_BR")
         LocalGgufPrompts.validateLanguage(LocalGgufPrompts.Family.HY_MT, "zh-Hant")
+    }
+
+    @Test fun explicitProfileSupportsGenericPublisherNameButStillChecksArchitecture() {
+        val fixture = fixture()
+        val backend = Backend(LocalGgufBackend.Info("Global_Step_560", "hunyuan-dense"))
+        val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { backend }, profile = LocalGgufProfile.HY_MT)
+        assertEquals(listOf("Bonjour."), engine.translate(listOf("Hello."), "en", "fr") { false })
+        assertTrue(backend.prompts.single().startsWith("<|startoftext|>"))
+        engine.close()
+        val wrong = Backend(LocalGgufBackend.Info("Global_Step_560", "gemma3"))
+        val wrongEngine = LocalGgufTranslationEngine(fixture.model, fixture.store, { wrong }, profile = LocalGgufProfile.HY_MT)
+        assertEquals(TranslationFailure.Reason.LOCAL_PROFILE,
+            fails<TranslationFailure> { wrongEngine.translate(listOf("Hello."), "en", "fr") { false } }.reason)
+        assertTrue(wrong.prompts.isEmpty())
+        wrongEngine.close()
+    }
+
+    @Test fun missingPrivateCopyHasADifferentErrorFromChangedIdentityOrUnknownProfile() {
+        val fixture = fixture()
+        val backend = Backend()
+        val engine = engine(fixture, backend)
+        assertTrue(fixture.store.remove())
+        val failure = fails<TranslationFailure> { engine.translate(listOf("Hello."), "en", "fr") { false } }
+        assertEquals(TranslationFailure.Reason.LOCAL_MODEL_MISSING, failure.reason)
+        assertEquals(0, backend.opens)
+        engine.close()
+    }
+
+    @Test fun automaticDriverFailureWaitsForUnloadingBeforeStartingCpuAndReportsFallback() {
+        val fixture = fixture()
+        val gpuReleased = AtomicBoolean(false)
+        val gpu = Backend(LocalGgufBackend.Info("TranslateGemma 4B", "gemma3",
+            LocalTranslationPerformance(phase = "load", backend = "OPENCL"))).apply {
+            generate = { _, _ -> throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.BACKEND) }
+            onAwaitedClose = { gpuReleased.set(true) }
+        }
+        val cpu = Backend().apply { onOpen = { assertTrue("GPU release must precede CPU allocation", gpuReleased.get()) } }
+        var creations = 0
+        val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { if (creations++ == 0) gpu else cpu })
+        val reports = mutableListOf<LocalTranslationPerformance>()
+        engine.setPerformanceListener(reports::add)
+        assertEquals(listOf("Bonjour."), engine.translate(listOf("Hello."), "en", "fr") { false })
+        assertEquals(listOf("AUTO"), gpu.modes)
+        assertEquals(listOf("CPU"), cpu.modes)
+        assertEquals(1, gpu.awaitedCloses)
+        assertEquals(2, creations)
+        assertTrue(reports.any { it.phase == "fallback" && it.fallbackReason.isNotBlank() })
+        assertEquals("AUTO", reports.last().requestedMode)
+        assertEquals("CPU", reports.last().backend)
+        engine.close()
+    }
+
+    @Test fun failedUnloadingReceiptPreventsCpuRetryAndKeepsTheErrorVisible() {
+        val fixture = fixture()
+        val gpu = Backend(LocalGgufBackend.Info("TranslateGemma 4B", "gemma3",
+            LocalTranslationPerformance(phase = "load", backend = "OPENCL"))).apply {
+            generate = { _, _ -> throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.BACKEND) }
+            onAwaitedClose = { throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.TIMEOUT) }
+        }
+        var creations = 0
+        val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { creations++; gpu })
+        val failure = fails<TranslationFailure> { engine.translate(listOf("Hello."), "en", "fr") { false } }
+        assertEquals(TranslationFailure.Reason.LOCAL_PROCESS, failure.reason)
+        assertEquals(1, creations)
+        assertEquals(1, gpu.awaitedCloses)
+        engine.close()
+    }
+
+    @Test fun automaticOpenFailureAlsoWaitsForItsNativeSessionBeforeCpuRetry() {
+        val fixture = fixture()
+        val released = AtomicBoolean(false)
+        val gpu = Backend().apply {
+            onOpen = { throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.DIED) }
+            onAwaitedClose = { released.set(true) }
+        }
+        val cpu = Backend().apply { onOpen = { assertTrue(released.get()) } }
+        var creations = 0
+        val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { if (creations++ == 0) gpu else cpu })
+        assertEquals(listOf("Bonjour."), engine.translate(listOf("Hello."), "en", "fr") { false })
+        assertEquals(1, gpu.awaitedCloses)
+        assertEquals(listOf("CPU"), cpu.modes)
+        engine.close()
+    }
+
+    @Test fun explicitCpuAndOpenClNeverSilentlyRetryWithAnotherBackend() {
+        for (mode in listOf("CPU", "OPENCL")) {
+            val fixture = fixture()
+            val backend = Backend().apply {
+                generate = { _, _ -> throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.BACKEND) }
+            }
+            var creations = 0
+            val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { creations++; backend }, executionMode = mode)
+            val failure = fails<TranslationFailure> { engine.translate(listOf("Hello."), "en", "fr") { false } }
+            assertEquals(TranslationFailure.Reason.LOCAL_BACKEND, failure.reason)
+            assertEquals(1, creations)
+            assertEquals(listOf(mode), backend.modes)
+            engine.close()
+        }
+    }
+
+    @Test fun performanceListenerKeepsMeasuredValuesAndCannotBreakTranslation() {
+        val fixture = fixture()
+        val backend = Backend().apply { generate = { _, _ -> LocalGgufBackend.Generation("Bonjour.", performance =
+            LocalTranslationPerformance(backend = "OPENCL", device = "Synthetic GPU", gpuObserved = true,
+                promptMs = 40, generationMs = 60, promptTokens = 50, generatedTokens = 6,
+                cachedPromptTokens = 30, promptEvaluatedTokens = 20, gpuGraphNodes = 4,
+                currentRssBytes = 1024, availableRamBytes = 4096)) } }
+        val engine = engine(fixture, backend)
+        val reports = mutableListOf<LocalTranslationPerformance>()
+        engine.setPerformanceListener { reports += it; throw IllegalStateException("Observer failure") }
+        assertEquals(listOf("Bonjour."), engine.translate(listOf("Hello."), "en", "fr") { false })
+        val report = reports.last()
+        assertTrue(report.gpuObserved)
+        assertEquals(30, report.cachedPromptTokens)
+        assertEquals(20, report.promptEvaluatedTokens)
+        assertEquals(100.0, report.tokensPerSecond, 0.0)
+        assertFalse(report.render().contains("Bonjour"))
+        assertFalse(report.render().contains("Hello"))
+        engine.close()
+    }
+
+    @Test fun confirmedWorkerUnloadingStillWorksAfterAsyncUiClose() {
+        val fixture = fixture()
+        val backend = Backend()
+        val engine = engine(fixture, backend)
+        engine.translate(listOf("Hello."), "en", "fr") { false }
+        engine.close()
+        val failure = AtomicReference<Throwable?>()
+        val worker = Thread { try { engine.closeAndAwait(); engine.closeAndAwait() } catch (caught: Throwable) { failure.set(caught) } }
+        worker.start(); worker.join(3000)
+        assertFalse(worker.isAlive)
+        assertNull(failure.get())
+        assertEquals(1, backend.awaitedCloses)
+        assertTrue(fixture.store.remove())
     }
 }
