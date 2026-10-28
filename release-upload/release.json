@@ -1,0 +1,9 @@
+{
+  "tag": "v0.5.3-diagnostic",
+  "source_sha": "3b68b118c3f7d21ef47a47e6eb5611ceb34f2055",
+  "apk_sha256": "c622d3f49bced6f1afeb8abd35060841cc2f7636f75576e5e6c1bc5af18d80d1",
+  "signer_sha256": "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d",
+  "apk_file": "release-upload/SousTitresVoix-0.5.3-diagnostic.apk",
+  "notes_file": "release-upload/notes.md",
+  "title": "Sous-titres en voix 0.5.3 — Diagnostic local (préversion)"
+}
