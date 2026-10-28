@@ -70,8 +70,9 @@ Modes d'exécution :
   nombre de couches peut être borné explicitement ; il n'y a pas d'autotuning
   de déport partiel dans cette version.
 
-Les en-têtes OpenCL, le chargeur Khronos statique et KleidiAI sont épinglés par
-SHA-256 dans CMake. Le chargeur constructeur `libOpenCL.so` n'est ni empaqueté
+Les en-têtes OpenCL et KleidiAI sont épinglés par SHA-256 dans CMake.
+L’adaptateur C statique de l’application remplace le chargeur ICD et transmet
+directement les appels au pilote, sans exiger son extension ICD. Le chargeur constructeur `libOpenCL.so` n'est ni empaqueté
 ni une dépendance `DT_NEEDED` obligatoire du JNI : il est ouvert uniquement pour
 une demande GPU. Le manifeste le déclare optionnel. Le registre OpenCL est
 ajouté explicitement après détection ; un repli CPU dans un nouveau processus

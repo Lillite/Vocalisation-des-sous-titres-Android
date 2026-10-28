@@ -16,6 +16,7 @@ class LocalGgufDiagnosticTest {
 
     @Test fun onlyKnownCodesAndMeasurementsRoundTripWithoutExtraText() {
         val source = sample().put("privatePath", "/private/synthetic-model.gguf")
+            .put("missingSymbol", "/private/synthetic-symbol-not-an-ICD-measurement")
             .put("output", "Synthetic subtitle that must not be copied into the diagnostic.")
         val value = requireNotNull(LocalGgufDiagnostic.parse(source))
         assertEquals(LocalGgufDiagnostic.Stage.OPENCL_ICD, value.stage)
@@ -26,6 +27,8 @@ class LocalGgufDiagnosticTest {
         assertEquals(0, value.icdPlatforms)
         assertEquals(-1, value.gpuDevices)
         assertTrue(value.probeCached)
+        assertNull(value.missingSymbol)
+        assertFalse(value.toJson().has("missingSymbol"))
         val restored = requireNotNull(LocalGgufDiagnostic.parse(value.toJson()))
         assertEquals(value.render(), restored.render())
         assertTrue(restored.render().contains("déjà mémorisé"))
@@ -34,6 +37,7 @@ class LocalGgufDiagnosticTest {
             assertFalse(text.contains("synthetic-model"))
             assertFalse(text.contains("Synthetic subtitle"))
             assertFalse(text.contains("privatePath"))
+            assertFalse(text.contains("synthetic-symbol"))
         }
     }
 
@@ -74,8 +78,38 @@ class LocalGgufDiagnosticTest {
         assertEquals("CPU", generation.backend)
         assertEquals("AUTO", generation.requestedMode)
         assertFalse(generation.gpuObserved)
+        assertEquals("", generation.openClTransport)
         assertEquals(0L, generation.gpuGraphNodes)
         assertNull(requireNotNull(generation.diagnostic).openClStatus)
         assertFalse(requireNotNull(generation.diagnostic).render().contains("déjà mémorisé"))
+    }
+
+    @Test fun missingDirectFunctionsHaveAFixedLocalizedReasonWithoutDriverText() {
+        val source = sample().put("stage", "OPENCL_DIRECT").put("reason", "DIRECT_SYMBOLS_MISSING")
+            .put("icdPlatforms", -1).put("openClStatus", JSONObject.NULL).put("probeCached", false)
+            .put("missingSymbol", "clCreateBuffer")
+            .put("driverError", "/private/synthetic-driver.so: confidential synthetic error")
+        val diagnostic = requireNotNull(LocalGgufDiagnostic.parse(source))
+        assertEquals(LocalGgufDiagnostic.Stage.OPENCL_DIRECT, diagnostic.stage)
+        assertEquals(LocalGgufDiagnostic.Reason.DIRECT_SYMBOLS_MISSING, diagnostic.reason)
+        assertEquals(-1, diagnostic.icdPlatforms)
+        assertEquals("clCreateBuffer", diagnostic.missingSymbol)
+        assertTrue(diagnostic.render().contains("fonctions OpenCL nécessaires au calcul direct"))
+        assertTrue(diagnostic.render().contains("DIRECT_SYMBOLS_MISSING"))
+        assertTrue(diagnostic.render().contains("Fonction OpenCL requise absente : clCreateBuffer."))
+        assertEquals("clCreateBuffer", diagnostic.toJson().getString("missingSymbol"))
+        assertEquals(diagnostic.render(), requireNotNull(LocalGgufDiagnostic.parse(diagnostic.toJson())).render())
+        assertFalse(diagnostic.render().contains("synthetic-driver"))
+        assertFalse(diagnostic.toJson().toString().contains("confidential"))
+        for (value in listOf("/private/synthetic-driver.so", "clSyntheticPrivateValue", "clGetKernelSubGroupInfo", 7, true)) {
+            assertNull(LocalGgufDiagnostic.parse(JSONObject(source.toString()).put("missingSymbol", value)))
+        }
+        for (legacy in listOf(JSONObject(source.toString()).apply { remove("missingSymbol") },
+            JSONObject(source.toString()).put("missingSymbol", JSONObject.NULL))) {
+            val unknown = requireNotNull(LocalGgufDiagnostic.parse(legacy))
+            assertNull(unknown.missingSymbol)
+            assertFalse(unknown.render().contains("clCreateBuffer"))
+            assertFalse(unknown.toJson().has("missingSymbol"))
+        }
     }
 }

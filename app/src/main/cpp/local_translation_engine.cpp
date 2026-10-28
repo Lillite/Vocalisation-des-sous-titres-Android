@@ -24,6 +24,7 @@ void diagnose(Response & result, const char * stage, const char * reason, Clock:
     value.stage = stage; value.reason = reason;
     value.elapsed_ms = std::min(86'400'000LL, std::max(0LL, elapsed(start)));
     value.has_opencl_status = false;
+    value.missing_symbol = nullptr;
     value.probe_cached = false;
 }
 long long peak_rss() { struct rusage v{}; return getrusage(RUSAGE_SELF, &v) == 0 ? static_cast<long long>(v.ru_maxrss) * 1024 : 0; }
@@ -124,6 +125,7 @@ std::string Response::json() const {
         << ",\"promptMs\":" << prompt_ms << ",\"generationMs\":" << generation_ms
         << ",\"processId\":" << process_id << ",\"contextTokens\":" << context_tokens << ",\"promptTokens\":" << prompt_tokens
         << ",\"generatedTokens\":" << generated_tokens << ",\"backend\":" << quote(backend) << ",\"device\":" << quote(device)
+        << ",\"openClTransport\":" << quote(opencl_transport)
         << ",\"requestedMode\":" << quote(requested_mode) << ",\"fallbackReason\":" << quote(fallback_reason)
         << ",\"requestedGpuLayers\":" << requested_gpu_layers << ",\"actualGpuLayers\":" << actual_gpu_layers
         << ",\"gpuObserved\":" << (gpu_observed ? "true" : "false") << ",\"gpuGraphNodes\":" << gpu_graph_nodes
@@ -133,6 +135,7 @@ std::string Response::json() const {
         out << ",\"diagnostic\":{\"stage\":" << quote(diagnostic.stage) << ",\"reason\":" << quote(diagnostic.reason)
             << ",\"elapsedMs\":" << diagnostic.elapsed_ms << ",\"openClStatus\":";
         if (diagnostic.has_opencl_status) out << diagnostic.opencl_status; else out << "null";
+        if (diagnostic.missing_symbol) out << ",\"missingSymbol\":" << quote(diagnostic.missing_symbol);
         out << ",\"directPlatforms\":" << diagnostic.direct_platforms << ",\"icdPlatforms\":" << diagnostic.icd_platforms
             << ",\"gpuDevices\":" << diagnostic.gpu_devices << ",\"probeCached\":" << (diagnostic.probe_cached ? "true" : "false") << '}';
     }
@@ -178,7 +181,7 @@ Response Session::open(const std::string & path, int threads, int context_tokens
             if (!cache_path.empty() && cache_path.find('\0') == std::string::npos)
                 setenv("GGML_OPENCL_KERNEL_CACHE_DIR", cache_path.c_str(), 1);
             const bool prepared = subtitle_native::prepare_opencl(&result.diagnostic);
-            if (prepared) gpu = opencl_device();
+            if (prepared) { result.opencl_transport = "DIRECT"; gpu = opencl_device(); }
             if (!gpu) {
                 if (prepared) diagnose(result, "OPENCL_DEVICE", "DEVICE_NOT_REGISTERED", open_start);
                 else result.diagnostic.elapsed_ms = std::min(86'400'000LL, std::max(0LL, elapsed(open_start)));
@@ -224,6 +227,7 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         state_->gpu_selected = use_gpu;
         result.load_ms = elapsed(load_start);
         result.backend = use_gpu ? "OPENCL" : "CPU";
+        result.opencl_transport = use_gpu ? "DIRECT" : "";
         result.device = use_gpu ? ggml_backend_dev_description(gpu) : cpu_description;
         result.actual_gpu_layers = use_gpu ? subtitle_native::observed_offload_layers() : 0;
         result.name = metadata(state_->model.get(), "general.name");
@@ -317,6 +321,7 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
             diagnose(result, "GENERATION", "NO_GPU_EXECUTION", generate_start);
             if (result.requested_mode == "OPENCL") return failed("BACKEND", "no_gpu_execution");
             result.backend = "CPU"; result.device = "CPU"; result.fallback_reason = "OPENCL_NO_COMPUTE";
+            result.opencl_transport.clear();
         }
         state_->previous_prompt = std::move(tokens);
         measure_memory(result);

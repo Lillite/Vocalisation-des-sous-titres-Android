@@ -29,17 +29,13 @@ template<class Api> bool run(Api & api, ExecutionDiagnostic & diagnostic) noexce
         if (diagnostic.opencl_status != 0) return failed("DIRECT_QUERY_FAILED");
         diagnostic.direct_platforms = bounded_count(count);
         if (count == 0) return failed("DIRECT_NO_PLATFORM");
-        diagnostic.stage = "OPENCL_ICD";
         diagnostic.has_opencl_status = false;
-        // Khronos ICD needs this extension even if the direct vendor query works.
-        if (!api.has_icd_entry_point()) return failed("ICD_ENTRY_POINT_MISSING");
-        if (!api.configure_icd()) return failed("ICD_CONFIGURATION_FAILED");
-        count = 0;
-        diagnostic.opencl_status = api.icd_platforms(&count);
-        diagnostic.has_opencl_status = true;
-        if (diagnostic.opencl_status != 0) return failed("ICD_QUERY_FAILED");
-        diagnostic.icd_platforms = bounded_count(count);
-        if (count == 0) return failed("ICD_NO_PLATFORM");
+        // Bind the vendor's C entry points themselves. A working Android driver
+        // need not implement Khronos' separate multi-vendor ICD extension.
+        if (!api.bind_direct_api()) {
+            diagnostic.missing_symbol = api.missing_symbol();
+            return failed("DIRECT_SYMBOLS_MISSING");
+        }
         diagnostic.stage = "OPENCL_DEVICE";
         diagnostic.has_opencl_status = false;
         count = 0;

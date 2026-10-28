@@ -51,6 +51,7 @@ class LocalGgufRuntimeAndroidTest {
             assertEquals("llama", info.architecture)
             assertTrue(info.modelBytes > 0 && info.modelParameters > 0)
             assertEquals(512, info.contextTokens)
+            assertEquals("", info.openClTransport)
             assertTrue(info.processId > 0)
             assertNotEquals(Process.myPid(), info.processId)
             for (prompt in listOf("The train leaves at seven.", "An independent synthetic request with é and 🚆.")) {
@@ -59,6 +60,7 @@ class LocalGgufRuntimeAndroidTest {
                 assertEquals(1, result.generatedTokens)
                 assertEquals("end_of_generation", result.stopReason)
                 assertTrue(result.promptTokens > 0 && result.peakRssBytes > 0)
+                assertEquals("", result.openClTransport)
             }
             val done = CountDownLatch(1)
             val result = AtomicReference<LocalModelProbe.Result>()
@@ -94,6 +96,7 @@ class LocalGgufRuntimeAndroidTest {
         try {
             val info = cpu.open(file, 1, 512, executionMode = "CPU")
             assertEquals("CPU", info.backend)
+            assertEquals("", info.openClTransport)
             assertFalse(info.gpuObserved)
             val cold = cpu.generate("Prefix cache synthetic request.", 1, true)
             val warm = cpu.generate("Prefix cache synthetic request.", 1, true)
@@ -102,6 +105,8 @@ class LocalGgufRuntimeAndroidTest {
             assertEquals(warm.promptTokens - 1, warm.cachedPromptTokens)
             assertEquals(1, warm.promptEvaluatedTokens)
             assertFalse(warm.gpuObserved)
+            assertEquals("", cold.openClTransport)
+            assertEquals("", warm.openClTransport)
             assertEquals(0L, warm.gpuGraphNodes)
             // This barrier is valid even when an asynchronous UI close happened first.
             cpu.close()
@@ -110,11 +115,21 @@ class LocalGgufRuntimeAndroidTest {
             try {
                 val auto = next.open(file, 1, 512, executionMode = "AUTO")
                 assertEquals("AUTO", auto.requestedMode)
-                if (auto.backend == "CPU") assertTrue(auto.fallbackReason.isNotEmpty())
+                if (auto.backend == "CPU") {
+                    assertTrue(auto.fallbackReason.isNotEmpty())
+                    assertEquals("", auto.openClTransport)
+                } else {
+                    assertEquals("OPENCL", auto.backend)
+                    assertEquals("DIRECT", auto.openClTransport)
+                }
                 val output = next.generate("Independent backend comparison.", 1, true)
                 assertEquals(" probe", output.output)
                 assertEquals(0, output.cachedPromptTokens)
-                if (auto.backend == "CPU") { assertFalse(output.gpuObserved); assertEquals(0L, output.gpuGraphNodes) }
+                if (output.backend == "CPU") {
+                    assertFalse(output.gpuObserved)
+                    assertEquals(0L, output.gpuGraphNodes)
+                    assertEquals("", output.openClTransport)
+                } else assertEquals("DIRECT", output.openClTransport)
                 if (android.os.Build.SUPPORTED_ABIS.first() == "x86_64") {
                     assertEquals("CPU", auto.backend)
                     assertEquals(auto.fallbackReason, output.fallbackReason)

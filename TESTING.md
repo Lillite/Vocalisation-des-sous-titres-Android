@@ -2,17 +2,61 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Essais sur téléphone](docs/TESTS_TELEPHONE.md) · [Contribution](CONTRIBUTING.md)
 
-## Candidate 0.5.6-opencl — validation à établir
+## Candidate 0.5.7-directcl — validation à établir
 
-Les sources préparent **0.5.6-opencl / code 13**, avec la même identité Android et le même certificat durable. Le [guide](docs/DIAGNOSTIC_OPENCL_056.md) et les [notes](docs/releases/0.5.6-opencl.md) distinguent le correctif de diagnostic d’une résolution encore non démontrée de l’échec GPU. Aucun modèle, poids, quantification ou contexte n’est modifié pour accélérer les mesures.
+Les sources préparent **0.5.7-directcl / code 14**, avec la même identité Android et le même certificat durable. Le [guide](docs/OPENCL_DIRECT_057.md) et les [notes](docs/releases/0.5.7-directcl.md) décrivent le passage par les fonctions du pilote OpenCL sans exiger son extension ICD. Le rapport reçu de la 0.5.6 établit une plateforme directement visible et un échec ICD ; il ne prouve pas une exécution GPU.
+
+Les nouvelles régressions doivent vérifier le véritable parcours de liaison directe avec une bibliothèque synthétique ne fournissant pas l’extension ICD, les fonctions requises manquantes, les fonctions optionnelles, les appels transmis, la concurrence et la conservation des erreurs. Les sources de calcul épinglées, les poids, la quantification, le contexte, les occurrences, les minutages et les protections de Pause, de déplacement et de callbacks périmés restent conservés. Le mode CPU ne doit jamais charger ni sonder le pilote ; l’accès direct et le calcul GPU réel restent des observations distinctes.
+
+L’inventaire final attendu contient **178 tests noyau, 420 tests JVM application et 110 tests Android**, soit **708 méthodes**. La campagne exacte doit construire et tester **l’APK release sous Android 17 / API 37**, avec compilation et ciblage API 36 conservés. Les outils 22.0 et le garde de cible AVD 37.0 introduits pour la 0.5.6 restent requis. Les succès de la 0.5.6 ne valident pas les changements de cette candidate.
+
+Avant fusion, les effectifs et identités exactes doivent être retrouvés dans les XML sans échec, erreur, test ignoré, manquant ou dupliqué. Après fusion à deux parents, une reconstruction doit vérifier la provenance et le contenu applicatif identique hors signature, **sans rejouer les suites réussies**. La distribution exige la signature durable puis un contrôle indépendant des fichiers publics. Aucun résultat de compilation, de test, de GPU du OnePlus, de qualité linguistique, d’autonomie ou de TalkBack réel n’est annoncé avant son exécution correspondante. La **0.5.2 reste la dernière stable**.
+
+### Outillage local 0.5.7
+
+Les **59 tests Python hors réseau** ont réussi : **20** de publication, **23** de synchronisation de l’historique, **10** de nettoyage documentaire et **6** de provenance après fusion. Les outils locaux de préparation ont aussi passé **8 vérifications synthétiques** : refus d’une provenance ou d’un checksum modifié, d’un fichier public supplémentaire, de propriétés ambiguës, formatage des notes et restauration exacte des parties de transport. Aucun fichier de clé, artefact réel, signature ou téléversement n’a été utilisé pour ces huit essais. Ces résultats sont distincts des suites applicatives et de l’instrumentation Android attendues.
+
+### Vérifications locales de la candidate 0.5.7
+
+La compilation Kotlin principale, JVM et AndroidTest et **44 méthodes JVM ciblées** ont réussi en **4 min 43 s** : diagnostic **4**, runtime **9**, moteur **23** et benchmark **8**, sans échec, erreur ni test ignoré. Ce passage ne remplace pas la campagne complète de 708 méthodes attendues sur la proposition finale.
+
+Le test natif de liaison directe a réellement compilé et chargé des bibliothèques synthétiques sans interface ICD : cas complet, fonctions facultatives absentes et fonction obligatoire absente. Il a vérifié les appels transmis, handles opaques, callbacks, tailles 64 bits, publication concurrente, absence de table partielle et isolement ELF. Les premiers problèmes de compilation du générateur et de ses fixtures ont été corrigés avant le passage final réussi ; ils ne sont pas présentés comme des tests Android réussis. Le même lanceur sera exécuté en CI à partir des en-têtes épinglés du véritable build ARM64.
+
+La construction native hôte a compilé les cibles existantes, puis les essais de traduction, de sonde et de diagnostic ont réussi avec des modèles miniatures synthétiques. La vérification sensible au contexte conserve la comparaison des logits avec et sans réutilisation de préfixe. Aucun de ces essais ne constitue une mesure du pilote ou du GPU physique du OnePlus.
+
+Les tâches requises `:core:test :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest` ont ensuite réussi en **4 min 24 s**. Les **178 tests noyau ont réellement été exécutés** et réussis ; lint rapporte **0 erreur et 97 avertissements**. Les APK ont passé les contrôles du manifeste compilé, des alignements ELF/ZIP de 16 Kio, de l’absence de dépendance obligatoire au pilote et de l’absence de fonctions OpenCL exportées ou non résolues dans notre bibliothèque native. L’APK ARM64 contient le nouveau parcours direct ; l’exigence de fonction ICD n’y figure plus. Le modèle miniature de diagnostic principal est conservé et la fixture terminante de traduction reste uniquement dans l’APK d’instrumentation.
+
+Le nouveau test natif de CI a également réussi localement avec les en-têtes provenant du véritable build ARM64, après vérification de leur empreinte. Cela vérifie le chemin d’intégration de la future étape CI ; cette réussite hôte ne constitue pas un test de GPU physique.
+
+Les **59 tests Python de livraison** ont réussi (publication **20**, historique **23**, nettoyage documentaire **10**, provenance **6**), ainsi que **8 essais synthétiques des helpers privés**. Ces derniers ne lisent aucune clé et ne signent aucun APK réel pendant leurs régressions.
+
+## Préversion publiée 0.5.6-opencl — résultats vérifiés
+
+La [PR #22](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/22) a réussi le [run 40751406769](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40751406769) : **178 tests noyau, 418 tests JVM et 110 tests Android**, soit **706 réussites sans échec, erreur, test ignoré, manquant ou dupliqué**. Les 110 tests portaient sur le véritable APK release dans un émulateur **Android 17 / API 37 / x86_64** ; les rapports ont confirmé la cible AVD android-37.0 et Command-line Tools 22.0.
+
+La fusion a produit **1e982b907c6d322cb4066da743c9a8fefcabe7a2**, arbre **9ae53f6d0df0cb842f3368721c40078369c83caa**. Le [run après fusion 40756758677](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40756758677) a vérifié les mêmes arbre et parents que la proposition testée, puis reconstruit l’APK et retrouvé son contenu applicatif identique hors signature, **sans rejouer les suites**. Le [run de publication 40758848200](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40758848200) a réussi après signature durable et contrôles ; le téléchargement public indépendant a confirmé les octets exacts.
+
+| Repère | Valeur vérifiée |
+| --- | --- |
+| APK publié | SousTitresVoix-0.5.6-opencl.apk, **53 545 770 octets** |
+| Identité et version | fr.soustitresvoix.player.translation, **0.5.6-opencl / code 13** |
+| SHA-256 APK | 58af4d6f4ae9efe65e21877e442275f74bdd6f1168e430dd623885a6eeb9aded |
+| Certificat SHA-256 | 304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d |
+| Release / asset APK | 427128248 / 686168829 |
+| Publication | Préversion, dernière stable 0.5.2 conservée |
+
+Le rapport reçu ensuite du téléphone a confirmé Android 17 / API 37 et les réponses CPU, puis identifié **OPENCL_ICD / ICD_ENTRY_POINT_MISSING**, avec une plateforme accessible directement. Il ne constitue ni un succès GPU ni un manque de mémoire démontré. La candidate suivante prépare une liaison directe. Les paragraphes ci-dessous conservent la préparation de la **0.5.6**, ses vérifications locales et la première campagne interrompue ; ils ne valident pas la 0.5.7.
+
+
+La préparation des sources **0.5.6-opencl / code 13** portait sur cette édition, avec la même identité Android et le même certificat durable. Le [guide](docs/DIAGNOSTIC_OPENCL_056.md) et les [notes](docs/releases/0.5.6-opencl.md) distinguent le correctif de diagnostic d’une résolution encore non démontrée de l’échec GPU. Aucun modèle, poids, quantification ou contexte n’est modifié pour accélérer les mesures.
 
 Les nouvelles régressions doivent vérifier la conservation de l’étape et de la raison bornées depuis le natif jusqu’au rapport, les codes et compteurs inconnus, le refus des données arbitraires, la réutilisation éventuelle d’une préparation échouée et les durées inclusives du premier appel. Les protections de Pause, de déplacement, de callbacks périmés, d’occurrences, de reprise et d’export demeurent requises. Le chemin CPU ne doit jamais ouvrir le pilote OpenCL ; le mode GPU strict ne peut pas valider un repli CPU.
 
-L’inventaire final attendu contient **178 tests noyau, 418 tests JVM application et 110 tests Android**, soit **706 méthodes distinctes**. Les lanceurs vérifient les effectifs et les identités exactes dans les rapports du run concerné ; cet inventaire n’annonce pas leur réussite. La campagne exacte doit exécuter les tests sur **l’APK release**, avec **Android 17 / API 37**, sans présenter les tests Android 16 / API 36 de la version précédente comme une preuve de compatibilité nouvelle. Les niveaux de compilation et de ciblage restent API 36 ; le niveau du système d’exécution est une mesure distincte. Les tests émulateur n’établissent ni déport GPU réel sur le OnePlus, ni qualité linguistique, débit soutenu, autonomie ou TalkBack réel.
+L’inventaire de cette version contient **178 tests noyau, 418 tests JVM application et 110 tests Android**, soit **706 méthodes distinctes**. La campagne réussie ci-dessus a retrouvé les effectifs et identités exactes sur **l’APK release**, avec **Android 17 / API 37**. Les résultats Android 16 / API 36 de la version précédente ne les ont pas remplacés. Les niveaux de compilation et de ciblage restent API 36 ; le niveau du système d’exécution est une mesure distincte. Les tests émulateur n’établissent ni déport GPU réel sur le OnePlus, ni qualité linguistique, débit soutenu, autonomie ou TalkBack réel.
 
-Avant fusion, la proposition exacte doit construire et tester cet APK dans GitHub Actions. Après fusion à deux parents, la reconstruction doit prouver les mêmes sources et le contenu applicatif identique hors signature, sans répéter les suites réussies. La publication exige la signature durable et le contrôle indépendant des fichiers publics. La **0.5.2 reste la dernière stable**. Aucun succès de la 0.5.6 n’est annoncé avant son exécution correspondante.
+Avant fusion, la proposition exacte doit construire et tester cet APK dans GitHub Actions. Après fusion à deux parents, la reconstruction doit prouver les mêmes sources et le contenu applicatif identique hors signature, sans répéter les suites réussies. La publication exige la signature durable et le contrôle indépendant des fichiers publics. La **0.5.2 reste la dernière stable**. Les résultats de cette préparation sont distincts de ceux de la candidate suivante.
 
-### Outillage local 0.5.6
+### Préparation et outillage local 0.5.6
 
 Les **59 tests Python hors réseau** ont réussi : **20** pour la publication, **23** pour la synchronisation de l’historique, **10** pour le nettoyage documentaire et **6** pour la provenance après fusion. Le formatage des notes publiques a aussi été vérifié avec des identifiants synthétiques, sans signature ni téléversement. Ces résultats ne remplacent pas les suites Kotlin, JNI et Android de la candidate.
 

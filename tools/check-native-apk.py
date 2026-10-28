@@ -28,5 +28,13 @@ with zipfile.ZipFile(sys.argv[1]) as archive, tempfile.TemporaryDirectory() as w
         dynamic = subprocess.run([str(readelf), '-dW', str(local)], check=True, text=True, capture_output=True)
         needed = re.findall(r'\(NEEDED\).*?\[([^\]]+)\]', dynamic.stdout)
         assert 'libOpenCL.so' not in needed, f'CPU execution must not require the optional vendor OpenCL library: {name}'
+        if Path(name).name == 'libsubtitle_model_probe.so':
+            symbols = subprocess.run([str(readelf), '--dyn-syms', '-W', str(local)],
+                                     check=True, text=True, capture_output=True)
+            opencl_symbols = [line.split() for line in symbols.stdout.splitlines()
+                              if len(line.split()) >= 8 and
+                              re.fullmatch(r'cl[A-Z][A-Za-z0-9_]*(?:@[^ ]+)?', line.split()[7])]
+            assert not opencl_symbols, f'OpenCL forwarding must stay private and have no unresolved vendor APIs: {name}'
+            print(f'PASS OpenCL API wrappers absent from exported/unresolved dynamic symbols: {name}')
         print(f'PASS native ELF LOAD alignment >= 16 KiB: {name}')
         print(f'PASS vendor OpenCL absent from mandatory ELF dependencies: {name}')

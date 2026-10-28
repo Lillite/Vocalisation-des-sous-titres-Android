@@ -1,8 +1,8 @@
-# Diagnostic OpenCL — candidate 0.5.6
+# Diagnostic OpenCL — préversion 0.5.6 publiée
 
 [Accueil](../README.md) · [Notes de version](releases/0.5.6-opencl.md) · [Validation](../TESTING.md) · [Performances GGUF 0.5.5](TRADUCTION_GGUF_055.md)
 
-La candidate **0.5.6-opencl / code 13** corrige le diagnostic trop général des échecs GPU. La traduction locale, les poids du modèle et leur quantification restent conservés. Cette étape ne garantit ni le fonctionnement d’OpenCL sur le téléphone ni une accélération supplémentaire. Le NPU et l’OCR restent hors de ce périmètre.
+La préversion publiée **0.5.6-opencl / code 13** corrige le diagnostic trop général des échecs GPU. La traduction locale, les poids du modèle et leur quantification restent conservés. Cette étape ne garantit ni le fonctionnement d’OpenCL sur le téléphone ni une accélération supplémentaire. Le NPU et l’OCR restent hors de ce périmètre.
 
 ## Ce qui a été observé
 
@@ -16,7 +16,7 @@ Les deux modes OpenCL ont échoué avec un message général, en **921 ms** puis
 
 ## Lire le nouveau rapport
 
-La candidate transmet des valeurs techniques limitées à un ensemble connu :
+La version transmet des valeurs techniques limitées à un ensemble connu :
 
 - L’étape de l’échec : accès au pilote, interrogation directe, chargeur ICD, appareil reconnu, chargement du modèle, contexte ou génération.
 - La raison correspondante, avec une explication française et un code stable.
@@ -30,7 +30,7 @@ Le **premier appel comprend son chargement éventuel** : ne pas ajouter de nouve
 
 ## Essai à effectuer sur le téléphone
 
-Après publication et vérification de l’APK :
+Pour reproduire l’essai avec cette version publiée :
 
 1. Installer la mise à jour par-dessus l’édition Traduction actuelle, **sans la désinstaller**.
 2. Conserver le GGUF TranslateGemma déjà importé et choisir **4 threads CPU** pour ce nouvel essai. Aucun nouveau téléchargement de modèle n’est nécessaire.
@@ -41,3 +41,7 @@ Après publication et vérification de l’APK :
 L’exemple est anglais vers français, avec un contexte personnel vide. Les deux modèles ne sont jamais chargés simultanément. Les originaux vidéo et sous-titres ne sont pas modifiés. Le lecteur et la vocalisation restent soumis à leurs protections de Pause, de déplacement, d’occurrences et de callbacks périmés.
 
 Un diagnostic plus précis peut conduire à une correction ultérieure du chemin GPU. Il ne permet pas d’annoncer à l’avance laquelle sera nécessaire, ni si le GPU sera plus rapide que le CPU pour ce modèle. Aucun traitement soutenu écran éteint, aucune autonomie, qualité vocale ou compatibilité TalkBack réelle n’est déduit des essais automatisés.
+
+## Diagnostic reçu après publication
+
+Sur le OnePlus CPH2747 sous Android 17 / API 37, le rapport a identifié **OPENCL_ICD / ICD_ENTRY_POINT_MISSING**, alors qu’une plateforme était visible par l’accès direct au pilote. Le [guide de la candidate 0.5.7](OPENCL_DIRECT_057.md) décrit l’accès direct préparé pour ce blocage. Les **706 tests réussis de la 0.5.6**, dont 110 sous Android 17, restent attachés à cette version et ne valident pas la suivante.

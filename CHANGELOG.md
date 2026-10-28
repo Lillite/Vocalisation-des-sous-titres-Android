@@ -2,9 +2,18 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
-## 0.5.6-opencl — candidate de diagnostic GPU précis
+## 0.5.7-directcl — candidate d’accès OpenCL direct
 
-VersionCode **13**, identité Traduction et certificat durable conservés. [Guide du diagnostic](docs/DIAGNOSTIC_OPENCL_056.md) · [Notes et limites](docs/releases/0.5.6-opencl.md). La 0.5.2 reste la dernière stable. La validation et la distribution de cette candidate restent à établir sur ses propres sources.
+VersionCode **14**, identité Traduction et certificat durable conservés. [Guide](docs/OPENCL_DIRECT_057.md) · [Notes et limites](docs/releases/0.5.7-directcl.md). La 0.5.2 reste la dernière stable. La validation propre de cette candidate reste à établir.
+
+- Remplacement du chargeur ICD par une liaison directe facultative aux fonctions OpenCL du pilote fourni par le téléphone. L’extension ICD manquante n’est plus exigée pour ce parcours.
+- Conservation du CPU indépendant, des replis explicites, des contrôles de libération, des noyaux de calcul épinglés et des preuves d’exécution GPU réellement observées.
+- Rapport séparant accès direct au pilote et calcul GPU ; raisons bornées pour les fonctions requises absentes.
+- Aucun changement des poids, de la quantification, du contexte ou des minutages. Un accès direct réussi ne garantit ni compatibilité du modèle ni gain de vitesse.
+
+## 0.5.6-opencl — diagnostic GPU précis publié
+
+VersionCode **13**, identité Traduction et certificat durable conservés. [Guide du diagnostic](docs/DIAGNOSTIC_OPENCL_056.md) · [Notes et limites](docs/releases/0.5.6-opencl.md). La 0.5.2 reste la dernière stable. La [PR #22](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/22) a réussi **706 tests avant fusion**, dont 110 sur l’APK release sous Android 17. Reconstruction, signature et téléchargement public ont ensuite été vérifiés ; [preuves](docs/releases/0.5.6-opencl.md).
 
 - Transmission d’une cause technique bornée entre le calcul natif, le service Android et le rapport : étape, raison, statut OpenCL disponible, inventaire mesuré et durée, sans journal brut ni contenu personnel.
 - Distinction du pilote directement visible, de l’enregistrement ICD et du backend GPU reconnu. Une réponse d’échec réutilisée est signalée ; un échec rapide ne devient pas une mesure de performance GPU.

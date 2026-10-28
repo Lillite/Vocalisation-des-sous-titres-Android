@@ -206,18 +206,36 @@
       },
       "id": 426942970,
       "source_commit": "71a014af332906ecda30b74faadcc5d6ee3ddc9d"
+    },
+    {
+      "tag": "v0.5.6-opencl",
+      "title": "Sous-titres en voix 0.5.6 — Diagnostic OpenCL précis (préversion)",
+      "prerelease": true,
+      "latest": false,
+      "notes": "docs/releases/0.5.6-opencl.md",
+      "asset": {
+        "name": "SousTitresVoix-0.5.6-opencl.apk",
+        "version_name": "0.5.6-opencl",
+        "version_code": 13,
+        "application_id": "fr.soustitresvoix.player.translation",
+        "id": 686168829,
+        "size": 53545770,
+        "sha256": "58af4d6f4ae9efe65e21877e442275f74bdd6f1168e430dd623885a6eeb9aded"
+      },
+      "id": 427128248,
+      "source_commit": "1e982b907c6d322cb4066da743c9a8fefcabe7a2"
     }
   ],
   "next_release": {
-    "tag": "v0.5.6-opencl",
-    "title": "Sous-titres en voix 0.5.6 — Diagnostic OpenCL précis (préversion)",
+    "tag": "v0.5.7-directcl",
+    "title": "Sous-titres en voix 0.5.7 — Accès OpenCL direct (préversion)",
     "prerelease": true,
     "latest": false,
-    "notes": "docs/releases/0.5.6-opencl.md",
+    "notes": "docs/releases/0.5.7-directcl.md",
     "asset": {
-      "name": "SousTitresVoix-0.5.6-opencl.apk",
-      "version_name": "0.5.6-opencl",
-      "version_code": 13,
+      "name": "SousTitresVoix-0.5.7-directcl.apk",
+      "version_name": "0.5.7-directcl",
+      "version_code": 14,
       "application_id": "fr.soustitresvoix.player.translation"
     }
   }

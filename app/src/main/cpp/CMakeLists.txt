@@ -34,7 +34,44 @@ set(GGML_F16C OFF CACHE BOOL "" FORCE)
 set(GGML_FMA OFF CACHE BOOL "" FORCE)
 set(GGML_BMI2 OFF CACHE BOOL "" FORCE)
 # Only Android arm64 packages include the optional Adreno backend. Its loader is
-# static and vendor discovery is explicit; CPU startup never needs libOpenCL.so.
+# static and vendor discovery is direct; CPU startup never needs libOpenCL.so.
+function(subtitle_add_direct_opencl)
+    if(TARGET OpenCL)
+        return()
+    endif()
+    FetchContent_Declare(subtitle_opencl_headers
+        URL https://codeload.github.com/KhronosGroup/OpenCL-Headers/tar.gz/refs/tags/v2025.07.22
+        URL_HASH SHA256=98f0a3ea26b4aec051e533cb1750db2998ab8e82eda97269ed6efe66ec94a240
+    )
+    FetchContent_GetProperties(subtitle_opencl_headers)
+    if(NOT subtitle_opencl_headers_POPULATED)
+        FetchContent_Populate(subtitle_opencl_headers)
+    endif()
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(generated_direct "${CMAKE_CURRENT_BINARY_DIR}/direct-opencl/direct_opencl_generated.cpp")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/generate_direct_opencl.py")
+    execute_process(
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/generate_direct_opencl.py"
+            "${subtitle_opencl_headers_SOURCE_DIR}/CL/cl.h" "${generated_direct}"
+        RESULT_VARIABLE direct_status
+    )
+    if(NOT direct_status EQUAL 0)
+        message(FATAL_ERROR "Pinned direct OpenCL dispatch could not be generated")
+    endif()
+    # A static, hidden C API shim. The Android vendor library is resolved only
+    # after an explicit GPU request, never a mandatory dependency of the APK.
+    add_library(OpenCL STATIC "${generated_direct}")
+    target_compile_features(OpenCL PRIVATE cxx_std_17)
+    set_target_properties(OpenCL PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden)
+    target_include_directories(OpenCL PUBLIC "${subtitle_opencl_headers_SOURCE_DIR}" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(OpenCL PRIVATE ${CMAKE_DL_LIBS})
+    set(OpenCL_LIBRARY OpenCL CACHE STRING "Optional direct vendor dispatch target" FORCE)
+    set(OpenCL_INCLUDE_DIR "${subtitle_opencl_headers_SOURCE_DIR}" CACHE PATH "Pinned OpenCL includes" FORCE)
+    set(subtitle_opencl_headers_SOURCE_DIR "${subtitle_opencl_headers_SOURCE_DIR}" PARENT_SCOPE)
+    set(Python3_EXECUTABLE "${Python3_EXECUTABLE}" PARENT_SCOPE)
+endfunction()
+
 set(SUBTITLE_HAS_OPENCL OFF)
 if(ANDROID AND ANDROID_ABI STREQUAL "arm64-v8a")
     option(SUBTITLE_ENABLE_OPENCL "Build optional Android Adreno OpenCL backend" ON)
@@ -45,31 +82,8 @@ if(ANDROID AND ANDROID_ABI STREQUAL "arm64-v8a")
     )
     if(SUBTITLE_ENABLE_OPENCL)
         set(SUBTITLE_HAS_OPENCL ON)
-        FetchContent_Declare(subtitle_opencl_headers
-            URL https://codeload.github.com/KhronosGroup/OpenCL-Headers/tar.gz/refs/tags/v2025.07.22
-            URL_HASH SHA256=98f0a3ea26b4aec051e533cb1750db2998ab8e82eda97269ed6efe66ec94a240
-        )
-        FetchContent_GetProperties(subtitle_opencl_headers)
-        if(NOT subtitle_opencl_headers_POPULATED)
-            FetchContent_Populate(subtitle_opencl_headers)
-        endif()
-        set(OPENCL_ICD_LOADER_HEADERS_DIR "${subtitle_opencl_headers_SOURCE_DIR}" CACHE PATH "Pinned OpenCL headers" FORCE)
-        set(OPENCL_ICD_LOADER_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-        set(OPENCL_ICD_LOADER_PIC ON CACHE BOOL "" FORCE)
-        set(OPENCL_ICD_LOADER_BUILD_TESTING OFF CACHE BOOL "" FORCE)
-        set(ENABLE_OPENCL_LAYERS OFF CACHE BOOL "" FORCE)
-        set(ENABLE_OPENCL_LAYERINFO OFF CACHE BOOL "" FORCE)
-        set(ENABLE_OPENCL_LOADER_MANAGED_DISPATCH OFF CACHE BOOL "" FORCE)
-        FetchContent_Declare(subtitle_opencl_loader
-            URL https://codeload.github.com/KhronosGroup/OpenCL-ICD-Loader/tar.gz/refs/tags/v2025.07.22
-            URL_HASH SHA256=dff7a0b11ad5b63a669358e3476e3dc889a4a361674e5b69b267b944d0794142
-        )
-        FetchContent_MakeAvailable(subtitle_opencl_loader)
-        set_target_properties(OpenCL PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
-        # FindOpenCL accepts this existing CMake target. No vendor library is
-        # linked or copied into the APK; it is opened only for a GPU request.
-        set(OpenCL_LIBRARY OpenCL CACHE STRING "Pinned static ICD loader target" FORCE)
-        set(OpenCL_INCLUDE_DIR "${subtitle_opencl_headers_SOURCE_DIR}" CACHE PATH "Pinned OpenCL includes" FORCE)
+        subtitle_add_direct_opencl()
+        set(GGML_OPENCL_PROFILING OFF CACHE BOOL "" FORCE)
         set(GGML_OPENCL_USE_ADRENO_KERNELS ON CACHE BOOL "" FORCE)
         set(GGML_OPENCL_EMBED_KERNELS ON CACHE BOOL "" FORCE)
         set(GGML_OPENCL_USE_ADRENO_BIN_KERNELS OFF CACHE BOOL "" FORCE)
@@ -138,7 +152,7 @@ if(ANDROID)
     add_library(subtitle_model_probe SHARED model_probe_jni.cpp local_translation_jni.cpp)
     target_link_libraries(subtitle_model_probe PRIVATE model_probe_engine)
     # Android 15+ devices may use 16-KiB memory pages.
-    target_link_options(subtitle_model_probe PRIVATE "-Wl,-z,max-page-size=16384" "-Wl,--exclude-libs,ALL")
+    target_link_options(subtitle_model_probe PRIVATE "-Wl,-z,max-page-size=16384" "-Wl,--exclude-libs,ALL" "-Wl,--no-undefined")
 else()
     target_compile_definitions(model_probe_engine PUBLIC SUBTITLE_NATIVE_TESTING=1)
     # Actual host inference test, not an Android stub or performance claim.
@@ -151,4 +165,32 @@ else()
     target_include_directories(optional-opencl-diagnostic-smoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     find_package(Threads REQUIRED)
     target_link_libraries(optional-opencl-diagnostic-smoke PRIVATE Threads::Threads)
+    # Actual host forwarding test with a shared library whose opaque handles
+    # intentionally do not contain ICD dispatch tables. No GPU is simulated.
+    subtitle_add_direct_opencl()
+    set(fake_direct "${CMAKE_CURRENT_BINARY_DIR}/direct-opencl/fake_opencl.cpp")
+    execute_process(
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_fake_opencl.py"
+            "${subtitle_opencl_headers_SOURCE_DIR}/CL/cl.h" "${fake_direct}"
+        RESULT_VARIABLE fake_status
+    )
+    if(NOT fake_status EQUAL 0)
+        message(FATAL_ERROR "Synthetic non-ICD host library could not be generated")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/generate_fake_opencl.py")
+    foreach(kind complete optional missing)
+        add_library(direct-opencl-synthetic-${kind} SHARED "${fake_direct}")
+        target_include_directories(direct-opencl-synthetic-${kind} PRIVATE "${subtitle_opencl_headers_SOURCE_DIR}")
+        target_compile_features(direct-opencl-synthetic-${kind} PRIVATE cxx_std_17)
+        if(kind STREQUAL optional)
+            target_compile_definitions(direct-opencl-synthetic-${kind} PRIVATE DIRECT_TEST_OPTIONAL=1)
+        elseif(kind STREQUAL missing)
+            target_compile_definitions(direct-opencl-synthetic-${kind} PRIVATE DIRECT_TEST_MISSING_REQUIRED=1)
+        endif()
+    endforeach()
+    add_executable(direct-opencl-dispatch-smoke tests/direct_opencl_dispatch_smoke.cpp)
+    target_compile_features(direct-opencl-dispatch-smoke PRIVATE cxx_std_17)
+    target_include_directories(direct-opencl-dispatch-smoke PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(direct-opencl-dispatch-smoke PRIVATE OpenCL Threads::Threads ${CMAKE_DL_LIBS})
 endif()
