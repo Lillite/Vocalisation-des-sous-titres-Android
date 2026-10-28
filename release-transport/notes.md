@@ -1,0 +1,51 @@
+# Sous-titres en voix 0.5.4 — Traduction GGUF locale (préversion)
+
+[Accueil](https://github.com/Lillite/Vocalisation-des-sous-titres-Android#readme) · [Guide GGUF local](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/blob/main/docs/TRADUCTION_GGUF_054.md) · [Validation](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/blob/main/TESTING.md)
+
+Cette préversion ajoute la traduction locale complète des SRT avec un modèle GGUF choisi sur le téléphone. Le moteur s’intègre aux protections de progression, de reprise, de lecture et d’export existantes. La **0.5.2 reste la stable recommandée** ; cette préversion ne doit pas la remplacer comme dernière stable.
+
+## Identification et distribution
+
+| Élément | Référence |
+| --- | --- |
+| Version | **0.5.4-local**, versionCode **11** |
+| Statut | Préversion vérifiée, sans remplacer la dernière stable |
+| APK signé | `SousTitresVoix-0.5.4-local.apk` |
+| Identité Android | `fr.soustitresvoix.player.translation`, conservée |
+| Android minimum | Android 8.0 — API 26 |
+| Architectures natives | ARM 64 bits ; x86_64 pour émulateur |
+| Signature vérifiée | Certificat durable de l’édition Traduction, SHA-256 `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d` |
+
+L’APK a été signé avec le certificat durable de l’édition Traduction après validation de la proposition et reconstruction vérifiée de ses sources fusionnées. **Ne pas désinstaller l’édition Traduction pour appliquer cette mise à jour.** La clé et ses mots de passe restent hors du dépôt et des fichiers publics.
+
+## Fonctionnement ajouté
+
+- **GGUF local** : import choisi explicitement, copie privée et identification du contenu, puis exécution CPU par llama.cpp. Le modèle est chargé pour la tâche et ses ressources sont libérées à sa fermeture. Aucun passage par PocketPal, serveur, clé API ou téléchargement automatique de poids.
+- **SRT indépendant du lecteur** : préparation d’un fichier SRT sans vidéo, exemple anglais intégré de huit occurrences, progression visible et export d’un nouveau fichier complet. Les originaux restent conservés. Charger l’exemple ne démarre pas une traduction ou une lecture.
+- **Contexte et validation** : consignes adaptées à TranslateGemma et Hunyuan dense ; contexte court borné, traitement par occurrence et refus d’une génération tronquée. Les identifiants et minutages restent gérés par le code de l’application.
+- **Reprise et conservation** : occurrences validées sauvegardées, reprise avec la même source, le même modèle et les mêmes paramètres. Remplacer le modèle distingue ses résultats de ceux déjà conservés.
+- **Lecture progressive** : utilisation du tampon existant sur choix explicite ; attente avant un sous-titre manquant et absence de reprise après une Pause volontaire, un déplacement ou un contexte périmé.
+- **Diagnostic** : l’import d’un nouveau modèle ne doit plus présenter le résultat du précédent comme celui du nouveau fichier.
+
+Le [guide](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/blob/main/docs/TRADUCTION_GGUF_054.md) donne le parcours et les limites. La traduction reste indépendante de l’OCR. L’export SRT/VTT peut être utilisé par un lecteur ou un outil MKV compatible ; cette version ne remuxe pas la vidéo.
+
+## Limites et choix du modèle
+
+Le CPU est le seul backend exécuté. **GPU, NPU, OCR de film et prise en charge complète des anciens conteneurs ne sont pas ajoutés par cette étape.** Un GGUF présent sur le téléphone n’est pas forcément compatible. Le contexte est borné et la mémoire nécessaire dépasse les seuls poids sur disque.
+
+Le choix définitif du modèle et de sa quantification reste ouvert. Une bonne génération de test ne garantit ni la qualité des dialogues, ni la cohérence d’un film entier, ni un débit suffisant pendant le visionnage. La validation sur téléphone doit distinguer fidélité, mémoire, chauffe, autonomie, voix et TalkBack. Le traitement continu après fermeture de l’application ou écran éteint n’est pas garanti.
+
+## Validation et provenance
+
+Les sources de cette préversion ont été validées avant fusion dans le [run 40700699288](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40700699288). Le [run après fusion 40706287348](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40706287348) a reconstruit la release sans rejouer les suites et confirmé son contenu applicatif identique à l’APK testé. La signature durable, l’identité Android, le contenu hors signature et les alignements ont ensuite été vérifiés.
+
+| Preuve | Valeur |
+| --- | --- |
+| Source de la préversion | `6797e59a19053b375a24f8b7bb1c8e6beb48f478` |
+| APK signé | `SousTitresVoix-0.5.4-local.apk` |
+| APK signé, SHA-256 | `d98184d6c54a0beccbe38ceff9fa7a6431037bb5a4c2d384781f6c540d628210` |
+| Certificat durable, SHA-256 | `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d` |
+
+Les tests automatisés utilisent des textes et modèles miniatures synthétiques. Leur réussite ne mesure pas la qualité linguistique d’un modèle de production, les performances prolongées du téléphone, la chauffe, l’autonomie, la qualité vocale ou TalkBack réel. GPU, NPU et OCR de film restent hors du périmètre exécuté. Les effectifs et résultats appartiennent au run exact ; les succès des versions précédentes ne les remplacent pas.
+
+**Le travail propre à ce projet est réalisé intégralement par IA à partir des demandes et retours de l’utilisateur.** Android, Kotlin, Media3, llama.cpp et les modèles restent attribués à leurs auteurs respectifs. Aucun poids de production ni secret n’est redistribué avec cette préversion.
