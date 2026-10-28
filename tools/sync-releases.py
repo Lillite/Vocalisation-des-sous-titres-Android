@@ -152,9 +152,20 @@ def include_declared_release(client, path, entries, report):
     if declaration is None:
         return entries
     require(isinstance(declaration, dict), "Invalid next_release declaration.")
-    require(set(declaration) == {"tag", "title", "notes", "asset"}, "Unexpected next_release fields.")
+    legacy_fields = {"tag", "title", "notes", "asset"}
+    explicit_flags = set(declaration) == legacy_fields | {"prerelease", "latest"}
+    require(set(declaration) == legacy_fields or explicit_flags, "Unexpected next_release fields.")
+    # Old four-field declarations always meant a new stable recommendation.
+    # A candidate declares both booleans explicitly and never displaces it.
+    prerelease = declaration.get("prerelease", False)
+    latest = declaration.get("latest", True)
+    require(type(prerelease) is bool and type(latest) is bool, "Declared release flags must be booleans.")
+    require(not (prerelease and latest), "A declared prerelease cannot be latest.")
     tag, expected = declaration["tag"], declaration["asset"]
-    require(isinstance(tag, str) and re.fullmatch(r"v\d+\.\d+\.\d+", tag), "Invalid declared release tag.")
+    require(isinstance(tag, str) and re.fullmatch(r"v\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?", tag),
+            "Invalid declared release tag.")
+    require(explicit_flags or re.fullmatch(r"v\d+\.\d+\.\d+", tag),
+            "A suffixed declared version requires explicit release flags.")
     require(tag not in {entry["tag"] for entry in entries} and
             tag not in {entry.get("old_tag") for entry in entries}, "Declared tag overlaps release history.")
     require(isinstance(declaration["title"], str) and declaration["title"].strip(), "Missing declared title.")
@@ -174,8 +185,8 @@ def include_declared_release(client, path, entries, report):
     if release is None or release.get("draft") is True:
         report["declared_release"] = {"tag": tag, "status": "not-published"}
         return entries
-    require(release.get("tag_name") == tag and release.get("draft") is False and release.get("prerelease") is False,
-            "Declared release is not a published stable version.")
+    require(release.get("tag_name") == tag and release.get("draft") is False and release.get("prerelease") is prerelease,
+            "Declared release is not published with the expected prerelease status.")
     require(type(release.get("id")) is int and release["id"] > 0 and
             release["id"] not in {entry["id"] for entry in entries}, "Invalid declared release ID.")
     assets = [asset for asset in release.get("assets", []) if asset.get("name", "").endswith(".apk")]
@@ -193,11 +204,12 @@ def include_declared_release(client, path, entries, report):
             comparison.get("merge_base_commit", {}).get("sha") == source,
             "Declared release source is not contained in main.")
     entry = {**declaration, "id": release["id"], "source_commit": source,
-             "prerelease": False, "latest": True, "body": body,
+             "prerelease": prerelease, "latest": latest, "body": body,
              "asset": {**expected, "id": asset["id"], "size": asset["size"], "sha256": digest[7:]}}
-    report["declared_release"] = {"tag": tag, "status": "published", "id": entry["id"],
+    report["declared_release"] = {"tag": tag, "status": "published", "prerelease": prerelease,
+                                  "latest": latest, "id": entry["id"],
                                   "source_commit": source, "asset": entry["asset"]}
-    return [{**previous, "latest": False} for previous in entries] + [entry]
+    return [{**previous, "latest": False} if latest else previous for previous in entries] + [entry]
 
 
 def snapshot(release):

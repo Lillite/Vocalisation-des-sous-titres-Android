@@ -298,6 +298,68 @@ class DeclaredReleaseTests(unittest.TestCase):
         self.assertEqual([self.old], result)
         self.assertEqual('not-published', report['declared_release']['status'])
 
+    def prerelease_fixture(self):
+        self.new.update(tag='v1.0.2-diagnostic', prerelease=True, latest=False)
+        self.new['asset']['version_name'] = '1.0.2-diagnostic'
+        declaration = deepcopy(self.declaration)
+        declaration.update(tag=self.new['tag'], prerelease=True, latest=False)
+        declaration['asset']['version_name'] = self.new['asset']['version_name']
+        return declaration
+
+    def test_unpublished_prerelease_preserves_stable_and_does_not_persist_invented_ids(self):
+        declaration = self.prerelease_fixture()
+        client = Client([self.old])
+        result, report = self.resolve(client, declaration)
+        self.assertEqual([self.old], result)
+        self.assertEqual({'tag': self.new['tag'], 'status': 'not-published'}, report['declared_release'])
+        self.assertEqual([], client.mutations)
+        self.assertEqual({'next_release': declaration}, json.loads(self.path.read_text(encoding='utf-8')))
+
+    def test_published_prerelease_keeps_stable_latest_and_checks_real_source_and_asset(self):
+        declaration = self.prerelease_fixture()
+        client = Client([self.old, self.new])
+        result, report = self.resolve(client, declaration)
+        self.assertEqual([True, False], [entry['latest'] for entry in result])
+        self.assertTrue(result[-1]['prerelease'])
+        self.assertEqual(self.new['asset'], result[-1]['asset'])
+        self.assertEqual(self.new['source_commit'], result[-1]['source_commit'])
+        self.assertTrue(report['declared_release']['prerelease'])
+        self.assertFalse(report['declared_release']['latest'])
+        self.assertIn(self.new['tag'], client.ref_reads)
+        self.assertTrue(any(path == '/compare/' + self.new['source_commit'] + '...main'
+                            for _, path, _ in client.calls))
+        with patch.object(sync, 'verify_download') as download:
+            sync.synchronize(client, result, True, report)
+        self.assertEqual({self.old['id'], self.new['id']},
+                         {call.args[1]['id'] for call in download.call_args_list})
+        self.assertEqual(self.old['id'], report['after_latest_id'])
+        self.assertEqual([], client.mutations)
+        self.assertEqual({'next_release': declaration}, json.loads(self.path.read_text(encoding='utf-8')))
+
+    def test_prerelease_status_mismatch_is_refused_before_any_mutation(self):
+        declaration = self.prerelease_fixture()
+        client = Client([self.old, self.new])
+        client.releases[2]['prerelease'] = False
+        with self.assertRaisesRegex(sync.SyncError, 'expected prerelease status'):
+            self.resolve(client, declaration)
+        self.assertEqual([], client.mutations)
+
+    def test_prerelease_flags_must_be_explicit_boolean_and_cannot_claim_latest(self):
+        declaration = self.prerelease_fixture()
+        for corruption in ('latest', 'string', 'missing-prerelease', 'missing-latest', 'legacy-suffix'):
+            with self.subTest(corruption=corruption):
+                invalid = deepcopy(declaration)
+                if corruption == 'latest': invalid['latest'] = True
+                if corruption == 'string': invalid['prerelease'] = 'true'
+                if corruption == 'missing-prerelease': del invalid['prerelease']
+                if corruption == 'missing-latest': del invalid['latest']
+                if corruption == 'legacy-suffix':
+                    del invalid['prerelease']; del invalid['latest']
+                client = Client([self.old, self.new])
+                with self.assertRaises(sync.SyncError):
+                    self.resolve(client, invalid)
+                self.assertEqual([], client.calls)
+
     def test_wrong_asset_or_missing_server_digest_refuses_before_mutation(self):
         for corruption in ('name', 'digest', 'extra-apk'):
             with self.subTest(corruption=corruption):

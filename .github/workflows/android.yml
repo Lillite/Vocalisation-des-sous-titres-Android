@@ -38,6 +38,7 @@ jobs:
             "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses < <(yes) >/dev/null
             "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
           fi
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" "cmake;3.22.1"
           mkdir -p build/verification
           git rev-parse HEAD > build/verification/source-commit.txt
           git show -s --format=%T HEAD > build/verification/source-tree.txt
@@ -116,7 +117,7 @@ jobs:
           gradle --no-daemon --stacktrace --no-build-cache -PverifyRelease=true :app:testReleaseUnitTest :app:lintRelease :app:assembleRelease :app:assembleReleaseAndroidTest > build/verification/release-build-console.txt 2>&1
           result=$?
           tail -n 180 build/verification/release-build-console.txt
-          python3 tools/verify-test-results.py --reports app/build/test-results/testReleaseUnitTest --expected-count 290 --sources app/src/test/java --not-before-ns "$started_ns" --output build/verification/release-app-test-summary.json
+          python3 tools/verify-test-results.py --reports app/build/test-results/testReleaseUnitTest --expected-count 316 --sources app/src/test/java --not-before-ns "$started_ns" --output build/verification/release-app-test-summary.json
           app_result=$?
           if [[ "$result" != 0 ]]; then exit "$result"; fi
           exit "$app_result"
@@ -133,6 +134,7 @@ jobs:
             "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$file" > "build/verification/manifest-$kind.xml"
           done
           python3 tools/check-apk-manifest.py build/verification/manifest-app.xml
+          python3 tools/check-native-apk.py "$APK" > build/verification/native-elf-alignment.txt
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -163,7 +165,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk /opt/hostedtoolcache/CodeQL
+          # Keep the pinned NDK: connected tests must keep the same native build.
+          sudo rm -rf /usr/share/dotnet /opt/hostedtoolcache/CodeQL
           kvm_diagnostics() {
             local phase="$1"
             {

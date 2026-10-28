@@ -2,9 +2,19 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Essais sur téléphone](docs/TESTS_TELEPHONE.md) · [Contribution](CONTRIBUTING.md)
 
+## Candidate 0.5.3-diagnostic — validation à établir
+
+Les sources de la candidate préparent **0.5.3-diagnostic / code 10**, avec l’identité Android conservée. Le [guide](docs/DIAGNOSTIC_LOCAL_053.md) décrit les mesures Android, l’essai vidéo limité à 8 images sur 10 secondes et l’essai réel CPU d’un GGUF par llama.cpp dans un processus distinct. La vocalisation reste indépendante. Ni OCR de film, ni traduction de sous-titres par TranslateGemma, ni exécution GPU/NPU ne sont revendiqués.
+
+Les nouveaux contrôles doivent couvrir les rapports sans nom/URI de fichier personnel, la séparation entre capacités déclarées et essais, le décodage synthétique, les erreurs, l’import consenti, l’annulation, la fermeture et les réponses tardives. La simple construction de la bibliothèque JNI ne prouve pas son exécution : les rapports Android doivent identifier l’essai effectivement effectué et son résultat, sans transformer un échec en succès.
+
+L’inventaire attendu dans les sources de cette candidate est de **178 tests noyau, 316 tests JVM application et 106 tests Android**, soit **600 méthodes**. Ces nombres décrivent les tests attendus, sans annoncer leur réussite : les résultats restent à rattacher au run exact avant fusion ; les **567 méthodes de la 0.5.2 ci-dessous sont historiques**. Aucun succès de compilation, de test, de TalkBack réel, de qualité linguistique ou de performance du téléphone n’est déduit de leur présence dans les sources. Les poids de production ne sont pas téléchargés automatiquement et les nouveaux essais n’envoient ni vidéo ni texte personnel à un service.
+
+La distribution exige ensuite une reconstruction issue de la fusion validée, le même contenu applicatif que l’APK testé et le certificat durable `304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d`. **La sauvegarde privée Traduction a été retrouvée et ce certificat vérifié localement**, sans publication de la clé ni création d’un nouveau certificat. La signature éphémère de CI ne la remplace pas et aucun APK de mise à jour n’est annoncé comme livré. La 0.5.2 publiée reste disponible.
+
 ## Version 0.5.2 — parcours de validation
 
-La version courante est **0.5.2 / code 9**, avec l’identité Android
+La version publiée de référence est **0.5.2 / code 9**, avec l’identité Android
 `fr.soustitresvoix.player.translation`. Les [notes de version](docs/releases/0.5.2.md)
 décrivent Google en ligne, ML Kit local, la lecture pendant la traduction et le
 correctif du bouton audio avancé. Les preuves d’exécution sont produites par les

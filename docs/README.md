@@ -4,11 +4,14 @@
 
 **Documentation 0.5.2 — Google et traduction pendant la lecture.** [Télécharger l’APK](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.2/SousTitresVoix-0.5.2-google.apk) · [Notes 0.5.2](releases/0.5.2.md) · [Guide Google](TRADUCTION_GOOGLE_052.md) · [Validation GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml). Les résultats antérieurs restent attachés à leurs versions.
 
+**Candidate 0.5.3-diagnostic en préparation.** [Guide du diagnostic local](DIAGNOSTIC_LOCAL_053.md) · [Notes, périmètre, validation et signature](releases/0.5.3-diagnostic.md). Mesures Android, court essai vidéo et véritable essai de GGUF sur CPU ; OCR, traduction TranslateGemma de film et GPU/NPU non intégrés/exécutés à cette étape. La 0.5.2 reste le téléchargement stable recommandé.
+
 ## Installer et utiliser sur téléphone
 
 | Besoin | Guide |
 | --- | --- |
 | Installer, choisir une voix et ouvrir une vidéo | [Démarrage rapide](../README.md#installer-et-commencer-sur-android) |
+| Préparer les futurs moteurs locaux dans la candidate 0.5.3 | [Diagnostic local : appareil, vidéo et modèle](DIAGNOSTIC_LOCAL_053.md) |
 | Comprendre Google, la lecture progressive et le correctif audio | [Nouveautés 0.5.2](releases/0.5.2.md) |
 | Retrouver les corrections de défilement et de DeepL | [Correctifs 0.5.1](releases/0.5.1.md) |
 | Réglages, lecture intégrale, séances, synchronisation et stockage hors ligne | [Guide Confort intégral](CONFORT_INTEGRAL_050.md) — fonctions introduites en 0.5.0 et conservées |
@@ -56,6 +59,7 @@ Les **524 tests de la 0.5.1**, référence historique, se répartissent en 178 t
 
 | Version ou document | Statut et périmètre |
 | --- | --- |
+| [0.5.3-diagnostic — diagnostic local](releases/0.5.3-diagnostic.md) | Candidate en préparation ; CPU GGUF synthétique et sondes locales, sans OCR ni traduction TranslateGemma de film ; publication signée non encore établie |
 | [0.5.2 — Google et lecture pendant la traduction](releases/0.5.2.md) | Moteurs Google, tampon progressif réglable, correction du panneau audio ; [preuves](../TESTING.md) |
 | [0.5.1 — réglages stables et traduction résiliente](releases/0.5.1.md) | Publication historique du 27 octobre 2026 ; correctifs conservés |
 | [0.5.0 — Confort intégral](releases/0.5.0.md) | Publication historique du 26 octobre 2026 ; fonctions conservées |

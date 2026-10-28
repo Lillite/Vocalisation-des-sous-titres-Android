@@ -44,17 +44,33 @@ val generateDemo = tasks.register<Exec>("generateDemo") {
         "-threads:v", "1", "-threads:a", "1",
         demoFile.get().asFile.absolutePath)
 }
+val diagnosticModel = demoResources.map { it.file("raw/diagnostic_model.gguf") }
+val generateDiagnosticModel = tasks.register<Exec>("generateDiagnosticModel") {
+    val generator = file("src/main/cpp/tests/make_tiny_gguf.py")
+    inputs.file(generator)
+    outputs.file(diagnosticModel)
+    commandLine("python3", generator.absolutePath, diagnosticModel.get().asFile.absolutePath)
+}
 android {
     namespace = "fr.soustitresvoix.player"
     compileSdk = 36
     buildToolsVersion = "36.0.0"
+    ndkVersion = "27.2.12479018"
     defaultConfig {
         applicationId = "fr.soustitresvoix.player.translation"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.5.2"
+        versionCode = 10
+        versionName = "0.5.3-diagnostic"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        externalNativeBuild { cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" } }
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
     sourceSets.getByName("main").res.srcDir(demoResources)
     compileOptions {
@@ -89,7 +105,7 @@ android {
     testOptions { unitTests.isIncludeAndroidResources = true }
     lint { abortOnError = true; checkReleaseBuilds = true }
 }
-tasks.named("preBuild") { dependsOn(generateDemo) }
+tasks.named("preBuild") { dependsOn(generateDemo); dependsOn(generateDiagnosticModel) }
 kotlin { jvmToolchain(17) }
 dependencies {
     implementation(project(":core"))
