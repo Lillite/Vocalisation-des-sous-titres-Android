@@ -11,6 +11,14 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 NUMBER = r'[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?'
+CHAT_FORMAT_COUNTS = {
+    'fixtureModels': 14,
+    'exactPromptFamilies': 3,
+    'literalUserChecks': 3,
+    'successfulGenerations': 55,
+    'rejectedRequests': 18,
+    'boundaryChecks': 5,
+}
 
 
 def parse_logit_comparison(log):
@@ -23,6 +31,19 @@ def parse_logit_comparison(log):
     if not math.isfinite(error) or not math.isfinite(delta) or not 0 <= error < 0.00002 or not delta > 0.000001:
         raise RuntimeError('Cache equivalence or context sensitivity failed')
     return error, delta
+
+
+def parse_chat_format_evidence(log):
+    matches = re.findall(
+        r'^GGUF builtin chat formats: fixture_models=(\d+), exact_prompt_families=(\d+), '
+        r'literal_user_checks=(\d+), successful_generations=(\d+), rejected_requests=(\d+), '
+        r'boundary_checks=(\d+)\.[ \t]*$', log, re.MULTILINE)
+    if len(matches) != 1:
+        raise RuntimeError('A unique real GGUF builtin chat format validation was not reported')
+    counts = dict(zip(CHAT_FORMAT_COUNTS, map(int, matches[0])))
+    if counts != CHAT_FORMAT_COUNTS:
+        raise RuntimeError('The full real GGUF builtin chat format validation was not completed')
+    return counts
 
 
 def unique_dependency(name):
@@ -76,11 +97,16 @@ def main():
         run('fixture-repeat', ['python3', generator, repeat], 30)
         run('fixture-eos', ['python3', generator, eos, '--terminating', '--roundtrip'], 30)
         run('fixture-context', ['python3', generator, context, '--terminating', '--context-sensitive', '--roundtrip'], 30)
-        translation_log = run('translation', [work / 'build/local-translation-smoke', eos, repeat, context], 120)
+        chat_fixtures = work / 'chat-formats'
+        run('fixture-chat-formats', ['python3', generator, chat_fixtures, '--chat-template-fixtures'], 30)
+        translation_log = run('translation', [work / 'build/local-translation-smoke', eos, repeat, context, chat_fixtures], 120)
         run('probe', [work / 'build/model-probe-smoke', repeat], 60)
         run('diagnostic', [work / 'build/optional-opencl-diagnostic-smoke'], 60)
         error, delta = parse_logit_comparison(translation_log)
-        summary.update(status='passed', cachedVsFreshMaxLogitError=error, changedContextDelta=delta)
+        chat_counts = parse_chat_format_evidence(translation_log)
+        summary.update(status='passed', cachedVsFreshMaxLogitError=error, changedContextDelta=delta,
+                       builtinChatFormatValidation=chat_counts, chatTemplateMode='BUILTIN_FORMAT',
+                       embeddedJinjaExecuted=False)
     except BaseException as error:
         summary.update(status='failed', failureType=type(error).__name__)
         raise

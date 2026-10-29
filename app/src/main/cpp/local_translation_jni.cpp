@@ -66,3 +66,18 @@ Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeGenerate(JNIEnv * env, jobj
         return bytes(env, session->generate(text, tokens, add_special).json());
     } catch (...) { return nullptr; }
 }
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeGenerateChat(JNIEnv * env, jobject, jlong id, jbyteArray user_content, jint tokens) {
+    try {
+        const auto session = find(id); std::string text;
+        if (!session) return nullptr;
+        if (!read(env, user_content, text, 131072)) {
+            if (env->ExceptionCheck()) return nullptr;
+            // Reject an absent, empty or oversized input without copying it,
+            // while preserving the visible TEMPLATE/CANCELLED result and the
+            // normal failure path that invalidates any reusable prompt cache.
+            return bytes(env, session->generate("", tokens, false, true).json());
+        }
+        return bytes(env, session->generate(text, tokens, false, true).json());
+    } catch (...) { return nullptr; }
+}

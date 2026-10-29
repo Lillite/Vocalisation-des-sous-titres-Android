@@ -26,13 +26,15 @@ class LocalGgufModelStoreTest {
         .put(byteArrayOf(71, 71, 85, 70)).putInt(3).putLong(0).putLong(0).array() + ByteArray(600) { (it + seed).toByte() }
     private fun sha(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes)
         .joinToString("") { "%02x".format(it.toInt() and 255) }
-    private fun namedHeader(): ByteArray {
+    private fun namedHeader(template: String? = null): ByteArray {
         val output = ByteArrayOutputStream()
         fun number(value: Long, width: Int) { output.write(ByteBuffer.allocate(width).order(ByteOrder.LITTLE_ENDIAN)
             .also { if (width == 4) it.putInt(value.toInt()) else it.putLong(value) }.array()) }
         fun text(value: String) { val encoded = value.toByteArray(Charsets.UTF_8); number(encoded.size.toLong(), 8); output.write(encoded) }
-        output.write(byteArrayOf(71, 71, 85, 70)); number(3, 4); number(354, 8); number(2, 8)
-        listOf("general.architecture" to "hunyuan-dense", "general.name" to "Global_Step_560").forEach { (key, value) ->
+        val entries = listOf("general.architecture" to "hunyuan-dense", "general.name" to "Global_Step_560") +
+            listOfNotNull(template?.let { "tokenizer.chat_template" to it })
+        output.write(byteArrayOf(71, 71, 85, 70)); number(3, 4); number(354, 8); number(entries.size.toLong(), 8)
+        entries.forEach { (key, value) ->
             text(key); number(8, 4); text(value)
         }
         return output.toByteArray()
@@ -199,6 +201,48 @@ class LocalGgufModelStoreTest {
         assertEquals(upgraded.metadata, LocalGgufModelStore(folder).current()?.metadata)
         store.acquire(previous).close()
         assertArrayEquals(original, file.readBytes())
+    }
+
+    @Test fun templatePresenceSurvivesNewDescriptorAndUpgradesVersionTwoWithoutRehashingWeights() {
+        val folder = temporary.newFolder()
+        val template = "{% for message in messages %}<|im_start|>{{ message['role'] }}\n{{ message['content'] }}<|im_end|>\n{% endfor %}"
+        val original = namedHeader(template) + ByteArray(128 * 1024)
+        val store = LocalGgufModelStore(folder)
+        val imported = store.importModel(ByteArrayInputStream(original))
+        assertTrue(imported.metadata.chatTemplateAvailable)
+        assertTrue(requireNotNull(LocalGgufModelStore(folder).current()).metadata.chatTemplateAvailable)
+        DataOutputStream(File(folder, "model.sha256").outputStream()).use {
+            it.writeInt(0x4c474746); it.writeInt(2); it.writeUTF(imported.sha256)
+            it.writeLong(imported.bytes); it.writeLong(imported.modifiedMillis)
+            it.writeUTF(imported.metadata.architecture); it.writeUTF(imported.metadata.name)
+            it.writeUTF(imported.metadata.basename); it.writeUTF(imported.metadata.finetune)
+            it.writeUTF(imported.metadata.fileType); it.writeBoolean(imported.metadata.translationTemplate)
+        }
+        val legacy = requireNotNull(store.current())
+        assertFalse(legacy.metadata.chatTemplateAvailable)
+        val upgraded = store.prepareExisting(onProgress = { fail("A valid legacy digest must not require hashing model weights") })
+        assertEquals(imported.sha256, upgraded.sha256)
+        assertEquals(imported.identity, upgraded.identity)
+        assertTrue(upgraded.metadata.chatTemplateAvailable)
+        assertEquals(upgraded.metadata, LocalGgufModelStore(folder).current()?.metadata)
+        store.acquire(legacy).close()
+        assertArrayEquals(original, File(folder, "model.gguf").readBytes())
+    }
+
+    @Test fun aTemplateHintReportsPresenceWithoutCertifyingTheCustomProgram() {
+        val hints = LocalGgufMetadataReader.parse(namedHeader("custom format not supported by the native renderer"))
+        assertTrue(hints.chatTemplateAvailable)
+        assertFalse(hints.translationTemplate)
+        assertEquals("hunyuan-dense", hints.architecture)
+        assertFalse(LocalGgufMetadataReader.parse(namedHeader("")).chatTemplateAvailable)
+    }
+
+    @Test fun truncatedOrOutsideBoundedSampleTemplateDoesNotInventCapability() {
+        val header = namedHeader("<|im_start|>user{{ content }}<|im_end|>")
+        assertFalse(LocalGgufMetadataReader.parse(header.copyOf(header.size - 1)).chatTemplateAvailable)
+        val longHeader = namedHeader("x".repeat(LocalGgufMetadataReader.MAX_HEADER_BYTES))
+        assertFalse(LocalGgufMetadataReader.parse(longHeader).chatTemplateAvailable)
+        assertEquals("Global_Step_560", LocalGgufMetadataReader.parse(longHeader).name)
     }
 
     @Test fun interruptionArrivingAfterAtomicReplacementStillCompletesTheNewIdentity() {

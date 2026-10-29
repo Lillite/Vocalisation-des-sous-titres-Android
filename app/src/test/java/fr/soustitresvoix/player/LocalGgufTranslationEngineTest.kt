@@ -30,6 +30,8 @@ class LocalGgufTranslationEngineTest {
         var awaitedCloses = 0
         val modes = mutableListOf<String>()
         val prompts = mutableListOf<String>()
+        val chatPrompts = mutableListOf<String>()
+        var chatGenerate: (String, () -> Boolean) -> LocalGgufBackend.Generation = { _, _ -> LocalGgufBackend.Generation("Bonjour.") }
         var generate: (String, () -> Boolean) -> LocalGgufBackend.Generation = { _, _ -> LocalGgufBackend.Generation("Bonjour.") }
         var onOpen: () -> Unit = {}
         var onAwaitedClose: () -> Unit = {}
@@ -38,6 +40,9 @@ class LocalGgufTranslationEngineTest {
         }
         override fun generate(prompt: String, maxOutputTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Generation {
             prompts += prompt; assertEquals(512, maxOutputTokens); return generate(prompt, cancelled)
+        }
+        override fun generateChat(userContent: String, maxOutputTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Generation {
+            chatPrompts += userContent; assertEquals(512, maxOutputTokens); return chatGenerate(userContent, cancelled)
         }
         override fun cancel() { cancels++ }
         override fun close() { closes++ }
@@ -99,11 +104,11 @@ class LocalGgufTranslationEngineTest {
         engine.close()
     }
 
-    @Test fun unsupportedBaseGemmaCannotBeUsedAsTranslateGemma() {
+    @Test fun baseGemmaWithoutARecognizedTemplateCannotBeUsedAsTranslateGemma() {
         val fixture = fixture()
         val backend = Backend(LocalGgufBackend.Info("Google Gemma 3 4B IT", "gemma3"))
         val failure = fails<TranslationFailure> { engine(fixture, backend).translate(listOf("Hello."), "en", "fr") { false } }
-        assertEquals(TranslationFailure.Reason.LOCAL_PROFILE, failure.reason)
+        assertEquals(TranslationFailure.Reason.LOCAL_TEMPLATE, failure.reason)
         assertEquals(0, backend.prompts.size)
         assertEquals(1, backend.closes)
         assertTrue(fixture.store.remove())
@@ -606,6 +611,128 @@ class LocalGgufTranslationEngineTest {
         engine.close()
         fails<TranslationCancelledException> { validate() }
         assertEquals(0, factories)
+    }
+
+    @Test fun explicitIndexUsesItsPublisherRawWrapperWithoutRequiringGenericTemplateCapability() {
+        val fixture = fixture(); val backend = Backend(LocalGgufBackend.Info("9b", "qwen35"))
+        val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { backend }, profile = LocalGgufProfile.INDEX_TRANSLATE)
+        try {
+            assertEquals(listOf("Bonjour."), engine.translate(listOf("Keep the original letter."), "en", "fr") { false })
+            assertEquals(1, backend.opens); assertTrue(backend.chatPrompts.isEmpty())
+            assertEquals("<|im_start|>user\n请将以下英语文本翻译为法语，直接输出翻译结果，不要进行任何解释。\n\n" +
+                "Keep the original letter.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n", backend.prompts.single())
+        } finally { engine.close() }
+    }
+
+    @Test fun automaticOtherInstructModelUsesRecognizedNativeConversationFormatWithoutRawFallback() {
+        val fixture = fixture()
+        val backend = Backend(LocalGgufBackend.Info("Another instruction model", "llama", chatTemplateAvailable = true))
+        val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { backend }, context = "A fictional scene.")
+        val source = " \nDo not give it to him. 😀\n "
+        val previous = "Previous source " + "a".repeat(400)
+        try {
+            engine.translateWithContext(listOf(source), "en", "fr", listOf(previous), listOf("Traduction antérieure complète.")) { false }
+            assertEquals(1, backend.opens); assertTrue(backend.prompts.isEmpty())
+            val content = backend.chatPrompts.single()
+            assertTrue(content.contains("[Source text]\n$source\n[End source text]"))
+            assertTrue(content.contains(previous)); assertTrue(content.contains("A fictional scene."))
+            assertFalse(LocalGgufPrompts.hasControlTokens(content))
+        } finally { engine.close() }
+    }
+
+    @Test fun genericProfileRequiresRuntimeFormatCapabilityAndDoesNotAssumeChatml() {
+        val fixture = fixture(); val backend = Backend(LocalGgufBackend.Info("Another model", "llama"))
+        val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { backend }, profile = LocalGgufProfile.MODEL_TEMPLATE)
+        val failure = fails<TranslationFailure> { engine.translate(listOf("Hello."), "en", "fr") { false } }
+        assertEquals(TranslationFailure.Reason.LOCAL_TEMPLATE, failure.reason)
+        assertEquals(1, backend.opens); assertTrue(backend.prompts.isEmpty()); assertTrue(backend.chatPrompts.isEmpty())
+        engine.close()
+        // Even a capability advertisement must not silently route to raw text
+        // when an injected/older bridge has no conversation implementation.
+        val withoutChatBridge = object : LocalGgufBackend {
+            override fun open(file: File, threads: Int, contextTokens: Int, cancelled: () -> Boolean, executionMode: String) =
+                LocalGgufBackend.Info("Another model", "llama", chatTemplateAvailable = true)
+            override fun generate(prompt: String, maxOutputTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Generation =
+                throw AssertionError("A missing chat bridge must never use raw generation")
+            override fun cancel() = Unit
+            override fun close() = Unit
+        }
+        val unsupportedBridge = LocalGgufTranslationEngine(fixture.model, fixture.store, { withoutChatBridge },
+            profile = LocalGgufProfile.MODEL_TEMPLATE)
+        try {
+            assertEquals(TranslationFailure.Reason.LOCAL_TEMPLATE,
+                fails<TranslationFailure> { unsupportedBridge.translate(listOf("Hello."), "en", "fr") { false } }.reason)
+        } finally { unsupportedBridge.close() }
+    }
+
+    @Test fun nativeTemplateFailureRemainsVisibleWithoutCpuRetryOrRawPromptFallback() {
+        val fixture = fixture()
+        val backend = Backend(LocalGgufBackend.Info("Another model", "llama",
+            LocalTranslationPerformance(phase = "load", backend = "OPENCL"), chatTemplateAvailable = true))
+        backend.chatGenerate = { _, _ -> throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.TEMPLATE) }
+        val engine = engine(fixture, backend)
+        try {
+            val failure = fails<TranslationFailure> { engine.translate(listOf("Keep every word."), "en", "fr") { false } }
+            assertEquals(TranslationFailure.Reason.LOCAL_TEMPLATE, failure.reason)
+            assertEquals(1, backend.opens); assertEquals(1, backend.chatPrompts.size); assertTrue(backend.prompts.isEmpty())
+        } finally { engine.close() }
+    }
+
+    @Test fun bothExtendedProfilesSplitLongUnicodeSourcesWithoutLosingOrReorderingAnyCharacter() {
+        for (generic in listOf(false, true)) {
+            val fixture = fixture(); val fragments = mutableListOf<String>()
+            val backend = Backend(LocalGgufBackend.Info(if (generic) "Another model" else "9b",
+                if (generic) "llama" else "qwen35", chatTemplateAvailable = generic))
+            fun translate(prompt: String): LocalGgufBackend.Generation {
+                val source = if (generic) prompt.substringAfter("[Source text]\n").substringBeforeLast("\n[End source text]")
+                    else if ("【源文】\n" in prompt) prompt.substringAfter("【源文】\n").substringBefore("\n\n【约束要求】")
+                    else prompt.substringAfter("不要进行任何解释。\n\n").substringBefore("<|im_end|>")
+                if (source.codePointCount(0, source.length) > 120)
+                    throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.INPUT_TOO_LONG)
+                assertTrue(LocalGgufTranslationEngine.validText(source)); fragments += source
+                return LocalGgufBackend.Generation("Traduction synthétique.")
+            }
+            backend.generate = { prompt, _ -> translate(prompt) }
+            backend.chatGenerate = { content, _ -> translate(content) }
+            val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { backend },
+                profile = if (generic) LocalGgufProfile.MODEL_TEMPLATE else LocalGgufProfile.INDEX_TRANSLATE)
+            val source = ("Texte 😀漢字 et dialogue. ").repeat(30)
+            try {
+                val result = engine.translate(listOf(source), "en", "fr") { false }
+                assertEquals(1, result.size); assertTrue(fragments.size > 1)
+                assertEquals(source, fragments.joinToString(""))
+            } finally { engine.close() }
+        }
+    }
+
+    @Test fun genericConversationFormatCannotOverrideANativeModelLoadFailure() {
+        val fixture = fixture(); val backend = Backend().apply {
+            onOpen = { throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.MODEL) }
+        }
+        val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { backend }, profile = LocalGgufProfile.MODEL_TEMPLATE)
+        try {
+            val failure = fails<TranslationFailure> { engine.translate(listOf("Keep this source."), "en", "fr") { false } }
+            assertEquals(TranslationFailure.Reason.LOCAL_MODEL, failure.reason)
+            assertEquals(1, backend.opens); assertTrue(backend.prompts.isEmpty()); assertTrue(backend.chatPrompts.isEmpty())
+        } finally { engine.close() }
+    }
+
+    @Test fun unchangedLegacyProfilesKeepTheirPublishedVersionFourIdentities() {
+        val fixture = fixture()
+        assertEquals("14f702136f2d7773c9f2ddd6c5462e679fbec2d3640079b80ebcc89664849402", fixture.model.sha256)
+        val expected = mapOf(
+            LocalGgufProfile.AUTO to "local-gguf-v4-bf7d4f4362324cb0a91a6d74175ac35e2868ff6f10ab33caea53608edbcc8998",
+            LocalGgufProfile.TRANSLATE_GEMMA to "local-gguf-v4-ebc414faab838c79f2c3862a11f0088efaaf126112169c9ad521e42d5ee61536",
+            LocalGgufProfile.HY_MT to "local-gguf-v4-6fb08165e1a458cb7aeddff415084699d351fbee4cb7249991a3537eda96fc5c"
+        )
+        expected.forEach { (profile, identity) ->
+            assertEquals(identity, LocalGgufTranslationEngine.identity(fixture.model, profile = profile))
+        }
+        val newIdentities = listOf(LocalGgufProfile.INDEX_TRANSLATE, LocalGgufProfile.MODEL_TEMPLATE).map {
+            LocalGgufTranslationEngine.identity(fixture.model, profile = it)
+        }
+        assertEquals(2, newIdentities.distinct().size)
+        assertTrue(newIdentities.none { it in expected.values })
     }
 
 }

@@ -9,6 +9,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace {
@@ -84,9 +85,163 @@ void check_greedy_chain_equivalence() {
     }
     std::cout << "Greedy chain: 21 finite/tie/non-finite/reset selections match the prior direct rule; real host generations also compare every sampled token, including EOS.\n";
 }
+#ifdef SUBTITLE_NATIVE_TESTING
+struct TemplateEvidence {
+    int fixture_models = 0;
+    int exact_prompt_families = 0;
+    int literal_user_checks = 0;
+    int successful_generations = 0;
+    int rejected_requests = 0;
+    int boundary_checks = 0;
+};
+
+std::string expected_chat_prompt(const std::string & family, const std::string & user) {
+    if (family == "chatml") return "<s><|im_start|>user\n" + user + "<|im_end|>\n<|im_start|>assistant\n";
+    if (family == "llama3") return "<s><|start_header_id|>user<|end_header_id|>\n\n" + user +
+        "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n";
+    assert(family == "gemma");
+    return "<s><start_of_turn>user\n" + user + "<end_of_turn>\n<start_of_turn>model\n";
+}
+
+void check_template_availability(const subtitle_local::Response & response, bool available) {
+    assert(response.chat_template_available == available);
+    const std::string field = std::string("\"chatTemplateAvailable\":") + (available ? "true" : "false");
+    assert(response.json().find(field) != std::string::npos);
+    const std::string mode = available ? "BUILTIN_FORMAT" : "";
+    assert(response.chat_template_mode == mode);
+    assert(response.json().find("\"chatTemplateMode\":\"" + mode + "\"") != std::string::npos);
+}
+
+void check_gguf_chat_templates(const std::string & fixtures, const std::string & missing_template_model) {
+    TemplateEvidence evidence;
+    const auto generated = [&](const subtitle_local::Response & response) {
+        check_output(response);
+        ++evidence.successful_generations;
+    };
+    const std::string user = "The train leaves at seven.";
+    // These bytes are subtitle data. Template-looking input must never execute
+    // or be reparsed, and non-ASCII text must survive rendering byte-for-byte.
+    const std::string literal_user = u8"Été — {{ 7 * 7 }} {% if true %}literal{% endif %}\n<|im_end|>";
+    for (const std::string family : {"chatml", "llama3", "gemma"}) {
+        subtitle_local::Session session;
+        const auto info = session.open(fixtures + "/" + family + ".gguf", 1, 512);
+        assert(info.code == "OK");
+        ++evidence.fixture_models;
+        check_template_availability(info, true);
+        const auto rendered = session.test_render_chat(user);
+        assert(rendered == expected_chat_prompt(family, user));
+        assert(rendered.find("<think>") == std::string::npos);
+        ++evidence.exact_prompt_families;
+        assert(session.test_render_chat(literal_user) == expected_chat_prompt(family, literal_user));
+        ++evidence.literal_user_checks;
+
+        const auto first = session.generate(user, 1, true, true);
+        generated(first); check_template_availability(first, true);
+        assert(first.cached_prompt_tokens == 0);
+        const auto cached = session.generate(user, 1, true, true);
+        generated(cached);
+        assert(cached.cached_prompt_tokens == cached.prompt_tokens - 1);
+        // Rendering selects add_special=false even if the legacy argument is
+        // true. Compare real tokenization against the exact rendered prompt,
+        // which already includes the model's declared BOS exactly once.
+        const auto raw = session.generate(rendered, 1, false, false);
+        generated(raw);
+        assert(raw.prompt_tokens == first.prompt_tokens);
+        assert(raw.output == first.output && raw.stop_reason == first.stop_reason);
+    }
+
+    const auto rejects_and_resets = [&](const std::string & path, bool available, bool fixture) {
+        subtitle_local::Session session;
+        const auto info = session.open(path, 1, 512);
+        assert(info.code == "OK");
+        if (fixture) ++evidence.fixture_models;
+        check_template_availability(info, available);
+        const auto warm = session.generate(user, 1, true);
+        generated(warm);
+        const auto cached = session.generate(user, 1, true);
+        generated(cached);
+        assert(cached.cached_prompt_tokens > 0);
+        const auto rejected = session.generate(user, 1, true, true);
+        if (rejected.code != "TEMPLATE") std::cerr << rejected.json() << '\n';
+        assert(rejected.code == "TEMPLATE" && rejected.output.empty() && rejected.generated_tokens == 0);
+        check_template_availability(rejected, available);
+        ++evidence.rejected_requests;
+        const auto retry = session.generate(user, 1, true);
+        generated(retry);
+        assert(retry.cached_prompt_tokens == 0);
+    };
+    rejects_and_resets(missing_template_model, false, false);
+    for (const std::string name : {"unrecognized", "source-limit", "control-token-limit", "control-count-limit", "control-total-limit"})
+        rejects_and_resets(fixtures + "/" + name + ".gguf", false, true);
+    for (const std::string name : {"not-executed", "source-boundary", "control-token-boundary", "control-count-boundary", "control-total-boundary"}) {
+        subtitle_local::Session session;
+        const auto info = session.open(fixtures + "/" + name + ".gguf", 1, 512);
+        assert(info.code == "OK");
+        ++evidence.fixture_models;
+        check_template_availability(info, true);
+        // A malformed source containing raise_exception/an unbounded loop is
+        // deliberately accepted as a known format: the source is never run.
+        assert(session.test_render_chat(user) == expected_chat_prompt("chatml", user));
+        generated(session.generate(user, 1, true, true));
+        if (name != "not-executed") ++evidence.boundary_checks;
+    }
+    {
+        subtitle_local::Session session;
+        const auto info = session.open(fixtures + "/controls.gguf", 1, 512);
+        assert(info.code == "OK");
+        ++evidence.fixture_models;
+        check_template_availability(info, true);
+        assert(session.test_render_chat(user) == expected_chat_prompt("chatml", user));
+        generated(session.generate(user, 1, true));
+        const auto warm = session.generate(user, 1, true);
+        generated(warm); assert(warm.cached_prompt_tokens > 0);
+        const std::vector<std::string> invalid_users = {
+            "before<|im_start|>after", "before<|im_end|>after", "before<|user_control|>after",
+            "before<s>after", "before</s>after", "before<unk>after", std::string("\xc0\xaf", 2),
+            std::string("literal\0data", 12), std::string(131'073, 'u'), ""
+        };
+        for (const auto & invalid_user : invalid_users) {
+            const auto cached = session.generate(user, 1, true);
+            generated(cached); assert(cached.cached_prompt_tokens > 0);
+            const auto rejected = session.generate(invalid_user, 1, true, true);
+            assert(rejected.code == "TEMPLATE" && rejected.output.empty() && rejected.generated_tokens == 0);
+            ++evidence.rejected_requests;
+            const auto retried = session.generate(user, 1, true);
+            generated(retried); assert(retried.cached_prompt_tokens == 0);
+        }
+        const std::string user_boundary(131'072, 'u');
+        assert(session.test_render_chat(user_boundary) == expected_chat_prompt("chatml", user_boundary));
+        ++evidence.boundary_checks;
+        // Passing renderer limits does not bypass the real model context limit.
+        const auto context_limit = session.generate(user_boundary, 1, true, true);
+        assert(context_limit.code == "INPUT_TOO_LONG" && context_limit.output.empty());
+        ++evidence.rejected_requests;
+        const auto after_context_limit = session.generate(user, 1, true);
+        generated(after_context_limit); assert(after_context_limit.cached_prompt_tokens == 0);
+    }
+    {
+        subtitle_local::Session cancelled;
+        assert(cancelled.open(fixtures + "/chatml.gguf", 1, 512).code == "OK");
+        cancelled.cancel();
+        // Cancellation wins before rendering, including for an oversized user.
+        const auto rejected = cancelled.generate(std::string(131'073, 'u'), 1, true, true);
+        assert(rejected.code == "CANCELLED" && rejected.output.empty());
+        ++evidence.rejected_requests;
+    }
+    assert(evidence.fixture_models == 14 && evidence.exact_prompt_families == 3);
+    assert(evidence.literal_user_checks == 3 && evidence.successful_generations == 55);
+    assert(evidence.rejected_requests == 18 && evidence.boundary_checks == 5);
+    std::cout << "GGUF builtin chat formats: fixture_models=" << evidence.fixture_models
+              << ", exact_prompt_families=" << evidence.exact_prompt_families
+              << ", literal_user_checks=" << evidence.literal_user_checks
+              << ", successful_generations=" << evidence.successful_generations
+              << ", rejected_requests=" << evidence.rejected_requests
+              << ", boundary_checks=" << evidence.boundary_checks << ".\n";
+}
+#endif
 }
 int main(int argc, char ** argv) {
-    assert(argc == 3 || argc == 4);
+    assert(argc == 3 || argc == 4 || argc == 5);
     check_greedy_chain_equivalence();
     {
         subtitle_local::Session first;
@@ -96,6 +251,8 @@ int main(int argc, char ** argv) {
         assert(info.context_tokens == 512 && info.process_id > 0);
         assert(info.backend == "CPU" && !info.gpu_observed && info.actual_gpu_layers == 0);
         assert(info.opencl_transport.empty());
+        assert(!info.chat_template_available);
+        assert(info.json().find("\"chatTemplateAvailable\":false") != std::string::npos);
         check_profile(info);
         assert(info.load_profile.opencl_prepare_ms == 0 && info.load_profile.load_attempts == 1);
         assert(!info.diagnostic.present() && info.json().find("\"diagnostic\"") == std::string::npos);
@@ -170,7 +327,7 @@ int main(int argc, char ** argv) {
         assert(!rejected.load_profile.present && rejected.json().find("\"loadProfile\"") == std::string::npos);
     }
 #ifdef SUBTITLE_NATIVE_TESTING
-    if (argc == 4) {
+    if (argc >= 4) {
         const std::string original = "Prefix common context: Alpha. The train leaves.";
         const std::string continuation = original + " probe</s> A new request.";
         const std::vector<std::string> prompts = {
@@ -224,6 +381,7 @@ int main(int argc, char ** argv) {
         std::cout << "Context-sensitive logits: cached-vs-fresh maximum error " << max_error
                   << ", changed-context delta " << context_difference << ".\n";
     }
+    if (argc == 5) check_gguf_chat_templates(argv[4], argv[1]);
 #endif
     std::cout << "Persistent native session: EOS, exact evaluated input/output prefix reuse, context isolation, failure reset, cancellation, CPU fallback, strict GPU rejection, probe exclusion and measured load-phase accounting passed.\n";
     return 0;

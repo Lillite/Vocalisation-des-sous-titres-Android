@@ -107,7 +107,7 @@ internal class LocalGgufModelControls(
         profileSpinner = Spinner(activity).apply {
             id = View.generateViewId(); contentDescription = "Profil de traduction du modèle GGUF"
             minimumHeight = dp(64)
-            adapter = choices(listOf("Automatique (recommandé)", "TranslateGemma", "Hy-MT / Hy-MT2"))
+            adapter = choices(PROFILES.map { it.label })
             setSelection(PROFILES.indexOf(profile).coerceAtLeast(0))
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -119,7 +119,7 @@ internal class LocalGgufModelControls(
             addView(label("Profil de traduction du modèle GGUF").apply { labelFor = spinner.id })
             addView(spinner)
         }
-        addView(label("Le profil automatique reconnaît les modèles pris en charge. Si les métadonnées d’un GGUF ne permettent pas sa reconnaissance, choisis explicitement sa famille. Ce choix adapte la demande de traduction ; il ne change pas les poids du fichier."))
+        addView(label("Automatique privilégie les profils de traduction spécialisés, puis utilise le format de conversation reconnu dans le GGUF. Le profil Gabarit intégré exige un format exploitable ; son absence ou une incompatibilité est signalée. Les gabarits personnalisés et les architectures absentes du moteur peuvent rester incompatibles. Le choix du profil ne télécharge rien, ne change pas les poids et ne démarre aucun calcul. La mémoire et le moteur de calcul doivent aussi convenir au modèle ; la qualité de traduction reste à vérifier."))
         if (showContextChoice) {
             contextPolicySpinner = Spinner(activity).apply {
                 id = View.generateViewId(); contentDescription = "Contexte des sous-titres GGUF"
@@ -254,6 +254,6 @@ internal class LocalGgufModelControls(
     companion object {
         private val CONTEXT_POLICIES = LocalGgufContextPolicy.entries
         private val EXECUTION_MODES = listOf("AUTO", "CPU", "OPENCL")
-        private val PROFILES = listOf(LocalGgufProfile.AUTO, LocalGgufProfile.TRANSLATE_GEMMA, LocalGgufProfile.HY_MT)
+        private val PROFILES = LocalGgufProfile.entries
     }
 }

@@ -202,7 +202,8 @@ class LocalGgufModelStore private constructor(
                 val bytes = input.readLong()
                 val modified = input.readLong()
                 val hints = if (version >= 2) LocalGgufMetadata(input.readUTF(), input.readUTF(), input.readUTF(),
-                    input.readUTF(), input.readUTF(), input.readBoolean()) else LocalGgufMetadata()
+                    input.readUTF(), input.readUTF(), input.readBoolean(), if (version >= 3) input.readBoolean() else false)
+                    else LocalGgufMetadata()
                 if (!SHA256.matches(digest) || bytes < 24 || bytes != modelFile.length() ||
                     modified != modelFile.lastModified() || input.read() != -1) null
                 else LocalGgufModel(modelFile, digest, bytes, modified, hints)
@@ -219,7 +220,8 @@ class LocalGgufModelStore private constructor(
                 it.writeLong(model.bytes); it.writeLong(model.modifiedMillis); it.flush()
                 it.writeUTF(model.metadata.architecture); it.writeUTF(model.metadata.name)
                 it.writeUTF(model.metadata.basename); it.writeUTF(model.metadata.finetune)
-                it.writeUTF(model.metadata.fileType); it.writeBoolean(model.metadata.translationTemplate); it.flush()
+                it.writeUTF(model.metadata.fileType); it.writeBoolean(model.metadata.translationTemplate)
+                it.writeBoolean(model.metadata.chatTemplateAvailable); it.flush()
             }
             metadata.finishWrite(stream)
         } catch (failure: Exception) {
@@ -236,7 +238,7 @@ class LocalGgufModelStore private constructor(
     private class Gate { var readers = 0; var writer = false }
     companion object {
         private const val MAGIC = 0x4c474746
-        private const val VERSION = 2
+        private const val VERSION = 3
         private const val MAX_METADATA_BYTES = 16 * 1024
         private val SHA256 = Regex("[0-9a-f]{64}")
         private val gates = HashMap<String, Gate>()

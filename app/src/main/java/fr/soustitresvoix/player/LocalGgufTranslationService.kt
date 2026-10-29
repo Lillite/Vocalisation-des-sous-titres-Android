@@ -114,13 +114,21 @@ class LocalGgufTranslationService : Service() {
         val text = message.data.getString(GgufMessages.TEXT).orEmpty()
         val tokens = message.data.getInt(GgufMessages.TOKENS)
         val special = message.data.getBoolean(GgufMessages.SPECIAL)
+        val templateFlag = message.data.get(GgufMessages.MODEL_TEMPLATE)
+        if (message.data.containsKey(GgufMessages.MODEL_TEMPLATE) && templateFlag !is Boolean) {
+            respond(reply, request, session, error(LocalGgufRuntime.Code.TEMPLATE)); return
+        }
+        val useModelTemplate = templateFlag == true
+        if (useModelTemplate && special) { respond(reply, request, session, error(LocalGgufRuntime.Code.TEMPLATE)); return }
         if (text.isEmpty() || text.toByteArray(Charsets.UTF_8).size > 65536 || tokens !in 1..1024) { respond(reply, request, session, error(LocalGgufRuntime.Code.INPUT_TOO_LONG)); return }
         val cancelled = ownerCancelled
         running.set(true)
         worker.execute {
             val json = try {
                 if (cancelled.get()) throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.CANCELLED)
-                nativeSession?.generate(text, tokens, special) ?: error(LocalGgufRuntime.Code.MODEL)
+                nativeSession?.let {
+                    if (useModelTemplate) it.generateChat(text, tokens) else it.generate(text, tokens, special)
+                } ?: error(LocalGgufRuntime.Code.MODEL)
             } catch (failure: LocalGgufRuntime.Failure) { error(failure.code, failure.diagnostic) }
               catch (_: Exception) { error(LocalGgufRuntime.Code.RESPONSE) }
               catch (_: LinkageError) { error(LocalGgufRuntime.Code.BACKEND) }

@@ -2,7 +2,7 @@
 
 [Accueil](../README.md) · [Documentation](README.md) · [Services gratuits et limites](TRADUCTION_GRATUITE_ET_LIMITES.md) · [Tests sur téléphone](TESTS_TELEPHONE.md)
 
-Guide d’utilisation de la **0.5.2**, complété par le GGUF de la **0.5.4-local publiée** et les optimisations de la **candidate 0.5.5-perf** ; état documentaire au **28 octobre 2026**. La publication et les résultats réels figurent dans les [notes 0.5.2](releases/0.5.2.md), les [notes 0.5.4](releases/0.5.4-local.md) et les [notes de la candidate 0.5.5](releases/0.5.5-perf.md). Les références commerciales initiales ont été vérifiées le 24 octobre, puis les offres gratuites le 27 octobre. Les conditions, langues et droits applicables restent ceux affichés dans le compte du fournisseur.
+Guide d’utilisation courant : fonctions de lecture et traduction de la **0.5.2**, GGUF local publié jusqu’à la **0.5.10-quality**, et nouvelle compatibilité de la **candidate 0.5.11-models** ; état documentaire au **29 octobre 2026**. Les [notes 0.5.10](releases/0.5.10-quality.md) conservent leurs preuves ; le [guide des modèles 0.5.11](COMPATIBILITE_GGUF_0511.md) décrit les changements dont la validation reste à établir. Les références commerciales initiales ont été vérifiées le 24 octobre, puis les offres gratuites le 27 octobre. Les conditions, langues et droits applicables restent ceux affichés dans le compte du fournisseur.
 
 ## Fonctions disponibles
 
@@ -14,15 +14,15 @@ La narration utilise les occurrences françaises validées. L’affichage propos
 | --- | --- | --- | --- |
 | Google en ligne sans clé | Serveurs Google, accès web non officiel | Langue source et confirmation ; aucune clé Cloud | Aucune |
 | Google local — ML Kit | Téléphone | Paire de langues compatible ; modèles nécessaires | Téléchargement intégré, Wi-Fi par défaut |
-| GGUF local — 0.5.4 publiée / candidate 0.5.5 | Téléphone ; CPU, GPU facultatif dans la candidate | Fichier GGUF compatible choisi explicitement et langue source | Copie privée depuis le sélecteur Android ; aucun téléchargement automatique |
+| GGUF local — 0.5.10 publiée / candidate 0.5.11 | Téléphone ; CPU ou GPU facultatif observé | Fichier GGUF compatible choisi explicitement et langue source | Copie privée depuis le sélecteur Android ; aucun téléchargement automatique |
 | Microsoft Azure Translator | Serveurs Microsoft | Clé API personnelle et région selon la ressource | Aucune |
 | DeepL — point d'accès API Free | Serveurs DeepL, endpoint `api-free.deepl.com` | Clé API autorisée pour ce point d'accès | Aucune |
 | DeepL — point d'accès API payant | Serveurs DeepL, endpoint `api.deepl.com` | Clé API autorisée pour ce point d'accès | Aucune |
 | LibreTranslate — serveur personnel HTTPS | Serveur choisi par l'utilisateur | Adresse HTTPS, clé si l'instance l'exige | Aucune dans cette application |
 
-**ML Kit est intégré pour la traduction exécutée sur le téléphone. La préversion publiée 0.5.4 ajoute l’import privé et l’exécution CPU d’un GGUF compatible. La candidate 0.5.5 prépare des optimisations et le correctif de profil Hy-MT2 ; l’architecture Hunyuan seule ne garantit pas cette compatibilité.** Le [guide publié](TRADUCTION_GGUF_054.md) décrit le SRT autonome, la reprise et l’export ; le [guide candidat 0.5.5](TRADUCTION_GGUF_055.md) distingue CPU, GPU facultatif et mesures réelles. L’application ne parcourt pas Hugging Face et n’importe pas de paquet Argos. Les autres architectures présentées plus loin restent des candidats ; Google Cloud Translation et Apps Script restent distincts des choix intégrés.
+**ML Kit et le GGUF compatible choisi permettent un calcul sur le téléphone. Les profils GGUF spécialisés TranslateGemma et Hy-MT restent disponibles ; la candidate 0.5.11 ajoute Index-Translate et le format intégré des modèles instruct compatibles.** Le [guide 0.5.10](TRADUCTION_QUALITE_0510.md) décrit contexte, reprise et caches ; le [guide des modèles 0.5.11](COMPATIBILITE_GGUF_0511.md) distingue architecture, profil, format, mémoire et qualité. Le profil intégré reconnaît un format natif connu : il n’exécute pas toute logique Jinja personnalisée. Un format ou une architecture inconnus peuvent rester incompatibles. L’application ne parcourt pas Hugging Face et n’importe pas de paquet Argos. Les autres moteurs présentés plus loin restent des candidats ; Google Cloud Translation et Apps Script restent distincts des choix intégrés.
 
-Les résultats ont trois usages distincts :
+L’application distingue les catégories suivantes :
 
 - **Cache de pistes** : réutilisation des traductions complètes validées, dans une limite de 32 Mio par parcours — vidéo ou SRT indépendant ; une entrée peut être évincée.
 - **Cache de requêtes GGUF exactes — 0.5.10** : 8 Mio supplémentaires par parcours, réservés au travail local explicitement compatible. Modèle, configuration, langues, texte et historique doivent correspondre ; chaque occurrence garde ses propres identifiants et minutages. Une réutilisation n’est pas présentée comme un nouveau calcul GPU.
@@ -30,7 +30,7 @@ Les résultats ont trois usages distincts :
 - **Progression** : lots déjà validés conservés pour reprendre avec la même piste et les mêmes paramètres. Un lot au résultat incertain demande une confirmation avant un éventuel renvoi.
 - **Conservation et export** : conservation durable explicite d’une traduction complète, ou export SRT/VTT à l’emplacement choisi. L’export peut ensuite être réimporté comme piste française.
 
-Ces trois fonctions réutilisent un texte déjà traduit ; elles restent distinctes du calcul d’une nouvelle traduction locale avec ML Kit ou le GGUF choisi. La conservation privée dépend du stockage de l’application ; un export constitue un fichier séparé. Pour un calcul GGUF interrompu, la reprise conserve les occurrences validées sans notion de facturation externe.
+Ces fonctions réutilisent un texte déjà traduit ; elles restent distinctes du calcul d’une nouvelle traduction locale avec ML Kit ou le GGUF choisi. La conservation privée dépend du stockage de l’application ; un export constitue un fichier séparé. Pour un calcul GGUF interrompu, la reprise conserve les occurrences validées sans notion de facturation externe.
 
 ## Parcours depuis le téléphone
 
@@ -355,7 +355,7 @@ Sources : [téléchargement de modèles](https://huggingface.co/docs/hub/models-
 Cette sélection couvre plusieurs architectures utiles à comparer ; elle n'est
 pas un inventaire de tous les modèles existants. **Aucun résultat de débit,
 d'autonomie, de qualité ou d'accélération NPU sur OnePlus 15 n'est établi par ce
-guide.** Cette sélection historique n’établit aucun classement définitif. ML Kit est intégré depuis la 0.5.2 ; la préversion publiée 0.5.4 ajoute un runtime GGUF et des consignes de traduction. La candidate 0.5.5 prépare les optimisations et la reconnaissance corrigée de Hy-MT2. L’intégration ne prouve ni la compatibilité de tous les fichiers, ni la qualité linguistique ou les performances du téléphone.
+guide.** Cette sélection historique n’établit aucun classement définitif. ML Kit est intégré depuis la 0.5.2 ; la préversion publiée 0.5.4 ajoute un runtime GGUF et des consignes de traduction. La 0.5.5 publiée apporte les optimisations et la reconnaissance corrigée de Hy-MT2 ; la candidate 0.5.11 ajoute [Index-Translate et les formats de conversation intégrés reconnus](COMPATIBILITE_GGUF_0511.md). L’intégration ne prouve ni la compatibilité de tous les fichiers, ni la qualité linguistique ou les performances du téléphone.
 
 | Candidat et source primaire | Caractéristiques documentées | Licence / distribution | Intérêt et condition pour Android |
 | --- | --- | --- | --- |
@@ -458,7 +458,7 @@ Ces points distinguent les contrôles techniques d’import de la validation d�
 | Préparation impossible | Piste textuelle chargée et index complet ; des pixels ne deviennent pas du texte sans OCR |
 | Français prêt mais lecture refusée | Voix française prête dans « Voix et confort » |
 | Changement de vidéo ou de piste | Préparer une nouvelle traduction correspondant à la nouvelle sélection |
-| Fichier Hugging Face téléchargé mais inutilisable | Choisir un GGUF compatible et attendre sa préparation ; accès, identité, profil, mémoire et backend doivent être distingués. La candidate 0.5.5 corrige la reconnaissance du GGUF officiel Hy-MT2 ; ML Kit gère ses propres modèles séparément. |
+| Fichier Hugging Face téléchargé mais inutilisable | Choisir un GGUF compatible et attendre sa préparation ; accès, identité, profil, mémoire et backend doivent être distingués. Les profils spécialisés et le nouveau parcours Index-Translate ou gabarit intégré de la candidate 0.5.11 sont décrits dans le [guide des modèles](COMPATIBILITE_GGUF_0511.md). Un profil reconnu ne suffit pas à valider la RAM, le format ou le GPU ; ML Kit gère ses propres modèles séparément. |
 
 Pour commencer sans achat, **Azure F0 est un premier choix en ligne cohérent si
 l'ouverture de la ressource convient**. DeepL peut servir de comparaison avec

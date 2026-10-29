@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 /** Optional OpenCL and CPU execution; text and paths stay inside private app processes. */
 internal object LocalGgufRuntime {
-    enum class Code { BUSY, MODEL, CONTEXT, INPUT_TOO_LONG, OUTPUT_LIMIT, CANCELLED, DIED, TIMEOUT, RESPONSE, BACKEND, MEMORY }
+    enum class Code { BUSY, MODEL, CONTEXT, INPUT_TOO_LONG, OUTPUT_LIMIT, CANCELLED, DIED, TIMEOUT, RESPONSE, BACKEND, MEMORY, TEMPLATE }
     class Failure(val code: Code, val diagnostic: LocalGgufDiagnostic? = null) : Exception("Local GGUF: ${code.name}")
     data class Info(val name: String, val architecture: String, val fileType: String,
         val contextTokens: Int, val modelBytes: Long, val modelParameters: Long,
@@ -31,7 +31,8 @@ internal object LocalGgufRuntime {
         val fallbackReason: String = "", val requestedGpuLayers: Int = 0, val actualGpuLayers: Int = 0,
         val gpuObserved: Boolean = false, val residentBytes: Long = -1, val availableRamBytes: Long = -1,
         val diagnostic: LocalGgufDiagnostic? = null, val openClTransport: String = "",
-        val loadProfile: LocalGgufLoadProfile? = null)
+        val loadProfile: LocalGgufLoadProfile? = null,
+        val chatTemplateAvailable: Boolean = false, val chatTemplateMode: String = "")
     data class Generation(val output: String, val promptTokens: Int, val generatedTokens: Int,
         val stopReason: String, val promptMs: Long, val generationMs: Long, val peakRssBytes: Long,
         val backend: String = "CPU", val device: String = "CPU", val requestedMode: String = "CPU",
@@ -63,11 +64,13 @@ internal object LocalGgufRuntime {
                 x.optString("backend", "CPU"), x.optString("device", "CPU").take(256), x.optString("requestedMode", "CPU"),
                 x.optString("fallbackReason").take(128), x.optInt("requestedGpuLayers"), x.optInt("actualGpuLayers"),
                 x.optBoolean("gpuObserved"), x.optLong("residentBytes", -1), x.optLong("availableRamBytes", -1),
-                LocalGgufDiagnostic.parse(x.optJSONObject("diagnostic")), openClTransport(x), LocalGgufLoadProfile.fromResponse(x)).also {
+                LocalGgufDiagnostic.parse(x.optJSONObject("diagnostic")), openClTransport(x), LocalGgufLoadProfile.fromResponse(x),
+                chatTemplateAvailable(x), chatTemplateMode(x)).also {
                 if (it.contextTokens !in 128..2048 || it.modelBytes <= 0 || it.modelParameters <= 0 ||
                     it.loadMs < 0 || it.peakRssBytes < 0 || !validBackend(it.backend, it.requestedMode) ||
                     it.gpuObserved || it.actualGpuLayers !in -1..1024 || it.requestedGpuLayers !in -1..1024 ||
-                    it.residentBytes < -1 || it.availableRamBytes < -1 || !validTransport(it.backend, it.openClTransport))
+                    it.residentBytes < -1 || it.availableRamBytes < -1 || !validTransport(it.backend, it.openClTransport) ||
+                    it.chatTemplateAvailable != (it.chatTemplateMode == "BUILTIN_FORMAT"))
                     throw Failure(Code.RESPONSE)
                 it.loadProfile?.let { profile ->
                     if (profile.modelLoadMs + profile.contextInitMs > it.loadMs || it.loadMs > profile.openTotalMs)
@@ -109,6 +112,14 @@ internal object LocalGgufRuntime {
     }
     private fun validTransport(backend: String, transport: String) =
         if (backend == "OPENCL") transport == "DIRECT" else transport.isEmpty()
+    private fun chatTemplateAvailable(value: JSONObject): Boolean =
+        if (!value.has("chatTemplateAvailable")) false
+        else value.get("chatTemplateAvailable") as? Boolean ?: throw Failure(Code.RESPONSE)
+    private fun chatTemplateMode(value: JSONObject): String {
+        if (!value.has("chatTemplateMode")) return ""
+        return (value.get("chatTemplateMode") as? String)?.takeIf { it.isEmpty() || it == "BUILTIN_FORMAT" }
+            ?: throw Failure(Code.RESPONSE)
+    }
     internal class NativeSession : AutoCloseable {
         private val handle = AtomicLong(0)
         init {
@@ -129,6 +140,10 @@ internal object LocalGgufRuntime {
         fun generate(prompt: String, maxOutputTokens: Int, addSpecialTokens: Boolean): String {
             val id = handle.get().takeIf { it != 0L } ?: throw Failure(Code.CANCELLED)
             return decode(nativeGenerate(id, prompt.toByteArray(Charsets.UTF_8), maxOutputTokens, addSpecialTokens))
+        }
+        fun generateChat(userContent: String, maxOutputTokens: Int): String {
+            val id = handle.get().takeIf { it != 0L } ?: throw Failure(Code.CANCELLED)
+            return decode(nativeGenerateChat(id, userContent.toByteArray(Charsets.UTF_8), maxOutputTokens))
         }
         fun cancel() { handle.get().takeIf { it != 0L }?.let(::nativeCancel) }
         override fun close() { handle.getAndSet(0L).takeIf { it != 0L }?.let(::nativeDestroy) }
@@ -199,6 +214,17 @@ internal object LocalGgufRuntime {
             generation(perform(GgufMessages.GENERATE, Bundle().apply {
                 putString(GgufMessages.TEXT, prompt); putInt(GgufMessages.TOKENS, maxOutputTokens)
                 putBoolean(GgufMessages.SPECIAL, addSpecialTokens)
+            }, GgufMessages.GENERATION_TIMEOUT_MS, cancelled))
+        }
+        fun generateChat(userContent: String, maxOutputTokens: Int = 512,
+            cancelled: () -> Boolean = { false }): Generation = onWorker {
+            if (!opened) throw Failure(Code.MODEL)
+            if (userContent.isEmpty() || userContent.toByteArray(Charsets.UTF_8).size > 65536)
+                throw Failure(Code.INPUT_TOO_LONG)
+            if (maxOutputTokens !in 1..1024) throw Failure(Code.OUTPUT_LIMIT)
+            generation(perform(GgufMessages.GENERATE, Bundle().apply {
+                putString(GgufMessages.TEXT, userContent); putInt(GgufMessages.TOKENS, maxOutputTokens)
+                putBoolean(GgufMessages.MODEL_TEMPLATE, true)
             }, GgufMessages.GENERATION_TIMEOUT_MS, cancelled))
         }
         private fun <T> onWorker(action: () -> T): T {
@@ -337,6 +363,7 @@ internal object LocalGgufRuntime {
     private external fun nativeDestroy(handle: Long)
     private external fun nativeOpen(handle: Long, path: ByteArray, threads: Int, context: Int, execution: String, gpuLayers: Int, cachePath: ByteArray): ByteArray?
     private external fun nativeGenerate(handle: Long, prompt: ByteArray, tokens: Int, addSpecial: Boolean): ByteArray?
+    private external fun nativeGenerateChat(handle: Long, userContent: ByteArray, tokens: Int): ByteArray?
 }
 
 internal object GgufMessages {
@@ -344,6 +371,7 @@ internal object GgufMessages {
     const val SESSION = "session"; const val REQUEST = "request"; const val PATH = "path"; const val THREADS = "threads"
     const val CONTEXT = "context"; const val TEXT = "text"; const val TOKENS = "tokens"; const val SPECIAL = "special"; const val JSON = "json"
     const val EXECUTION = "execution"; const val LAYERS = "layers"
+    const val MODEL_TEMPLATE = "modelTemplate"
     const val CLOSE_REQUEST = Long.MAX_VALUE
     const val MAX_JSON = 196608
     const val OPEN_TIMEOUT_MS = 5 * 60 * 1000L

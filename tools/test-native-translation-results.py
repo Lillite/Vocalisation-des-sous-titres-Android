@@ -13,6 +13,12 @@ def evidence(error, delta):
     return f'Context-sensitive logits: cached-vs-fresh maximum error {error}, changed-context delta {delta}.\n'
 
 
+def chat_evidence(fixtures=14, families=3, literal=3, generations=55, rejected=18, boundaries=5):
+    return (f'GGUF builtin chat formats: fixture_models={fixtures}, exact_prompt_families={families}, '
+            f'literal_user_checks={literal}, successful_generations={generations}, '
+            f'rejected_requests={rejected}, boundary_checks={boundaries}.\n')
+
+
 class NativeTranslationResultsTest(unittest.TestCase):
     def test_actual_sentence_punctuation_is_not_part_of_the_number(self):
         text = 'Other native measurements.\n' + evidence('0', '0.000209779') + 'All assertions passed.\n'
@@ -34,6 +40,29 @@ class NativeTranslationResultsTest(unittest.TestCase):
                              ('0', '0'), ('0', '-0.1'), ('0', '1e999'), ('1e999', '0.1')]:
             with self.subTest(error=error, delta=delta), self.assertRaises(RuntimeError):
                 runner.parse_logit_comparison(evidence(error, delta))
+
+    def test_complete_real_builtin_chat_evidence_is_required(self):
+        log = evidence('0', '0.0002') + chat_evidence() + 'Other completed native checks.\n'
+        self.assertEqual(runner.CHAT_FORMAT_COUNTS, runner.parse_chat_format_evidence(log))
+
+    def test_missing_duplicate_or_malformed_chat_evidence_is_rejected(self):
+        valid = chat_evidence()
+        for log in ['', evidence('0', '0.0002'), valid + valid, valid[:-2],
+                    valid.replace('=14,', '=14.0,'), valid.replace('5.', '5..'),
+                    valid.replace('builtin chat formats', 'chat templates')]:
+            with self.subTest(log=log), self.assertRaises(RuntimeError):
+                runner.parse_chat_format_evidence(log)
+
+    def test_partial_chat_suite_cannot_be_reported_as_passed(self):
+        for counts in [dict(fixtures=13), dict(families=2), dict(literal=2),
+                       dict(generations=54), dict(rejected=17), dict(boundaries=4)]:
+            with self.subTest(counts=counts), self.assertRaises(RuntimeError):
+                runner.parse_chat_format_evidence(chat_evidence(**counts))
+
+    def test_changed_unreviewed_chat_counts_cannot_silently_change_the_evidence(self):
+        for counts in [dict(fixtures=15), dict(generations=56), dict(rejected=-1), dict(boundaries=6)]:
+            with self.subTest(counts=counts), self.assertRaises(RuntimeError):
+                runner.parse_chat_format_evidence(chat_evidence(**counts))
 
 
 if __name__ == '__main__':

@@ -278,18 +278,36 @@
       },
       "id": 427644605,
       "source_commit": "49c22dab7b5eb07fffc27c7914bfd50ca31b8812"
+    },
+    {
+      "tag": "v0.5.10-quality",
+      "title": "Sous-titres en voix 0.5.10 — Qualité et fiabilité de la traduction locale (préversion)",
+      "prerelease": true,
+      "latest": false,
+      "notes": "docs/releases/0.5.10-quality.md",
+      "asset": {
+        "name": "SousTitresVoix-0.5.10-quality.apk",
+        "version_name": "0.5.10-quality",
+        "version_code": 17,
+        "application_id": "fr.soustitresvoix.player.translation",
+        "id": 689179993,
+        "size": 53644273,
+        "sha256": "0ed4e99d10ef1505b5715d458c2eb4cc299fd56c6c8139ac4319977f3ca7b392"
+      },
+      "id": 428124298,
+      "source_commit": "911888461e046418fe029b74d09b22fc62af687f"
     }
   ],
   "next_release": {
-    "tag": "v0.5.10-quality",
-    "title": "Sous-titres en voix 0.5.10 — Qualité et fiabilité de la traduction locale (préversion)",
+    "tag": "v0.5.11-models",
+    "title": "Sous-titres en voix 0.5.11 — Modèles GGUF et profils de traduction (préversion)",
     "prerelease": true,
     "latest": false,
-    "notes": "docs/releases/0.5.10-quality.md",
+    "notes": "docs/releases/0.5.11-models.md",
     "asset": {
-      "name": "SousTitresVoix-0.5.10-quality.apk",
-      "version_name": "0.5.10-quality",
-      "version_code": 17,
+      "name": "SousTitresVoix-0.5.11-models.apk",
+      "version_name": "0.5.11-models",
+      "version_code": 18,
       "application_id": "fr.soustitresvoix.player.translation"
     }
   }

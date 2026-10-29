@@ -5,9 +5,68 @@ It emits a repeated 'probe' token. This tests real tokenizer/model/decode paths,
 not translation quality. The fixture has never been trained on any user content.
 """
 import array
+import argparse
 from pathlib import Path
 import struct
 import sys
+
+
+# These are metadata variants of the same real, synthetic model. Their names
+# describe prompt formats, not the fixture's underlying (tiny Llama) architecture.
+CHAT_TEMPLATES = {
+    'chatml': (
+        "{% for message in messages %}{{ '<|im_start|>' + message['role'] + '\\n' + "
+        "message['content'] + '<|im_end|>\\n' }}{% endfor %}"
+        "{% if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}{% endif %}"
+        "{% if enable_thinking %}{{ '<think>\\n' }}{% endif %}"
+    ),
+    'llama3': (
+        "{{ bos_token }}{% for message in messages %}{{ '<|start_header_id|>' + "
+        "message['role'] + '<|end_header_id|>\\n\\n' + message['content'] + '<|eot_id|>' }}{% endfor %}"
+        "{% if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\\n\\n' }}{% endif %}"
+        "{% if enable_thinking %}{{ '<think>\\n' }}{% endif %}"
+    ),
+    'gemma': (
+        "{{ bos_token }}{% for message in messages %}{{ '<start_of_turn>' + message['role'] + "
+        "'\\n' + message['content'] + '<end_of_turn>\\n' }}{% endfor %}"
+        "{% if add_generation_prompt %}{{ '<start_of_turn>model\\n' }}{% endif %}"
+        "{% if enable_thinking %}{{ '<think>\\n' }}{% endif %}"
+    ),
+    # The built-in formatter recognizes this family but must never evaluate
+    # the embedded source, including its error and unbounded-loop constructs.
+    'not-executed': "{{ raise_exception('Never execute GGUF source') }}{% for i in range(999999999) %}<|im_start|>",
+    'unrecognized': '{% if add_generation_prompt %}no supported format markers',
+    'source-limit': '<|im_start|>' + 'x' * (65_537 - len('<|im_start|>')),
+    'source-boundary': '<|im_start|>' + 'x' * (65_536 - len('<|im_start|>')),
+    **{name: 'chatml' for name in (
+        'controls', 'control-token-limit', 'control-count-limit', 'control-total-limit',
+        'control-token-boundary', 'control-count-boundary', 'control-total-boundary')},
+}
+
+
+def control_piece(index, size):
+    prefix, suffix = f'<|control_{index:04d}_', '|>'
+    if size < len(prefix) + len(suffix):
+        raise ValueError('control piece is too short')
+    return prefix + 'x' * (size - len(prefix) - len(suffix)) + suffix
+
+
+def fixture_controls(name):
+    # Token types: CONTROL=3 and USER_DEFINED=4. parse_special also recognizes
+    # UNKNOWN=2: <unk> (5 bytes), <s> (3 bytes) and </s> (4 bytes).
+    if name == 'controls':
+        return [('<|im_start|>', 3), ('<|im_end|>', 3), ('<|user_control|>', 4)]
+    if name in ('control-token-limit', 'control-token-boundary'):
+        return [(control_piece(0, 1025 if name.endswith('-limit') else 1024), 3)]
+    if name in ('control-count-limit', 'control-count-boundary'):
+        count = 8190 if name.endswith('-limit') else 8189
+        return [(f'<|control_{index}|>', 3) for index in range(count)]
+    if name == 'control-total-limit':
+        return [(control_piece(index, 1024), 3) for index in range(1024)]
+    if name == 'control-total-boundary':
+        return ([(control_piece(index, 1024), 3) for index in range(1023)] +
+                [(control_piece(1023, 1012), 3)])
+    return []
 
 
 def string(value):
@@ -15,7 +74,7 @@ def string(value):
     return struct.pack('<Q', len(data)) + data
 
 
-def generate(destination, terminating=False, context_sensitive=False, roundtrip=False):
+def generate(destination, terminating=False, context_sensitive=False, roundtrip=False, chat_template=None, controls=()):
     # GGUF types: UINT32=4, FLOAT32=6, BOOL=7, STRING=8, ARRAY=9.
     tokens = ['<unk>', '<s>', '</s>'] + [f'<0x{i:02X}>' for i in range(256)]
     if roundtrip:
@@ -23,7 +82,9 @@ def generate(destination, terminating=False, context_sensitive=False, roundtrip=
         # from text without its intermediate pieces. Keep the original fixtures
         # byte-identical by adding these only for continuation/cache tests.
         tokens += ['▁p', '▁pr', '▁pro', '▁prob']
-    tokens += ['▁probe']
+    tokens += [token for token, _ in controls] + ['▁probe']
+    token_types = [2, 3, 3] + [6] * 256
+    token_types += [1] * (4 if roundtrip else 0) + [kind for _, kind in controls] + [1]
     n_vocab, embedding, hidden = len(tokens), 16, 32
     def kv(key, kind, value):
         if kind == 4: data = struct.pack('<I', value)
@@ -52,13 +113,15 @@ def generate(destination, terminating=False, context_sensitive=False, roundtrip=
         kv('tokenizer.ggml.model', 8, 'llama'),
         kv('tokenizer.ggml.tokens', 9, (8, tokens)),
         kv('tokenizer.ggml.scores', 9, (6, [0.0] * n_vocab)),
-        kv('tokenizer.ggml.token_type', 9, (5, [2, 3, 3] + [6] * 256 + [1] * (n_vocab - 259))),
+        kv('tokenizer.ggml.token_type', 9, (5, token_types)),
         kv('tokenizer.ggml.bos_token_id', 4, 1),
         kv('tokenizer.ggml.eos_token_id', 4, 2),
         kv('tokenizer.ggml.unknown_token_id', 4, 0),
         kv('tokenizer.ggml.add_bos_token', 7, True),
         kv('tokenizer.ggml.add_eos_token', 7, False),
     ]
+    if chat_template is not None:
+        metadata.append(kv('tokenizer.chat_template', 8, chat_template))
     def values(data):
         a = array.array('f', data)
         if sys.byteorder != 'little': a.byteswap()
@@ -116,4 +179,22 @@ def generate(destination, terminating=False, context_sensitive=False, roundtrip=
 
 
 if __name__ == '__main__':
-    print(f"Synthetic GGUF: {generate(sys.argv[1], '--terminating' in sys.argv[2:], '--context-sensitive' in sys.argv[2:], '--roundtrip' in sys.argv[2:])} bytes")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('destination', type=Path)
+    parser.add_argument('--terminating', action='store_true')
+    parser.add_argument('--context-sensitive', action='store_true')
+    parser.add_argument('--roundtrip', action='store_true')
+    parser.add_argument('--chat-template', choices=CHAT_TEMPLATES)
+    parser.add_argument('--chat-template-fixtures', action='store_true',
+                        help='write all embedded-template metadata variants into destination directory')
+    args = parser.parse_args()
+    if args.chat_template_fixtures:
+        if args.chat_template is not None:
+            parser.error('--chat-template and --chat-template-fixtures are mutually exclusive')
+        for name, template in CHAT_TEMPLATES.items():
+            size = generate(args.destination / (name + '.gguf'), terminating=True,
+                            roundtrip=True, chat_template=template, controls=fixture_controls(name))
+            print(f'Synthetic embedded-template GGUF {name}: {size} bytes')
+    else:
+        template = CHAT_TEMPLATES[args.chat_template] if args.chat_template is not None else None
+        print(f'Synthetic GGUF: {generate(args.destination, args.terminating, args.context_sensitive, args.roundtrip, template, fixture_controls(args.chat_template))} bytes')

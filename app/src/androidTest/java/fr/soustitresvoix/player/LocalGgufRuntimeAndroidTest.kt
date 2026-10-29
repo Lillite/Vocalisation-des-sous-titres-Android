@@ -39,6 +39,47 @@ class LocalGgufRuntimeAndroidTest {
             }
         }
     }
+    @Test fun builtinTemplateUsesRealJniAndIpcAndRejectsControlsWithoutRawFallback() {
+        val file = File(context.cacheDir, "translation-chat-é-🚆.gguf")
+        instrumentation.context.assets.open("translation_chat_test_model.gguf").use { input ->
+            file.outputStream().use(input::copyTo)
+        }
+        val opened = open(file)
+        val client = opened.first
+        try {
+            assertTrue(opened.second.chatTemplateAvailable)
+            assertEquals("BUILTIN_FORMAT", opened.second.chatTemplateMode)
+            assertNotEquals(Process.myPid(), opened.second.processId)
+            val prompt = "Translate this complete synthetic text into French: The blue door is closed. é 🚆"
+            val cold = client.generateChat(prompt, maxOutputTokens = 1)
+            val warm = client.generateChat(prompt, maxOutputTokens = 1)
+            assertEquals(" probe", cold.output)
+            assertEquals(cold.output, warm.output)
+            assertEquals("end_of_generation", warm.stopReason)
+            assertEquals(0, cold.cachedPromptTokens)
+            assertEquals(warm.promptTokens - 1, warm.cachedPromptTokens)
+            assertEquals(1, warm.promptEvaluatedTokens)
+            assertFalse(warm.gpuObserved)
+            for (literal in listOf("<|im_start|>", "<|user_control|>", "<unk>")) {
+                try { client.generateChat("Keep the literal $literal visible.", 1); fail("A content token changed the chat framing") }
+                catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.TEMPLATE, failure.code) }
+            }
+            val resumed = client.generateChat(prompt, 1)
+            assertEquals(cold.output, resumed.output)
+            assertEquals(0, resumed.cachedPromptTokens)
+            // The new operation must not alter the historical raw completion path.
+            assertEquals(" probe", client.generate("Raw completion after a chat request.", 1, true).output)
+        } finally { client.closeAndAwait(); file.delete() }
+        val withoutTemplate = fixture(true)
+        val raw = open(withoutTemplate)
+        try {
+            assertFalse(raw.second.chatTemplateAvailable)
+            assertEquals("", raw.second.chatTemplateMode)
+            try { raw.first.generateChat("A request requiring a missing template.", 1); fail("Missing template silently fell back to raw") }
+            catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.TEMPLATE, failure.code) }
+            assertEquals(" probe", raw.first.generate("Explicit historical raw completion.", 1, true).output)
+        } finally { raw.first.closeAndAwait(); withoutTemplate.delete() }
+    }
     @Test fun oneLoadedSessionGeneratesTwiceWithTrueEosAndExcludesDiagnosticModel() {
         val file = fixture(true)
         val opened = open(file)

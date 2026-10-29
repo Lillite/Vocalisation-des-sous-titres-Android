@@ -14,10 +14,15 @@
 #include <sys/stat.h>
 #include <cstdlib>
 #include <new>
+#include <cstring>
+#include <stdexcept>
 
 namespace subtitle_local {
 namespace {
 using Clock = std::chrono::steady_clock;
+constexpr size_t maximum_template_bytes = 65536;
+constexpr size_t maximum_chat_user_bytes = 131072;
+constexpr size_t maximum_chat_render_bytes = 262144;
 long long elapsed(Clock::time_point start) { return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start).count(); }
 long long profile_elapsed(Clock::time_point start) { return std::min(86'400'000LL, std::max(0LL, elapsed(start))); }
 void diagnose(Response & result, const char * stage, const char * reason, Clock::time_point start) {
@@ -125,11 +130,97 @@ struct Session::State {
     std::vector<llama_token> decoded_tokens;
     Response info;
     bool gpu_selected = false;
+    // The embedded source is only used by llama.cpp's bounded set of builtin
+    // format recognizers. No Jinja program, macro or model-supplied code runs.
+    std::string chat_template;
+    std::string chat_bos;
+    std::vector<std::string> chat_controls;
+    void clear_chat() {
+        chat_template.clear(); chat_bos.clear(); chat_controls.clear();
+    }
+    void prepare_chat(std::atomic<bool> & cancelled) {
+        clear_chat();
+        const char * source = llama_model_chat_template(model.get(), nullptr);
+        if (!source) return;
+        const size_t size = strnlen(source, maximum_template_bytes + 1);
+        if (size == 0 || size > maximum_template_bytes) return;
+        std::string candidate(source, size);
+        if (!utf8(candidate)) return;
+        const llama_chat_message probe{"user", "probe"};
+        // A single, fixed message safely probes the native format recognizer.
+        // The call does not evaluate arbitrary embedded template expressions.
+        const int rendered = llama_chat_apply_template(candidate.c_str(), &probe, 1, true, nullptr, 0);
+        if (rendered < 1 || rendered > static_cast<int>(maximum_chat_render_bytes)) return;
+        const auto * vocab = llama_model_get_vocab(model.get());
+        const int vocabulary = llama_vocab_n_tokens(vocab);
+        if (vocabulary < 1 || vocabulary > 1'000'000) return;
+        std::vector<std::string> controls;
+        size_t total = 0;
+        for (int token = 0; token < vocabulary; ++token) {
+            if ((token & 255) == 0 && cancelled.load()) return;
+            const auto attributes = llama_vocab_get_attr(vocab, token);
+            // Match the pinned tokenizer's parse_special partition exactly:
+            // UNKNOWN pieces are special too, even with a custom spelling.
+            if (!(attributes & (LLAMA_TOKEN_ATTR_CONTROL | LLAMA_TOKEN_ATTR_USER_DEFINED | LLAMA_TOKEN_ATTR_UNKNOWN))) continue;
+            const char * text = llama_vocab_get_text(vocab, token);
+            if (!text) return;
+            const size_t length = strnlen(text, 1025);
+            if (length == 0) continue;
+            if (length > 1024 || controls.size() >= 8192 || total + length > 1'048'576) return;
+            std::string value(text, length);
+            if (!utf8(value)) return;
+            total += length; controls.push_back(std::move(value));
+        }
+        std::string bos;
+        if (llama_vocab_get_add_bos(vocab)) {
+            const auto token = llama_vocab_bos(vocab);
+            if (token < 0 || token >= vocabulary) return;
+            const char * text = llama_vocab_get_text(vocab, token);
+            if (!text) return;
+            const size_t length = strnlen(text, 1025);
+            if (length == 0 || length > 1024) return;
+            bos.assign(text, length);
+            if (!utf8(bos)) return;
+        }
+        chat_template = std::move(candidate);
+        chat_controls = std::move(controls);
+        chat_bos = std::move(bos);
+    }
+    std::string render_chat(const std::string & user, const std::atomic<bool> & cancelled) const {
+        if (cancelled.load()) throw std::runtime_error("cancelled");
+        if (chat_template.empty() || user.empty() || user.size() > maximum_chat_user_bytes ||
+            user.find('\0') != std::string::npos || !utf8(user)) throw std::runtime_error("template_input");
+        for (const auto & control : chat_controls) {
+            if (cancelled.load()) throw std::runtime_error("cancelled");
+            // Do not erase or escape subtitle text. A structural token in user
+            // data must be a visible failure rather than change chat roles.
+            if (user.find(control) != std::string::npos) throw std::runtime_error("template_control");
+        }
+        const llama_chat_message message{"user", user.c_str()};
+        const int needed = llama_chat_apply_template(chat_template.c_str(), &message, 1, true, nullptr, 0);
+        if (cancelled.load()) throw std::runtime_error("cancelled");
+        if (needed < 1 || needed > static_cast<int>(maximum_chat_render_bytes)) throw std::runtime_error("template_size");
+        // Check the reported byte count before allocating the output buffer.
+        std::string rendered(static_cast<size_t>(needed) + 1, '\0');
+        const int actual = llama_chat_apply_template(chat_template.c_str(), &message, 1, true,
+            rendered.data(), static_cast<int>(rendered.size()));
+        if (cancelled.load()) throw std::runtime_error("cancelled");
+        if (actual != needed) throw std::runtime_error("template_size");
+        rendered.resize(static_cast<size_t>(needed));
+        // Builtin formatters often omit the first BOS. Add exactly the model's
+        // declared BOS when required; tokenize without add_special afterwards.
+        if (!chat_bos.empty() && rendered.compare(0, chat_bos.size(), chat_bos) != 0) {
+            if (rendered.size() > maximum_chat_render_bytes - chat_bos.size()) throw std::runtime_error("template_size");
+            rendered.insert(0, chat_bos);
+        }
+        if (rendered.find('\0') != std::string::npos || !utf8(rendered)) throw std::runtime_error("template_output");
+        return rendered;
+    }
     void clear_cache() {
         decoded_tokens.clear();
         if (context) llama_memory_clear(llama_get_memory(context.get()), true);
     }
-    void clear_model() { clear_cache(); context.reset(); model.reset(); }
+    void clear_model() { clear_cache(); clear_chat(); context.reset(); model.reset(); }
 };
 Session::Session() : state_(std::make_unique<State>()) { }
 Session::~Session() { cancel(); std::lock_guard<std::mutex> lock(operation_); state_.reset(); }
@@ -147,6 +238,8 @@ std::string Response::json() const {
         << ",\"requestedMode\":" << quote(requested_mode) << ",\"fallbackReason\":" << quote(fallback_reason)
         << ",\"requestedGpuLayers\":" << requested_gpu_layers << ",\"actualGpuLayers\":" << actual_gpu_layers
         << ",\"gpuObserved\":" << (gpu_observed ? "true" : "false") << ",\"gpuGraphNodes\":" << gpu_graph_nodes
+        << ",\"chatTemplateAvailable\":" << (chat_template_available ? "true" : "false")
+        << ",\"chatTemplateMode\":" << quote(chat_template_mode)
         << ",\"cachedPromptTokens\":" << cached_prompt_tokens << ",\"promptEvaluatedTokens\":" << prompt_evaluated_tokens
         << ",\"residentBytes\":" << resident_bytes << ",\"availableRamBytes\":" << available_ram_bytes;
     if (load_profile.present) {
@@ -271,6 +364,10 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         result.model_bytes = static_cast<long long>(llama_model_size(state_->model.get()));
         result.model_parameters = static_cast<long long>(llama_model_n_params(state_->model.get()));
         result.context_tokens = llama_n_ctx(state_->context.get());
+        state_->prepare_chat(cancelled_);
+        if (cancelled_.load()) { result.code = "CANCELLED"; release_on_error(); return result; }
+        result.chat_template_available = !state_->chat_template.empty();
+        result.chat_template_mode = result.chat_template_available ? "BUILTIN_FORMAT" : "";
         measure_memory(result); result.code = "OK";
         result.load_profile.open_total_ms = profile_elapsed(open_start);
         result.load_profile.present = true;
@@ -284,7 +381,7 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         release_on_error(); result.code = "MODEL"; return result;
     }
 }
-Response Session::generate(const std::string & prompt, int output_tokens, bool add_special) {
+Response Session::generate(const std::string & prompt, int output_tokens, bool add_special, bool use_model_template) {
     std::lock_guard<std::mutex> lock(operation_);
     const auto generate_start = Clock::now();
     Response result = state_->info;
@@ -299,13 +396,21 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
     };
     if (cancelled_.load()) return failed("CANCELLED", "cancelled");
     if (!state_->context || !state_->model) return failed("MODEL");
-    if (prompt.empty() || prompt.size() > 65536 || !utf8(prompt) || output_tokens < 1 || output_tokens > 1024) return failed("INPUT_TOO_LONG");
+    if (output_tokens < 1 || output_tokens > 1024) return failed("INPUT_TOO_LONG");
+    std::string rendered;
+    if (use_model_template) {
+        try { rendered = state_->render_chat(prompt, cancelled_); }
+        catch (const std::bad_alloc &) { return failed("MEMORY"); }
+        catch (...) { return failed(cancelled_.load() ? "CANCELLED" : "TEMPLATE", cancelled_.load() ? "cancelled" : "template"); }
+        add_special = false;
+    } else if (prompt.empty() || prompt.size() > 65536 || !utf8(prompt)) return failed("INPUT_TOO_LONG");
+    const auto & input = use_model_template ? rendered : prompt;
     try {
         const auto * vocab = llama_model_get_vocab(state_->model.get());
-        const int needed = -llama_tokenize(vocab, prompt.data(), static_cast<int>(prompt.size()), nullptr, 0, add_special, true);
+        const int needed = -llama_tokenize(vocab, input.data(), static_cast<int>(input.size()), nullptr, 0, add_special, true);
         if (needed <= 0 || needed + output_tokens >= result.context_tokens) return failed("INPUT_TOO_LONG");
         std::vector<llama_token> tokens(static_cast<size_t>(needed));
-        const int count = llama_tokenize(vocab, prompt.data(), static_cast<int>(prompt.size()), tokens.data(), needed, add_special, true);
+        const int count = llama_tokenize(vocab, input.data(), static_cast<int>(input.size()), tokens.data(), needed, add_special, true);
         if (count <= 0 || count != needed) return failed("RESPONSE");
         result.prompt_tokens = count;
         auto memory = llama_get_memory(state_->context.get());
@@ -384,6 +489,11 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
       catch (...) { return failed(cancelled_.load() ? "CANCELLED" : "RESPONSE"); }
 }
 #ifdef SUBTITLE_NATIVE_TESTING
+std::string Session::test_render_chat(const std::string & user_content) {
+    std::lock_guard<std::mutex> lock(operation_);
+    if (!state_->context || !state_->model) throw std::runtime_error("model");
+    return state_->render_chat(user_content, cancelled_);
+}
 std::vector<float> Session::test_logits() {
     std::lock_guard<std::mutex> lock(operation_);
     if (!state_->context || !state_->model) return {};
