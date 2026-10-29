@@ -2,7 +2,43 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Essais sur téléphone](docs/TESTS_TELEPHONE.md) · [Contribution](CONTRIBUTING.md)
 
-## Candidate 0.5.7-directcl — validation à établir
+## Candidate 0.5.8-benchmark — validation à établir
+
+Les sources préparent **0.5.8-benchmark / code 15**, même identité Android et certificat durable. Le [guide](docs/COMPARATIF_LOCAL_058.md) et les [notes](docs/releases/0.5.8-benchmark.md) décrivent les 32 occurrences synthétiques, l’ordre CPU/GPU sélectionnable, la réouverture facultative et le profilage natif du chargement. Le rapport reçu de la 0.5.7 établit une exécution GPU réelle sur un court texte ; il ne valide pas cette nouvelle série.
+
+Les régressions de cette candidate doivent contrôler l’intégralité des occurrences et des répétitions légitimes, les entrées synthétiques sans contexte personnel, les agrégats de plusieurs appels, la libération avant changement de mode, les erreurs et annulations, la stricte validation des profils de chargement et les observations du lecteur sans commande de transport. Les protections de Pause, déplacement, réponse périmée et attente de traduction restent requises. Les poids, la quantification, le contexte de production et les noyaux de calcul sont conservés.
+
+L’inventaire des sources contient **178 méthodes noyau, 436 méthodes JVM application et 110 méthodes Android**, soit **724 méthodes attendues**, à vérifier dans les XML frais. Ces nombres ne constituent pas des résultats d’exécution. La campagne doit construire et tester **l’APK release sous Android 17 / API 37**, avec compilation et ciblage API 36 conservés, Command-line Tools 22.0 et garde de cible AVD 37.0. Aucun résultat n’est déduit de la réussite historique de 708 tests de la 0.5.7.
+
+Avant fusion, les suites de la proposition exacte doivent réussir sans échec, erreur, test ignoré, manquant ou dupliqué. Après fusion à deux parents, une reconstruction doit vérifier la provenance et le même contenu applicatif hors signature, **sans rejouer les suites réussies**. La signature durable et les fichiers publiés doivent ensuite être contrôlés. Aucun essai NPU, OCR de film, qualité linguistique générale, autonomie ou TalkBack réel n’est annoncé. La **0.5.2 reste la dernière stable**.
+
+### Vérifications locales de la candidate 0.5.8
+
+Les **59 tests Python hors réseau** ont réussi : **20** de publication, **23** de synchronisation de l’historique, **10** de nettoyage documentaire et **6** de provenance après fusion. Les helpers privés de préparation 0.5.8 ont passé **8 essais synthétiques**, sans clé, signature réelle, téléversement ou modification Git. Leur première exécution a trouvé une assertion de présentation encore propre aux notes 0.5.7 ; elle a été adaptée aux limites pertinentes de la 0.5.8, puis les huit essais ont réussi. Les contrôles de liens documentaires locaux, de déclaration de version, de stable recommandée et de mention de réalisation par IA ont également réussi.
+
+La compilation native hôte incrémentale a réussi, puis trois essais exécutés ont réussi : traduction persistante avec profilage réel des phases, sonde de modèle et diagnostic OpenCL borné. La traduction vérifie notamment EOS, réutilisation du préfixe, contexte, annulation, libération et cohérence du profil ; l’écart maximal entre logits avec cache et recalcul frais est nul sur la fixture synthétique. Deux erreurs de préparation (CMake système absent, puis premier chemin de fixture absent) ont été corrigées avant les exécutions finales. Ces essais utilisent le CPU ou une API OpenCL synthétique, sans mesure du GPU du téléphone.
+
+Les **59 tests JVM ciblés** ont été exécutés et réussis : comparatif court **8**, interface du comparatif **5**, corpus/statistiques **4**, série variée **7**, profil de chargement **2**, protocole runtime **10** et moteur de traduction **23**. Les sept rapports XML frais ne contiennent aucun échec, erreur, test ignoré, manquant ou dupliqué. Ces essais utilisent des moteurs simulés ou des modèles miniatures ; ils ne mesurent pas le débit du modèle de production sur téléphone. Les sources de l’application et des tests Android instrumentés ont également été compilées.
+
+La première compilation incrémentale locale s’était arrêtée avant les tests sur une ambiguïté de fonction Kotlin, malgré une seule déclaration source identique à celle de la 0.5.7. La compilation des mêmes sources avec `kotlin.incremental=false` a réussi. La compilation des nouvelles fixtures de test a ensuite révélé une progression numérique utilisée à la place d’une liste ; la fixture a été corrigée, puis les 59 tests ont réussi. Les journaux de ces tentatives sont conservés ; aucun de ces deux arrêts de compilation n’est présenté comme une campagne de tests exécutée.
+
+Les tâches requises `:core:test`, `:app:lintDebug`, `:app:assembleDebug` et `:app:assembleDebugAndroidTest` ont terminé avec succès en **1 min 53 s**. La tâche noyau était `UP-TO-DATE` ; ses 178 méthodes ne sont donc pas déclarées réexécutées par ce contrôle local. Lint rapporte **0 erreur, 97 avertissements et un conseil**. Les APK de l’application et d’instrumentation ont été produits.
+
+Le manifeste compilé de l’APK application confirme **0.5.8-benchmark / code 15**, l’identité et les permissions prévues, les services privés et l’accès OpenCL facultatif. Les bibliothèques natives de cet APK passent les contrôles ELF de 16 Kio, d’absence de dépendance obligatoire au pilote et de fonctions OpenCL exportées ou non résolues. L’alignement ZIP a été contrôlé. Les deux ABI contiennent le profilage ; la fixture terminante reste exclusivement dans l’APK d’instrumentation, qui utilise les bibliothèques de l’application installée. Le garde de version du manifeste a été actualisé pour cette candidate avant la campagne CI.
+
+L’instrumentation Android sur APK release demeure à exécuter en CI avant fusion ; ces contrôles locaux ne la remplacent pas.
+
+## Préversion publiée 0.5.7-directcl — résultats vérifiés
+
+La [PR #23](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/23) a réussi le [run 40776287846](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40776287846) : **178 tests noyau, 420 tests JVM application et 110 tests Android**, soit **708 réussites sans échec, erreur, test ignoré, manquant ou dupliqué**. Les 110 tests ont réellement porté sur l’APK release dans un émulateur **Android 17 / API 37 / x86_64**. L’essai hôte du parcours direct a aussi réussi avec des bibliothèques synthétiques sans interface ICD ; ce test ne mesure pas le pilote du téléphone.
+
+La source fusionnée est **cdeec9e590c35ca69035c67c1afd3b0a6cde2157**, arbre **2cb44887982f6c7cfef7e77fc225af2297ecb039**. Le [run après fusion 40780700846](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40780700846) a vérifié les mêmes arbre et parents que la proposition testée, puis le contenu applicatif identique de l’APK reconstruit hors signature, **sans rejouer les suites**. Le [run de publication 40782134226](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40782134226) et le téléchargement public indépendant ont confirmé l’APK signé de **53 595 121 octets**, SHA-256 **0aba11bb5eace394c91cbdbf8ab77c54750add6d89d0b3834eb60ed0667fe82c**, certificat durable **304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d**. Release **427273154**, asset APK **686586718** ; stable 0.5.2 conservée.
+
+Le rapport reçu du OnePlus le 29 octobre 2026 a ensuite établi du calcul OpenCL direct sur **Adreno 840**, 14 898 puis 14 832 nœuds. La génération atteignait 20,09 puis 20,18 tokens/s contre 9,49 puis 9,30 sur CPU ; le chargement prenait 34,254 s contre 10,264 s. Cet essai court répétait le même texte, avec 92 tokens d’entrée sur 93 réutilisés au deuxième passage. Il ne valide ni débit soutenu, ni autonomie, ni qualité sur un film ; les [notes 0.5.7](docs/releases/0.5.7-directcl.md) en conservent le détail.
+
+### Préparation et preuves locales historiques de la 0.5.7
+
+Les paragraphes qui suivent conservent la préparation antérieure à sa validation ; leurs formulations au futur ne décrivent pas une nouvelle campagne à lancer.
 
 Les sources préparent **0.5.7-directcl / code 14**, avec la même identité Android et le même certificat durable. Le [guide](docs/OPENCL_DIRECT_057.md) et les [notes](docs/releases/0.5.7-directcl.md) décrivent le passage par les fonctions du pilote OpenCL sans exiger son extension ICD. Le rapport reçu de la 0.5.6 établit une plateforme directement visible et un échec ICD ; il ne prouve pas une exécution GPU.
 

@@ -28,7 +28,7 @@ private class NativeTranslationBackend(context: Context) : LocalGgufBackend {
                 requestedMode = it.requestedMode, backend = it.backend, device = it.device,
                 gpuObserved = false, loadMs = it.loadMs, peakRssBytes = it.peakRssBytes,
                 currentRssBytes = it.residentBytes, availableRamBytes = it.availableRamBytes, fallbackReason = it.fallbackReason,
-                diagnostic = it.diagnostic, openClTransport = it.openClTransport))
+                diagnostic = it.diagnostic, openClTransport = it.openClTransport, loadProfile = it.loadProfile))
         }
     override fun generate(prompt: String, maxOutputTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Generation =
         client.generate(prompt, maxOutputTokens, addSpecialTokens = false, cancelled = cancelled)

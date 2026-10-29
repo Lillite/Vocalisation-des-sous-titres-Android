@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish only the signed 0.5.7-directcl candidate already validated on main.
+"""Publish only the signed 0.5.8-benchmark candidate already validated on main.
 
 The temporary branch contains three data files, never a signing key. This script
 does not compile or sign an APK, delete a release/tag, replace an asset, execute a
@@ -32,15 +32,15 @@ import zipfile
 
 
 REPOSITORY = "Lillite/Vocalisation-des-sous-titres-Android"
-BRANCH = "release-upload/v0.5.7-directcl"
-TAG = "v0.5.7-directcl"
-TITLE = "Sous-titres en voix 0.5.7 — Accès OpenCL direct (préversion)"
+BRANCH = "release-upload/v0.5.8-benchmark"
+TAG = "v0.5.8-benchmark"
+TITLE = "Sous-titres en voix 0.5.8 — Comparatif GGUF étendu (préversion)"
 PRERELEASE = True
 APPLICATION_ID = "fr.soustitresvoix.player.translation"
-VERSION_NAME = "0.5.7-directcl"
-VERSION_CODE = "14"
+VERSION_NAME = "0.5.8-benchmark"
+VERSION_CODE = "15"
 EXPECTED_SIGNER_SHA256 = "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d"
-APK_PATH = "release-upload/SousTitresVoix-0.5.7-directcl.apk"
+APK_PATH = "release-upload/SousTitresVoix-0.5.8-benchmark.apk"
 NOTES_PATH = "release-upload/notes.md"
 METADATA_PATH = "release-upload/release.json"
 VALIDATION_ARTIFACT = "SousTitresVoix-release-main"

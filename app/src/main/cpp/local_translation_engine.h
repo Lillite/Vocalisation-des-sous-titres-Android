@@ -11,8 +11,19 @@
 struct llama_model;
 struct llama_context;
 namespace subtitle_local {
+/** Coarse, sequential load phases. Only a completed open publishes this profile. */
+struct LoadProfile {
+    bool present = false;
+    long long backend_init_ms = 0;
+    long long opencl_prepare_ms = 0;
+    long long model_load_ms = 0;
+    long long context_init_ms = 0;
+    long long open_total_ms = 0;
+    int load_attempts = 0;
+};
 struct Response {
     subtitle_native::ExecutionDiagnostic diagnostic;
+    LoadProfile load_profile;
     std::string code = "MODEL";
     std::string name;
     std::string architecture;

@@ -63,6 +63,9 @@ class MainActivity : ComponentActivity() {
     private var requestToken = 0L
     private var stopped = false
     private var closed = false
+    // Only the UI thread reads the player. The translation worker sees an immutable,
+    // timestamped observation, without a media name, URI or subtitle text.
+    @Volatile private var localBenchmarkPlayback: LocalGgufBenchmark.PlaybackObservation? = null
     private var fullscreen = false
     private var cinema: CinemaView? = null
     private var buildingUi = false
@@ -172,7 +175,8 @@ class MainActivity : ComponentActivity() {
         localGgufBenchmarkControls = LocalGgufBenchmarkControls(this,
             otherPreparationBusy = { session.isPreparing || localSrtTranslationControls.busy ||
                 (::preparationDiagnostics.isInitialized && preparationDiagnostics.isBusy) },
-            launchModelPicker = { localBenchmarkModelPicker.launch(arrayOf("*/*")) }, onChanged = { refreshUi() })
+            launchModelPicker = { localBenchmarkModelPicker.launch(arrayOf("*/*")) }, onChanged = { refreshUi() },
+            playbackSnapshot = { localBenchmarkPlayback })
         preparationDiagnostics = PreparationDiagnosticsController(this,
             playbackIdle = {
                 val state = session.machine.snapshot()
@@ -204,13 +208,13 @@ class MainActivity : ComponentActivity() {
         offerSessionResume()
     }
     override fun onPause() {
-        stopped = true; main.removeCallbacks(ticker)
+        stopped = true; localBenchmarkPlayback = null; main.removeCallbacks(ticker)
         if (::preparationDiagnostics.isInitialized) preparationDiagnostics.onHostPaused()
         if (::session.isInitialized) session.pause()
         super.onPause()
     }
     override fun onDestroy() {
-        closed = true; uiRebuildPending = false; requestToken++
+        closed = true; localBenchmarkPlayback = null; uiRebuildPending = false; requestToken++
         cinema?.close(); repairDialog?.dismiss(); resumeDialog?.dismiss(); resumeDialog = null
         if (::translationControls.isInitialized) translationControls.close()
         if (::localSrtTranslationControls.isInitialized) localSrtTranslationControls.close()
@@ -445,6 +449,13 @@ class MainActivity : ComponentActivity() {
     private fun refreshUi() {
         if (closed || !::session.isInitialized) return
         val state = session.machine.snapshot()
+        localBenchmarkPlayback = if (stopped) null else LocalGgufBenchmark.PlaybackObservation(
+            observedAtMs = android.os.SystemClock.elapsedRealtime(), mediaGeneration = session.generation,
+            mediaOpened = session.media != null, playing = session.player.isPlaying,
+            positionMs = session.player.currentPosition.coerceAtLeast(0),
+            droppedFrames = session.droppedFrames.toLong().coerceAtLeast(0),
+            buffering = session.player.playbackState == Player.STATE_BUFFERING,
+            wantsPlayback = state.wantsPlayback, speaking = state.speakingId != null)
         if (state.wantsPlayback || state.speakingId != null || session.isPreparing ||
             (::localSrtTranslationControls.isInitialized && localSrtTranslationControls.busy) ||
             (::localGgufBenchmarkControls.isInitialized && localGgufBenchmarkControls.busy)) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

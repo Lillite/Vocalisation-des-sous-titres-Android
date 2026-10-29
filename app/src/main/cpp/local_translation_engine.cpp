@@ -19,6 +19,7 @@ namespace subtitle_local {
 namespace {
 using Clock = std::chrono::steady_clock;
 long long elapsed(Clock::time_point start) { return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start).count(); }
+long long profile_elapsed(Clock::time_point start) { return std::min(86'400'000LL, std::max(0LL, elapsed(start))); }
 void diagnose(Response & result, const char * stage, const char * reason, Clock::time_point start) {
     auto & value = result.diagnostic;
     value.stage = stage; value.reason = reason;
@@ -131,6 +132,14 @@ std::string Response::json() const {
         << ",\"gpuObserved\":" << (gpu_observed ? "true" : "false") << ",\"gpuGraphNodes\":" << gpu_graph_nodes
         << ",\"cachedPromptTokens\":" << cached_prompt_tokens << ",\"promptEvaluatedTokens\":" << prompt_evaluated_tokens
         << ",\"residentBytes\":" << resident_bytes << ",\"availableRamBytes\":" << available_ram_bytes;
+    if (load_profile.present) {
+        out << ",\"loadProfile\":{\"backendInitMs\":" << load_profile.backend_init_ms
+            << ",\"openClPrepareMs\":" << load_profile.opencl_prepare_ms
+            << ",\"modelLoadMs\":" << load_profile.model_load_ms
+            << ",\"contextInitMs\":" << load_profile.context_init_ms
+            << ",\"openTotalMs\":" << load_profile.open_total_ms
+            << ",\"loadAttempts\":" << load_profile.load_attempts << '}';
+    }
     if (diagnostic.present()) {
         out << ",\"diagnostic\":{\"stage\":" << quote(diagnostic.stage) << ",\"reason\":" << quote(diagnostic.reason)
             << ",\"elapsedMs\":" << diagnostic.elapsed_ms << ",\"openClStatus\":";
@@ -159,7 +168,9 @@ Response Session::open(const std::string & path, int threads, int context_tokens
     auto release_on_error = [&]() { state_->clear_model(); state_->lease.reset(); };
     const char * phase = "BACKEND";
     try {
+        const auto backend_start = Clock::now();
         subtitle_native::initialize_backend();
+        result.load_profile.backend_init_ms = profile_elapsed(backend_start);
         auto * cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
         if (!cpu) {
             diagnose(result, phase, "CPU_BACKEND_MISSING", open_start);
@@ -178,10 +189,12 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         if (execution == "AUTO" && gpu_layers == -1 && (!budget_known || budget_short)) {
             result.fallback_reason = budget_known ? "OPENCL_RAM_BUDGET" : "OPENCL_RAM_UNKNOWN";
         } else if (execution != "CPU") {
+            const auto opencl_start = Clock::now();
             if (!cache_path.empty() && cache_path.find('\0') == std::string::npos)
                 setenv("GGML_OPENCL_KERNEL_CACHE_DIR", cache_path.c_str(), 1);
             const bool prepared = subtitle_native::prepare_opencl(&result.diagnostic);
             if (prepared) { result.opencl_transport = "DIRECT"; gpu = opencl_device(); }
+            result.load_profile.opencl_prepare_ms = profile_elapsed(opencl_start);
             if (!gpu) {
                 if (prepared) diagnose(result, "OPENCL_DEVICE", "DEVICE_NOT_REGISTERED", open_start);
                 else result.diagnostic.elapsed_ms = std::min(86'400'000LL, std::max(0LL, elapsed(open_start)));
@@ -199,7 +212,10 @@ Response Session::open(const std::string & path, int threads, int context_tokens
             p.devices = devices; p.n_gpu_layers = use_gpu ? gpu_layers : 0; p.load_mode = LLAMA_LOAD_MODE_MMAP;
             p.progress_callback = progress; p.progress_callback_user_data = &cancelled_; p.check_tensors = true;
             subtitle_native::reset_offload_observation();
+            ++result.load_profile.load_attempts;
+            const auto model_start = Clock::now();
             state_->model.reset(llama_model_load_from_file(path.c_str(), p));
+            result.load_profile.model_load_ms += profile_elapsed(model_start);
             if (cancelled_.load()) { result.code = "CANCELLED"; release_on_error(); return result; }
             if (!state_->model) {
                 diagnose(result, phase, "MODEL_LOAD_FAILED", open_start);
@@ -211,7 +227,9 @@ Response Session::open(const std::string & path, int threads, int context_tokens
             cp.n_threads = threads; cp.n_threads_batch = threads; cp.offload_kqv = use_gpu; cp.op_offload = use_gpu;
             cp.abort_callback = abort; cp.abort_callback_data = &cancelled_;
             phase = "CONTEXT_INIT";
+            const auto context_start = Clock::now();
             state_->context.reset(llama_init_from_model(state_->model.get(), cp));
+            result.load_profile.context_init_ms += profile_elapsed(context_start);
             if (cancelled_.load()) { result.code = "CANCELLED"; release_on_error(); return result; }
             if (!state_->context) {
                 diagnose(result, phase, "CONTEXT_INIT_FAILED", open_start);
@@ -237,6 +255,8 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         result.model_parameters = static_cast<long long>(llama_model_n_params(state_->model.get()));
         result.context_tokens = llama_n_ctx(state_->context.get());
         measure_memory(result); result.code = "OK";
+        result.load_profile.open_total_ms = profile_elapsed(open_start);
+        result.load_profile.present = true;
         state_->info = result;
         return result;
     } catch (const std::bad_alloc &) {

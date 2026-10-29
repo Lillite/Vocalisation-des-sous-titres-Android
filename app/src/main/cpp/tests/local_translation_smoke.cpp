@@ -9,6 +9,19 @@
 #include <vector>
 
 namespace {
+void check_profile(const subtitle_local::Response & response) {
+    const auto & profile = response.load_profile;
+    assert(profile.present && profile.load_attempts >= 1 && profile.load_attempts <= 2);
+    assert(profile.backend_init_ms >= 0 && profile.opencl_prepare_ms >= 0);
+    assert(profile.model_load_ms >= 0 && profile.context_init_ms >= 0);
+    assert(profile.backend_init_ms + profile.opencl_prepare_ms + profile.model_load_ms +
+           profile.context_init_ms <= profile.open_total_ms);
+    assert(profile.model_load_ms + profile.context_init_ms <= response.load_ms);
+    assert(response.load_ms <= profile.open_total_ms);
+    assert(profile.open_total_ms <= 86'400'000);
+    assert(response.json().find("\"loadProfile\":{") != std::string::npos);
+    assert(response.json().find("\"loadAttempts\":") != std::string::npos);
+}
 void check_output(const subtitle_local::Response & response) {
     if (response.code != "OK") { std::cerr << response.json() << '\n'; std::abort(); }
     assert(response.output == " probe" && response.generated_tokens == 1);
@@ -17,6 +30,7 @@ void check_output(const subtitle_local::Response & response) {
     assert(response.prompt_evaluated_tokens >= 1);
     assert(response.backend == "CPU" && !response.gpu_observed && response.gpu_graph_nodes == 0);
     assert(response.opencl_transport.empty());
+    check_profile(response);
 }
 float difference(const std::vector<float> & left, const std::vector<float> & right) {
     assert(!left.empty() && left.size() == right.size());
@@ -35,6 +49,8 @@ int main(int argc, char ** argv) {
         assert(info.context_tokens == 512 && info.process_id > 0);
         assert(info.backend == "CPU" && !info.gpu_observed && info.actual_gpu_layers == 0);
         assert(info.opencl_transport.empty());
+        check_profile(info);
+        assert(info.load_profile.opencl_prepare_ms == 0 && info.load_profile.load_attempts == 1);
         assert(!info.diagnostic.present() && info.json().find("\"diagnostic\"") == std::string::npos);
         subtitle_local::Session second;
         assert(second.open(argv[1], 1, 512).code == "BUSY");
@@ -67,6 +83,7 @@ int main(int argc, char ** argv) {
         assert(missing.code == "MODEL" && missing.diagnostic.present());
         assert(std::string(missing.diagnostic.stage) == "MODEL_LOAD" && std::string(missing.diagnostic.reason) == "MODEL_LOAD_FAILED");
         assert(missing.json().find("/missing/model.gguf") == std::string::npos);
+        assert(!missing.load_profile.present && missing.json().find("\"loadProfile\"") == std::string::npos);
         assert(retry.open(argv[1], 1, 512).code == "OK");
         check_output(retry.generate("model is released after failure", 1, true));
     }
@@ -88,6 +105,7 @@ int main(int argc, char ** argv) {
         assert(std::string(rejected.diagnostic.stage) == "BACKEND" && std::string(rejected.diagnostic.reason) == "BACKEND_NOT_COMPILED");
         assert(!rejected.diagnostic.has_opencl_status && !rejected.diagnostic.probe_cached);
         assert(rejected.json().find("\"openClStatus\":null") != std::string::npos);
+        assert(!rejected.load_profile.present && rejected.json().find("\"loadProfile\"") == std::string::npos);
     }
 #ifdef SUBTITLE_NATIVE_TESTING
     if (argc == 4) {
@@ -129,6 +147,6 @@ int main(int argc, char ** argv) {
                   << ", changed-context delta " << context_difference << ".\n";
     }
 #endif
-    std::cout << "Persistent native session: EOS, exact prefix reuse, context isolation, failure reset, cancellation, CPU fallback, strict GPU rejection and probe exclusion passed.\n";
+    std::cout << "Persistent native session: EOS, exact prefix reuse, context isolation, failure reset, cancellation, CPU fallback, strict GPU rejection, probe exclusion and measured load-phase accounting passed.\n";
     return 0;
 }

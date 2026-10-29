@@ -27,8 +27,19 @@ internal class LocalGgufBenchmark(
     private val closeEngine: (TranslationEngine) -> Unit = { engine ->
         if (engine is LocalGgufTranslationEngine) engine.closeAndAwait(timeoutMs = 10_000)
         else engine.close()
-    }
+    },
+    private val playbackSnapshot: () -> PlaybackObservation? = { null }
 ) : AutoCloseable {
+    enum class Scenario { SHORT, VARIED }
+    enum class Order { CPU_THEN_GPU, GPU_THEN_CPU }
+    data class Options(val scenario: Scenario = Scenario.SHORT,
+        val order: Order = Order.CPU_THEN_GPU, val reopenForLoad: Boolean = false)
+    /** Immutable, read-only observations supplied by the player's application thread. */
+    data class PlaybackObservation(val observedAtMs: Long = 0, val mediaGeneration: Long = 0,
+        val mediaOpened: Boolean = false, val playing: Boolean = false, val positionMs: Long = 0,
+        val droppedFrames: Long = 0, val buffering: Boolean = false, val wantsPlayback: Boolean = false,
+        val speaking: Boolean = false)
+
     data class Platform(val androidRelease: String, val api: Int, val manufacturer: String,
         val model: String, val abis: List<String>, val appVersion: String?, val appVersionCode: Long?,
         val startedAtUtc: String) {
@@ -91,59 +102,23 @@ internal class LocalGgufBenchmark(
         }
     }
     data class Sample(val number: Int, val output: String, val wallMs: Long,
-        val performance: LocalTranslationPerformance?)
+        val performance: LocalTranslationPerformance?, val cue: LocalGgufBenchmarkCue? = null,
+        val nativeCalls: List<LocalTranslationPerformance> = performance?.let { listOf(it) } ?: emptyList(),
+        val environment: Environment? = null, val playback: PlaybackObservation? = null,
+        val finishedAtMs: Long = 0)
     data class Run(val requestedMode: String, val samples: List<Sample>, val before: Environment,
         val after: Environment, val wallMs: Long, val failure: String? = null,
         val cleanupConfirmed: Boolean = true, val loadMs: Long = 0,
-        val lastPerformance: LocalTranslationPerformance? = null)
+        val lastPerformance: LocalTranslationPerformance? = null, val reopening: Boolean = false,
+        val loadPerformance: LocalTranslationPerformance? = null, val plannedSamples: Int = 2,
+        val playbackBefore: PlaybackObservation? = null, val playbackAfter: PlaybackObservation? = null,
+        val startedAtMs: Long = 0, val finishedAtMs: Long = 0)
     data class State(val status: String = "Prêt. Aucun essai comparatif lancé.", val busy: Boolean = false,
         val modelSha256: String = "", val modelBytes: Long = 0, val threads: Int = 4,
         val profile: LocalGgufProfile = LocalGgufProfile.AUTO, val runs: List<Run> = emptyList(),
-        val currentPerformance: LocalTranslationPerformance? = null, val platform: Platform? = null) {
-        fun report(): String = buildString {
-            append("Comparatif local CPU / GPU — texte synthétique intégré\n")
-            append(status)
-            if (modelSha256.isEmpty()) { append("\nAucun modèle n’a été exécuté."); return@buildString }
-            platform?.let { append('\n'); append(it.render()) }
-            append("\nModèle : "); append(modelBytes); append(" octets ; SHA-256 "); append(modelSha256)
-            append("\nProfil demandé : "); append(profile.label); append(" ; threads CPU demandés : "); append(threads)
-            append("\nSource anglaise fixe : "); append(SOURCE)
-            append("\nCible : français ; contexte personnel vide ; mêmes poids, profil et limites de génération pour les deux modes.")
-            append("\nOrdre fixe : CPU puis GPU OpenCL strict. Deux passages identiques par mode : premier passage puis réutilisation éventuelle du préfixe.")
-            append("\nLes durées d’appel et de mode comprennent déjà le chargement éventuel ; sa mesure séparée détaille le total.")
-            append("\nLes modèles ne sont jamais chargés simultanément. L’ordre, le cache système, la chauffe, la lecture éventuelle et les autres applications peuvent influencer ces mesures ; leur activité n’est pas mesurée ici. Ces mesures ne prouvent pas la qualité sur un film.\n")
-            currentPerformance?.let {
-                append("\nDernières mesures de l’essai en cours :\n"); append(it.render()); append('\n')
-            }
-            runs.forEach { run ->
-                append("\nMode demandé : "); append(run.requestedMode)
-                append("\nAvant : "); append(run.before.render())
-                append("\nChargement du modèle : "); append(if (run.loadMs > 0) "${run.loadMs} ms" else
-                    "aucune mesure positive de chargement réussi reçue ; un chargement a pu être tenté")
-                run.samples.forEach { sample ->
-                    append("\n\nPassage "); append(sample.number)
-                    append(if (sample.number == 1) " — premier appel" else " — même texte dans la même session")
-                    append("\nDurée de l’appel complet observée par l’application : "); append(sample.wallMs); append(" ms")
-                    append("\n"); append(sample.performance?.render() ?: "Mesures natives indisponibles ; aucun moteur réel déduit.")
-                    append("\nSortie sur le texte synthétique uniquement :\n"); append(sample.output)
-                }
-                append("\n\nDurée du mode, chargement et libération inclus : "); append(run.wallMs); append(" ms")
-                append("\nAprès : "); append(run.after.render())
-                append("\nLibération avant le mode suivant : "); append(if (run.cleanupConfirmed) "confirmée" else "non confirmée ; aucun autre mode lancé")
-                run.failure?.let { append("\nRésultat : "); append(it) }
-                if (run.failure != null && run.lastPerformance != null) {
-                    append("\nDernières mesures reçues avant l’arrêt :\n"); append(run.lastPerformance.render())
-                }
-                if (run.failure == null) append("\nRésultat : deux réponses complètes validées.")
-                append('\n')
-            }
-            if (runs.size == 2 && runs.all { it.failure == null && it.samples.size == 2 }) {
-                val same = runs[0].samples.map { it.output } == runs[1].samples.map { it.output }
-                append(if (same) "\nLes sorties CPU et GPU sont identiques sur ces passages ; cela ne prouve pas leur fidélité linguistique."
-                    else "\nLes sorties CPU et GPU diffèrent : examine les textes avant d’interpréter les durées. Aucun classement de qualité automatique.")
-            }
-            append("\nLa mémoire résidente et son pic concernent tout le processus de calcul. Les relevés RAM et thermiques sont ponctuels. Aucun test NPU ni classement automatique de fidélité linguistique.")
-        }
+        val currentPerformance: LocalTranslationPerformance? = null, val platform: Platform? = null,
+        val options: Options = Options()) {
+        fun report(): String = LocalGgufBenchmarkReport.render(this)
     }
     private val app = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
@@ -154,7 +129,7 @@ internal class LocalGgufBenchmark(
     @Volatile var state = State()
         private set
 
-    fun start(model: LocalGgufModel, threads: Int, profile: LocalGgufProfile) {
+    fun start(model: LocalGgufModel, threads: Int, profile: LocalGgufProfile, options: Options = Options()) {
         if (closed || state.busy) return
         if (threads !in 1..8) {
             publish(state.copy(status = "Nombre de threads invalide : indique un entier de 1 à 8.")); return
@@ -162,77 +137,110 @@ internal class LocalGgufBenchmark(
         val owner = ++sequence
         val token = AtomicBoolean(false).also { cancelled = it }
         publish(State("Comparatif demandé. Sa durée dépend du modèle ; tu peux l’annuler.", true,
-            model.sha256, model.bytes, threads, profile, platform = Platform.read(app)))
+            model.sha256, model.bytes, threads, profile, platform = Platform.read(app), options = options))
         worker.execute {
             val results = mutableListOf<Run>()
             var fatal = false
             try {
                 LocalGgufModelStore(app).acquire(model).use {
-                    for (mode in listOf("CPU", "OPENCL")) {
-                        if (token.get() || closed) break
-                        val before = snapshot()
-                        val started = clock()
-                        val samples = mutableListOf<Sample>()
-                        var engine: TranslationEngine? = null
-                        var latest: LocalTranslationPerformance? = null
-                        var failure: String? = null
-                        var clean = true
-                        var loadMs = 0L
-                        try {
-                            val config = TranslationProviderConfig(TranslationProvider.LOCAL_GGUF,
-                                localModel = model, localThreads = threads, localContext = "",
-                                localExecution = mode, localProfile = profile)
-                            engine = engineFactory(config)
-                            (engine as? LocalTranslationPerformanceSource)?.setPerformanceListener { performance ->
-                                latest = performance
-                                if (performance.phase == "load") loadMs = performance.loadMs
-                                post(owner) {
-                                    it.copy(status = "Mode $mode : " + if (performance.phase == "load")
-                                        "modèle chargé ; calcul du texte intégré…" else "passage calculé…",
-                                        currentPerformance = performance)
+                    val modes = if (options.order == Order.CPU_THEN_GPU) listOf("CPU", "OPENCL") else listOf("OPENCL", "CPU")
+                    sessions@ for (mode in modes) {
+                        for (reopening in if (options.reopenForLoad) listOf(false, true) else listOf(false)) {
+                            if (token.get() || closed) break@sessions
+                            val planned = if (reopening) cues(options.scenario).take(1) else cues(options.scenario)
+                            val before = snapshot()
+                            val playbackBefore = readPlayback()
+                            val started = clock()
+                            val samples = mutableListOf<Sample>()
+                            var engine: TranslationEngine? = null
+                            var latest: LocalTranslationPerformance? = null
+                            var loadPerformance: LocalTranslationPerformance? = null
+                            var failure: String? = null
+                            var clean = true
+                            var loadMs = 0L
+                            var activeFrames: MutableList<LocalTranslationPerformance>? = null
+                            var tooManyFrames = false
+                            try {
+                                val config = TranslationProviderConfig(TranslationProvider.LOCAL_GGUF,
+                                    localModel = model, localThreads = threads, localContext = "",
+                                    localExecution = mode, localProfile = profile)
+                                val activeEngine = engineFactory(config).also { engine = it }
+                                (activeEngine as? LocalTranslationPerformanceSource)?.setPerformanceListener { performance ->
+                                    latest = performance
+                                    if (performance.phase == "load") {
+                                        loadMs = performance.loadMs
+                                        loadPerformance = performance
+                                    } else if (performance.phase == "generation") activeFrames?.let { frames ->
+                                        if (frames.size < MAX_PERFORMANCE_FRAMES) frames += performance else tooManyFrames = true
+                                    }
+                                    post(owner) {
+                                        it.copy(status = "Mode $mode : " + if (performance.phase == "load")
+                                            "modèle chargé ; calcul du texte intégré…" else "passage calculé…",
+                                            currentPerformance = performance)
+                                    }
+                                }
+                                planned.forEachIndexed { index, cue ->
+                                    if (token.get() || closed) throw TranslationCancelledException()
+                                    post(owner) { it.copy(status = "Mode $mode${if (reopening) ", réouverture" else ""}, " +
+                                        "occurrence ${index + 1} sur ${planned.size}. Durée inconnue ; annulation disponible.",
+                                        currentPerformance = if (index == 0) null else it.currentPerformance) }
+                                    latest = null
+                                    val frames = mutableListOf<LocalTranslationPerformance>()
+                                    activeFrames = frames
+                                    tooManyFrames = false
+                                    val callStarted = clock()
+                                    val output = try {
+                                        if (options.scenario == Scenario.VARIED && activeEngine is ContextualTranslationEngine) {
+                                            val history = samples.takeLast(2)
+                                            activeEngine.translateWithContext(listOf(cue.source), "en", "fr",
+                                                history.map { requireNotNull(it.cue).source }, history.map { it.output }) { token.get() || closed }
+                                        } else activeEngine.translate(listOf(cue.source), "en", "fr") { token.get() || closed }
+                                    } finally { activeFrames = null }
+                                    val callFinished = clock()
+                                    if (token.get() || closed) throw TranslationCancelledException()
+                                    if (output.size != 1 || output.single().isBlank())
+                                        throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
+                                    if (output.single().toByteArray(Charsets.UTF_8).size > MAX_OUTPUT_BYTES)
+                                        throw BenchmarkFailure("La réponse synthétique dépasse la taille prévue pour un rapport complet ; l’occurrence est refusée, sans tronquer le texte.")
+                                    if (tooManyFrames) throw BenchmarkFailure("Trop de mesures natives pour cette occurrence ; aucun résultat partiel n’est validé.")
+                                    if (frames.isEmpty()) throw BenchmarkFailure("Les mesures du moteur réellement exécuté sont absentes ; ce passage n’est pas validé.")
+                                    frames.forEach { validatePerformance(it, mode) }
+                                    val environmentAfter = snapshot()
+                                    val playbackAfter = readPlayback()
+                                    val playbackReadAt = clock()
+                                    samples += Sample(index + 1, output.single(), (callFinished - callStarted).coerceAtLeast(0),
+                                        frames.last(), cue, frames.toList(), environmentAfter, playbackAfter, playbackReadAt)
+                                }
+                            } catch (_: TranslationCancelledException) {
+                                failure = "Essai annulé ; aucune réponse partielle n’est déclarée complète."
+                            } catch (error: BenchmarkFailure) {
+                                failure = error.message
+                            } catch (error: TranslationFailure) {
+                                failure = error.message ?: "Échec du calcul local."
+                            } catch (_: Exception) {
+                                failure = "Essai local interrompu ; moteur et résultat non validés."
+                            } finally {
+                                activeFrames = null
+                                engine?.let { opened ->
+                                    try { closeEngine(opened) }
+                                    catch (_: Exception) {
+                                        clean = false; fatal = true
+                                        failure = (failure?.let { "$it " } ?: "") + "La libération du modèle n’a pas été confirmée ; le comparatif s’arrête."
+                                    } finally { runCatching { opened.close() } }
                                 }
                             }
-                            for (number in 1..2) {
-                                if (token.get() || closed) throw TranslationCancelledException()
-                                post(owner) { it.copy(status = "Mode $mode, passage $number sur 2. Durée inconnue ; annulation disponible.",
-                                    currentPerformance = if (number == 1) null else it.currentPerformance) }
-                                latest = null
-                                val callStarted = clock()
-                                val output = engine.translate(listOf(SOURCE), "en", "fr") { token.get() || closed }
-                                if (token.get() || closed) throw TranslationCancelledException()
-                                if (output.size != 1 || output.single().isBlank()) throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
-                                val performance = latest?.takeIf { it.phase == "generation" }
-                                if (performance == null)
-                                    throw BenchmarkFailure("Les mesures du moteur réellement exécuté sont absentes ; ce passage n’est pas validé.")
-                                if (performance.requestedMode != mode)
-                                    throw BenchmarkFailure("Les mesures ne correspondent pas au mode demandé ; ce passage n’est pas validé.")
-                                if (mode == "CPU" && (performance.backend != "CPU" || performance.gpuObserved || performance.gpuGraphNodes > 0))
-                                    throw BenchmarkFailure("Le passage CPU n’a pas confirmé une exécution CPU seule ; ce passage n’est pas validé.")
-                                if (mode == "OPENCL" && (!performance.gpuObserved || performance.gpuGraphNodes <= 0))
-                                    throw TranslationFailure(TranslationFailure.Reason.LOCAL_BACKEND)
-                                samples += Sample(number, output.single(), (clock() - callStarted).coerceAtLeast(0), performance)
-                            }
-                        } catch (_: TranslationCancelledException) {
-                            failure = "Essai annulé ; aucune réponse partielle n’est déclarée complète."
-                        } catch (error: BenchmarkFailure) {
-                            failure = error.message
-                        } catch (error: TranslationFailure) {
-                            failure = error.message ?: "Échec du calcul local."
-                        } catch (_: Exception) {
-                            failure = "Essai local interrompu ; moteur et résultat non validés."
-                        } finally {
-                            if (engine != null) {
-                                try { closeEngine(engine) }
-                                catch (_: Exception) {
-                                    clean = false; fatal = true
-                                    failure = (failure?.let { "$it " } ?: "") + "La libération du modèle n’a pas été confirmée ; le comparatif s’arrête."
-                                } finally { runCatching { engine.close() } }
-                            }
+                            val finished = clock()
+                            val environmentAfter = snapshot()
+                            val playbackAfter = readPlayback()
+                            val playbackReadAt = clock()
+                            results += Run(mode, samples.toList(), before, environmentAfter, (finished - started).coerceAtLeast(0),
+                                failure, clean, loadMs, latest, reopening, loadPerformance, planned.size,
+                                playbackBefore, playbackAfter, started, playbackReadAt)
+                            val copy = results.toList()
+                            post(owner) { it.copy(runs = copy, currentPerformance = null,
+                                status = if (failure == null) "Mode $mode${if (reopening) ", réouverture" else ""} terminé." else "Mode $mode : $failure") }
+                            if (fatal || token.get() || closed || failure != null) break@sessions
                         }
-                        results += Run(mode, samples.toList(), before, snapshot(), (clock() - started).coerceAtLeast(0), failure, clean, loadMs, latest)
-                        val copy = results.toList()
-                        post(owner) { it.copy(runs = copy, currentPerformance = null, status = if (failure == null) "Mode $mode terminé." else "Mode $mode : $failure") }
-                        if (fatal || token.get() || closed || failure != null) break
                     }
                 }
             } catch (_: LocalGgufModelBusyException) {
@@ -243,17 +251,32 @@ internal class LocalGgufBenchmark(
                 post(owner) { it.copy(status = "Le modèle a changé ou n’est plus disponible. Prépare le modèle actuel avant de relancer le comparatif.") }
             } finally {
                 val copy = results.toList()
+                val expected = if (options.reopenForLoad) 4 else 2
                 post(owner) {
                     it.copy(busy = false, runs = copy, currentPerformance = null, status = when {
                         token.get() -> "Comparatif annulé. Les résultats des passages terminés sont conservés."
                         fatal -> it.status
-                        copy.size == 2 && copy.all { run -> run.failure == null } -> "Comparatif terminé. Compare les temps, les moteurs observés et les sorties synthétiques."
+                        copy.size == expected && copy.all { run -> run.failure == null } -> "Comparatif terminé. Compare les temps, les moteurs observés et les sorties synthétiques."
                         copy.any { run -> run.failure != null } -> "Comparatif interrompu après un échec. Consulte le résultat du mode concerné."
                         else -> "Comparatif terminé sans exécution GPU validée."
                     })
                 }
             }
         }
+    }
+    private fun readPlayback(): PlaybackObservation? = runCatching { playbackSnapshot() }.getOrNull()?.takeIf {
+        it.observedAtMs >= 0 && it.mediaGeneration >= 0 && it.positionMs >= 0 && it.droppedFrames >= 0
+    }
+    private fun validatePerformance(value: LocalTranslationPerformance, mode: String) {
+        if (value.requestedMode != mode) throw BenchmarkFailure("Les mesures ne correspondent pas au mode demandé ; ce passage n’est pas validé.")
+        if (value.phase != "generation" || value.promptMs < 0 || value.generationMs < 0 || value.generatedTokens < 0 ||
+            value.promptTokens < 1 || value.cachedPromptTokens < 0 || value.promptEvaluatedTokens < 1 ||
+            value.cachedPromptTokens.toLong() + value.promptEvaluatedTokens != value.promptTokens.toLong() || value.gpuGraphNodes < 0)
+            throw BenchmarkFailure("Les mesures natives de cette occurrence sont incohérentes ; ce passage n’est pas validé.")
+        if (mode == "CPU" && (value.backend != "CPU" || value.gpuObserved || value.gpuGraphNodes > 0 || value.openClTransport.isNotEmpty()))
+            throw BenchmarkFailure("Le passage CPU n’a pas confirmé une exécution CPU seule ; ce passage n’est pas validé.")
+        if (mode == "OPENCL" && (value.backend != "OPENCL" || value.openClTransport != "DIRECT" || !value.gpuObserved || value.gpuGraphNodes <= 0))
+            throw TranslationFailure(TranslationFailure.Reason.LOCAL_BACKEND)
     }
     fun cancel() {
         if (closed || !state.busy) return
@@ -270,6 +293,14 @@ internal class LocalGgufBenchmark(
     }
     companion object {
         const val SOURCE = "The train leaves at 07:30. Please keep the blue door closed."
+        private const val MAX_PERFORMANCE_FRAMES = 256
+        // A fixed synthetic cue has a bounded response, keeping a complete report copyable.
+        private const val MAX_OUTPUT_BYTES = 2_048
+        fun cues(scenario: Scenario): List<LocalGgufBenchmarkCue> = when (scenario) {
+            Scenario.VARIED -> LocalGgufBenchmarkCorpus.cues
+            Scenario.SHORT -> listOf(LocalGgufBenchmarkCue("short-01", 0, 3_000, SOURCE, "dialogue"),
+                LocalGgufBenchmarkCue("short-02", 4_000, 7_000, SOURCE, "dialogue"))
+        }
     }
     private class BenchmarkFailure(message: String) : Exception(message)
 }

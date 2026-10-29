@@ -2,9 +2,20 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
-## 0.5.7-directcl — candidate d’accès OpenCL direct
+## 0.5.8-benchmark — candidate de comparatif GGUF étendu
 
-VersionCode **14**, identité Traduction et certificat durable conservés. [Guide](docs/OPENCL_DIRECT_057.md) · [Notes et limites](docs/releases/0.5.7-directcl.md). La 0.5.2 reste la dernière stable. La validation propre de cette candidate reste à établir.
+VersionCode **15**, identité Traduction et certificat durable conservés. [Guide](docs/COMPARATIF_LOCAL_058.md) · [Notes et limites](docs/releases/0.5.8-benchmark.md). La 0.5.2 reste la dernière stable. La validation propre de cette candidate doit être établie avant distribution.
+
+- Série intégrée de 32 occurrences synthétiques, 29 textes distincts : dialogues, panneaux, nombres, noms propres, phrases longues et répétitions légitimes avec identifiants et minutages conservés.
+- Ordre CPU/GPU sélectionnable ; modèle conservé pendant chaque série, libération confirmée avant le mode suivant et réouverture facultative mesurée sur une occurrence.
+- Profilage natif de l’initialisation, de la préparation OpenCL, du chargement du modèle et du contexte. Les opérations internes de lecture, allocation, transfert ou compilation ne sont pas isolées par ces durées globales.
+- Statistiques distinguant temps complet, calcul de l’entrée, génération, premier chargement et latences de session ; agrégation des appels réellement observés pour une occurrence.
+- Observations du lecteur en lecture seule et rapport copiable, sans texte personnel ni commande automatique de lecture, de pause ou de vocalisation. Les observations ponctuelles ne démontrent pas une fluidité continue ou une narration complète.
+- Aucun changement des poids, de la quantification, du contexte de production ou des noyaux de calcul ; aucun NPU ni OCR de film intégré.
+
+## 0.5.7-directcl — accès OpenCL direct publié
+
+VersionCode **14**, identité Traduction et certificat durable conservés. [Guide](docs/OPENCL_DIRECT_057.md) · [Notes et limites](docs/releases/0.5.7-directcl.md). La 0.5.2 reste la dernière stable. La [PR #23](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/23) a réussi **708 tests avant fusion**, dont 110 sur l’APK release sous Android 17. Reconstruction, signature et téléchargement public ont ensuite été vérifiés. Le rapport reçu du téléphone sous Android 17 a confirmé du calcul sur Adreno 840 ; il ne valide pas un film entier.
 
 - Remplacement du chargeur ICD par une liaison directe facultative aux fonctions OpenCL du pilote fourni par le téléphone. L’extension ICD manquante n’est plus exigée pour ce parcours.
 - Conservation du CPU indépendant, des replis explicites, des contrôles de libération, des noyaux de calcul épinglés et des preuves d’exécution GPU réellement observées.

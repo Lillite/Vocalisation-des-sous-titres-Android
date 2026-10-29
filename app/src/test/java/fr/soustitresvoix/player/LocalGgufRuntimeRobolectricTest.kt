@@ -108,6 +108,26 @@ class LocalGgufRuntimeRobolectricTest {
             catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.RESPONSE, failure.code) }
         }
     }
+    @Test fun loadProfileIsOptionalButMalformedOrContradictoryTimingsRejectTheResponse() {
+        val info = JSONObject().put("code", "OK").put("name", "Synthetic model")
+            .put("architecture", "llama").put("fileType", "Q4_0").put("contextTokens", 512)
+            .put("modelBytes", 1024).put("modelParameters", 100).put("loadMs", 52).put("peakRssBytes", 1000)
+        assertNull(LocalGgufRuntime.info(info.toString()).loadProfile)
+        val profile = JSONObject().put("backendInitMs", 2).put("openClPrepareMs", 3)
+            .put("modelLoadMs", 30).put("contextInitMs", 20).put("openTotalMs", 60).put("loadAttempts", 2)
+        val measured = JSONObject(info.toString()).put("loadProfile", profile)
+        assertEquals(LocalGgufLoadProfile(2, 3, 30, 20, 60, 2), LocalGgufRuntime.info(measured.toString()).loadProfile)
+        for (invalid in listOf(
+            JSONObject(info.toString()).put("loadProfile", JSONObject.NULL),
+            JSONObject(info.toString()).put("loadProfile", "unmeasured"),
+            JSONObject(info.toString()).put("loadProfile", JSONObject(profile.toString()).put("modelLoadMs", "30")),
+            JSONObject(info.toString()).put("loadProfile", JSONObject(profile.toString()).put("openTotalMs", 54)),
+            JSONObject(measured.toString()).put("loadMs", 49),
+            JSONObject(measured.toString()).put("loadMs", 61))) {
+            try { LocalGgufRuntime.info(invalid.toString()); fail("Invalid native load profile accepted") }
+            catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.RESPONSE, failure.code) }
+        }
+    }
     @Test fun serviceErrorReconstructionRetainsOnlyTheSanitizedDiagnosticForTheClient() {
         val native = JSONObject().put("code", "BACKEND").put("diagnostic", JSONObject()
             .put("stage", "OPENCL_DRIVER").put("reason", "DRIVER_NOT_ACCESSIBLE")
