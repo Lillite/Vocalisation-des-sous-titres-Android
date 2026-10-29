@@ -65,6 +65,7 @@ jobs:
           python3 tools/test-publish-verified-release.py
           python3 tools/test-emulator-readiness.py
           python3 tools/test-pr-validation.py
+          python3 tools/test-native-translation-results.py
       - name: Sonde Google unique sans reprise ni contournement
         run: python3 tools/probe-google.py --output build/verification/google-network-probe.json
       - name: Tests du noyau, lint et compilation APK debug

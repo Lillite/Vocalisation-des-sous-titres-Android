@@ -2,6 +2,7 @@
 """Exercise real host inference; never claim phone/GPU speed or linguistic quality."""
 import argparse
 import json
+import math
 from pathlib import Path
 import re
 import subprocess
@@ -9,6 +10,19 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parent.parent
+NUMBER = r'[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?'
+
+
+def parse_logit_comparison(log):
+    # The full stop belongs to the sentence, never the final numeric group.
+    matches = re.findall(r'^Context-sensitive logits: cached-vs-fresh maximum error (' + NUMBER +
+                         r'), changed-context delta (' + NUMBER + r')\.[ \t]*$', log, re.MULTILINE)
+    if len(matches) != 1:
+        raise RuntimeError('A unique real context-sensitive logit comparison was not reported')
+    error, delta = map(float, matches[0])
+    if not math.isfinite(error) or not math.isfinite(delta) or not 0 <= error < 0.00002 or not delta > 0.000001:
+        raise RuntimeError('Cache equivalence or context sensitivity failed')
+    return error, delta
 
 
 def unique_dependency(name):
@@ -65,12 +79,7 @@ def main():
         translation_log = run('translation', [work / 'build/local-translation-smoke', eos, repeat, context], 120)
         run('probe', [work / 'build/model-probe-smoke', repeat], 60)
         run('diagnostic', [work / 'build/optional-opencl-diagnostic-smoke'], 60)
-        match = re.search(r'cached-vs-fresh maximum error ([0-9.eE+-]+), changed-context delta ([0-9.eE+-]+)', translation_log)
-        if match is None:
-            raise RuntimeError('Real context-sensitive logit comparison was not reported')
-        error, delta = map(float, match.groups())
-        if not 0 <= error < 0.00002 or not delta > 0.000001:
-            raise RuntimeError('Cache equivalence or context sensitivity failed')
+        error, delta = parse_logit_comparison(translation_log)
         summary.update(status='passed', cachedVsFreshMaxLogitError=error, changedContextDelta=delta)
     except BaseException as error:
         summary.update(status='failed', failureType=type(error).__name__)
