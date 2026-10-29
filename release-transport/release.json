@@ -1,0 +1,9 @@
+{
+  "tag": "v0.5.9-local",
+  "source_sha": "49c22dab7b5eb07fffc27c7914bfd50ca31b8812",
+  "apk_sha256": "7cbfa79a3690e4d2ab4dec16b74b19e2bf8fe8d253a778f420d549e4ae1b78ac",
+  "signer_sha256": "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d",
+  "apk_file": "release-upload/SousTitresVoix-0.5.9-local.apk",
+  "notes_file": "release-upload/notes.md",
+  "title": "Sous-titres en voix 0.5.9 — Traduction locale et cache (préversion)"
+}
