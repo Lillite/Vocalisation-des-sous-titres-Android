@@ -588,7 +588,8 @@ class LocalGgufTranslationEngineTest {
 
     @Test fun exactCacheHitValidationRefusesClosedCancelledAndReservedInputsWithoutLoading() {
         val fixture = fixture(); var factories = 0
-        val model = fixture.model.copy(metadata = LocalGgufMetadata(architecture = "gemma3", name = "TranslateGemma"))
+        val model = LocalGgufModel(fixture.model.file, fixture.model.sha256, fixture.model.bytes,
+            fixture.model.modifiedMillis, LocalGgufMetadata(architecture = "gemma3", name = "TranslateGemma"))
         val engine = LocalGgufTranslationEngine(model, fixture.store, { factories++; Backend() })
         fun validate(source: String = "Keep the letter.", language: String = "en",
             previous: List<String> = emptyList(), cancelled: () -> Boolean = { false }) =

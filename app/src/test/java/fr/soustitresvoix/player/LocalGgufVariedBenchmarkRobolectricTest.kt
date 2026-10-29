@@ -215,7 +215,7 @@ class LocalGgufVariedBenchmarkRobolectricTest {
         assertTrue(stale.report().contains("Delta du compteur de session d’images abandonnées : non comparable"))
     }
 
-    @Test fun completeBoundedReportsFitClipboardAndOversizedResponsesFailWithoutTruncation() {
+    @Test fun completeReportsRemainIntactAndClipboardGateRefusesOversizedContentWithoutTruncation() {
         val fullRuns = listOf("CPU", "OPENCL").flatMap { mode ->
             val performance = LocalTranslationPerformance(requestedMode = mode, backend = mode,
                 device = "d".repeat(300), gpuObserved = mode == "OPENCL", gpuGraphNodes = if (mode == "OPENCL") Long.MAX_VALUE else 0,
@@ -232,7 +232,7 @@ class LocalGgufVariedBenchmarkRobolectricTest {
         }
         val largestReport = LocalGgufBenchmark.State(modelSha256 = "a".repeat(64), runs = fullRuns,
             options = LocalGgufBenchmark.Options(LocalGgufBenchmark.Scenario.VARIED, reopenForLoad = true)).report()
-        assertTrue("Complete fixed-corpus report must fit the UI copy gate", largestReport.length < 400_000)
+        assertTrue("The historical bounded report must remain copyable", LocalGgufBenchmarkControls.canCopyReport(largestReport))
         assertEquals(66, Regex("Sortie sur le texte synthétique uniquement").findAll(largestReport).count())
         assertTrue(largestReport.contains("0 ms (résolution milliseconde)"))
         val environment = LocalGgufBenchmark.Environment(Long.MAX_VALUE, 6, Int.MAX_VALUE)
@@ -247,8 +247,12 @@ class LocalGgufVariedBenchmarkRobolectricTest {
         val contextReport = LocalGgufBenchmark.State(modelSha256 = "a".repeat(64), runs = contextRuns,
             options = LocalGgufBenchmark.Options(LocalGgufBenchmark.Scenario.CONTEXT_POLICIES)).report()
         assertEquals(96, Regex("Sortie sur le texte synthétique uniquement").findAll(contextReport).count())
-        assertTrue("All 96 bounded outputs and representative maximum-sized measurements must remain copyable: ${contextReport.length}",
-            contextReport.length < 400_000)
+        assertTrue("This stress fixture intentionally exceeds the unchanged clipboard gate", contextReport.length > 400_000)
+        assertFalse("Oversized content must be refused, never clipped", LocalGgufBenchmarkControls.canCopyReport(contextReport))
+        for (cue in LocalGgufBenchmarkCorpus.cues) {
+            assertTrue(contextReport.contains(cue.source))
+            assertEquals(3, Regex(Regex.escape("occurrence ${cue.id} ;")).findAll(contextReport).count())
+        }
         assertEquals(96, Regex("x".repeat(2048)).findAll(contextReport).count())
         val events = mutableListOf<String>()
         val benchmark = LocalGgufBenchmark(context, {}, engineFactory = { config ->

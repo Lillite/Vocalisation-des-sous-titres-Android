@@ -5,6 +5,8 @@ import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
@@ -16,6 +18,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
+import java.util.concurrent.Executors
 
 /** A manually started, copyable synthetic benchmark, independent from video and subtitle files. */
 internal class LocalGgufBenchmarkControls(
@@ -24,9 +27,14 @@ internal class LocalGgufBenchmarkControls(
     private val launchModelPicker: () -> Unit,
     private val onChanged: () -> Unit = {},
     private val playbackSnapshot: () -> LocalGgufBenchmark.PlaybackObservation? = { null },
+    private val onExport: ((String, String, String) -> Unit)? = null,
     private val benchmarkFactory: ((LocalGgufBenchmark.State) -> Unit) -> LocalGgufBenchmark =
         { changed -> LocalGgufBenchmark(activity.applicationContext, onChanged = changed, playbackSnapshot = playbackSnapshot) }
 ) : AutoCloseable {
+    private val reportWorker = Executors.newSingleThreadExecutor()
+    private val reportMain = Handler(Looper.getMainLooper())
+    private var exportPreparing = false
+    private var exportButton: Button? = null
     private val preferences = activity.getSharedPreferences("translation-choices-v1", Activity.MODE_PRIVATE)
     private var panel: AlertDialog? = null
     private var generation = 0L
@@ -90,9 +98,37 @@ internal class LocalGgufBenchmarkControls(
         orderChoice?.isEnabled = !state.busy
         reopeningChoice?.isEnabled = !state.busy
         cancelButton?.isEnabled = state.busy
+        exportButton?.isEnabled = onExport != null && !state.busy && !exportPreparing && state.runs.isNotEmpty()
+    }
+    private fun exportReport() {
+        val exporter = onExport ?: return
+        val snapshot = benchmark.state
+        if (closed || snapshot.busy || snapshot.runs.isEmpty() || exportPreparing || panel?.isShowing != true) return
+        val owner = generation
+        exportPreparing = true
+        localStatus = "Préparation du rapport TXT complet…"
+        statusView?.text = localStatus
+        exportButton?.isEnabled = false
+        reportWorker.execute {
+            val prepared = runCatching { snapshot.report() }
+            reportMain.post {
+                // A panel replacement/close never launches a late file picker.
+                if (closed || owner != generation || panel?.isShowing != true) return@post
+                exportPreparing = false
+                val report = prepared.getOrNull()
+                if (report == null) message("La préparation du rapport TXT a échoué. Le rapport reste consultable ; réessaie.")
+                else try {
+                    exporter("text/plain", "comparatif-local-gguf.txt", report)
+                    message("Rapport TXT complet prêt. Choisis son emplacement avec Android ; une annulation conserve le rapport dans ce panneau.")
+                } catch (_: Exception) {
+                    message("Le choix du fichier TXT n’a pas pu être ouvert. Le rapport reste consultable ; réessaie.")
+                }
+            }
+        }
     }
     private fun start(models: LocalGgufModelControls, threads: EditText, options: LocalGgufBenchmark.Options) {
         if (busy) return
+        if (exportPreparing) { message("Attends la préparation du rapport TXT avant de lancer un autre comparatif."); return }
         if (otherPreparationBusy()) {
             message("Termine ou annule les autres préparations avant de lancer le comparatif."); return
         }
@@ -165,8 +201,8 @@ internal class LocalGgufBenchmarkControls(
             .also { column.addView(it) }
         column.addView(action("Copier le rapport CPU / GPU") {
             val report = benchmark.state.report()
-            if (report.length > MAX_CLIPBOARD_CHARACTERS) {
-                message("Le rapport complet est trop volumineux pour le presse-papiers. Il reste consultable et sélectionnable dans ce panneau ; aucun texte n’est tronqué.")
+            if (!canCopyReport(report)) {
+                message("Le rapport complet est trop volumineux pour le presse-papiers. Il reste consultable et sélectionnable dans ce panneau ; utilise Exporter le rapport complet en TXT. Aucun texte n’est tronqué.")
                 return@action
             }
             try {
@@ -178,6 +214,8 @@ internal class LocalGgufBenchmarkControls(
             }
             message("Rapport CPU / GPU copié. Il contient seulement les textes intégrés, leurs sorties et les mesures locales, avec les éventuelles observations ponctuelles du lecteur.")
         })
+        exportButton = action(EXPORT_LABEL) { exportReport() }.also { column.addView(it) }
+        column.addView(text("L’export TXT conserve le rapport entier, y compris un rapport trop volumineux pour le presse-papiers. Il devient disponible après la fin ou l’arrêt du comparatif. Choisis son emplacement avec Android ; les textes du rapport ne sont pas placés dans la demande d’ouverture du sélecteur."))
         reportView = text(benchmark.state.report()).apply { setTextIsSelectable(true) }
         column.addView(reportView)
         column.addView(text("Une sélection GPU n’est pas une preuve d’accélération. Le rapport exige un calcul GPU réellement observé pour valider le passage OpenCL. Les sorties sont présentées pour comparaison humaine ; leur identité ne prouve pas une traduction fidèle. Aucun test NPU n’est exécuté."))
@@ -204,13 +242,17 @@ internal class LocalGgufBenchmarkControls(
         reopeningChoice?.let { reopenForLoad = it.isChecked }
         panel = null; statusView = null; reportView = null; startButton = null; variedButton = null; contextButton = null; qualityButton = null
         cancelButton = null; threadsInput = null; orderChoice = null; reopeningChoice = null; localStatus = null
+        exportButton = null; exportPreparing = false
         old?.dismiss()
     }
     override fun close() {
         if (closed) return
         closed = true; dismissPanel(); benchmark.close()
+        reportWorker.shutdownNow(); reportMain.removeCallbacksAndMessages(null)
     }
     companion object {
+        internal const val EXPORT_LABEL = "Exporter le rapport complet en TXT"
+        internal fun canCopyReport(report: String): Boolean = report.length <= MAX_CLIPBOARD_CHARACTERS
         internal const val SCROLL_TAG = "local-gguf-benchmark-controls-scroll"
         internal const val ORDER_LABEL = "Ordre du comparatif étendu"
         internal const val REOPEN_LABEL = "Recharger le modèle après chaque série pour mesurer une réouverture"

@@ -32,6 +32,8 @@ Les textes traduits peuvent différer et modifier les contextes suivants. Compar
 
 La comparaison CPU/GPU existante reste disponible. La nouvelle comparaison permet d’examiner le contexte sans imposer de refaire la longue série CPU. Aucun bouton de diagnostic ne lance la vidéo ou la voix.
 
+Après la fin ou l’arrêt d’un comparatif, le bouton **Exporter le rapport complet en TXT** permet d’enregistrer le rapport intégral avec le sélecteur Android. Si le rapport est trop volumineux pour le presse-papiers, la copie est refusée avec un message explicite ; l’export TXT conserve tous les textes et mesures disponibles, sans tronquer les traductions. Cela permet de transmettre les rapports longs directement depuis le téléphone.
+
 ## Identité des configurations et anciens résultats
 
 Les nouvelles tâches utilisent l’identité **v4**. Elle inclut notamment la stratégie de contexte et l’exécution demandée. Une sortie préparée avec une ancienne identité ne devient pas une nouvelle traduction simplement parce que l’application a été mise à jour.

@@ -159,7 +159,7 @@ jobs:
           gradle --no-daemon --stacktrace --no-build-cache -PverifyRelease=true :app:testReleaseUnitTest :app:lintRelease :app:assembleRelease :app:assembleReleaseAndroidTest > build/verification/release-build-console.txt 2>&1
           result=$?
           tail -n 180 build/verification/release-build-console.txt
-          python3 tools/verify-test-results.py --reports app/build/test-results/testReleaseUnitTest --expected-count 492 --sources app/src/test/java --not-before-ns "$started_ns" --output build/verification/release-app-test-summary.json
+          python3 tools/verify-test-results.py --reports app/build/test-results/testReleaseUnitTest --expected-count 493 --sources app/src/test/java --not-before-ns "$started_ns" --output build/verification/release-app-test-summary.json
           app_result=$?
           if [[ "$result" != 0 ]]; then exit "$result"; fi
           exit "$app_result"

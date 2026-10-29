@@ -7,6 +7,7 @@
 VersionCode **17**, identité Traduction et certificat durable conservés. [Guide](docs/TRADUCTION_QUALITE_0510.md) · [Notes et limites](docs/releases/0.5.10-quality.md). La 0.5.2 reste la dernière stable. Les preuves propres à cette candidate doivent être établies avant distribution.
 
 - Stratégies de contexte explicites : deux échanges récents par défaut, occurrence isolée ou blocs de six occurrences ; comparaison sur GPU des 32 occurrences de référence ou de 18 phrases inédites, avec critères de relecture séparés et sans classement automatique de fidélité.
+- Export TXT intégral des rapports du comparatif après fin ou arrêt, utile lorsque la copie dépasse la capacité protégée du presse-papiers ; aucun texte de traduction n’est tronqué.
 - Identité de configuration v4 incluant la stratégie et l’exécution demandée ; conservation des anciens résultats sous leur identité d’origine.
 - Journal de progression incrémental durable et reprise vérifiée ; préservation des occurrences, minutages et états validés.
 - Cache de requêtes locales exactes de 8 Mio par parcours, incluant configuration et historique complet ; réponse revalidée et occurrence conservée, sans mesure GPU fictive.
