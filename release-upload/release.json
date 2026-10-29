@@ -1,0 +1,9 @@
+{
+  "tag": "v0.5.10-quality",
+  "source_sha": "911888461e046418fe029b74d09b22fc62af687f",
+  "apk_sha256": "0ed4e99d10ef1505b5715d458c2eb4cc299fd56c6c8139ac4319977f3ca7b392",
+  "signer_sha256": "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d",
+  "apk_file": "release-upload/SousTitresVoix-0.5.10-quality.apk",
+  "notes_file": "release-upload/notes.md",
+  "title": "Sous-titres en voix 0.5.10 — Qualité et fiabilité de la traduction locale (préversion)"
+}
