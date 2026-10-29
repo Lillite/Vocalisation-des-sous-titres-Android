@@ -91,18 +91,23 @@ internal class ExactTranslationRequestCache(private val directory: File) {
     }
 
     private fun trim(pinned: File) {
-        val entries = directory.listFiles()?.filter { it.isFile && ENTRY.matches(it.name) }.orEmpty()
+        val entries = directory.listFiles()?.filter { owned(it) }.orEmpty()
+        val groups = entries.groupBy { it.name.removeSuffix(".bak").removeSuffix(".new") }
         var bytes = entries.sumOf { it.length() }
-        for (entry in entries.sortedBy { it.lastModified() }) {
+        for ((base, members) in groups.entries.sortedBy { (_, files) -> files.maxOf { it.lastModified() } }) {
             if (bytes <= MAX_BYTES) break
-            if (entry != pinned) {
-                val length = entry.length()
-                if (entry.delete()) bytes -= length
+            if (base != pinned.name) {
+                val before = members.sumOf { it.length() }
+                // A backup/new file without its base still belongs to this
+                // evictable key. Remove its AtomicFile group as one unit.
+                AtomicFile(File(directory, base)).delete()
+                bytes -= before - members.sumOf { it.length() }
             }
         }
     }
     private fun file(key: String) = File(directory, "$key.request")
-    private fun owned(file: File) = file.isFile && ENTRY.matches(file.name.removeSuffix(".bak").removeSuffix(".new"))
+    private fun owned(file: File) = file.isFile && (ENTRY.matches(file.name) ||
+        listOf(".bak", ".new").any { suffix -> file.name.endsWith(suffix) && ENTRY.matches(file.name.removeSuffix(suffix)) })
     companion object {
         const val MAX_BYTES = 8L * 1024 * 1024
         private const val MAX_ENTRY_BYTES = 1024 * 1024

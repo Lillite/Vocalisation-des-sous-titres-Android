@@ -153,12 +153,29 @@ class ExactTranslationRequestCacheRobolectricTest {
         val old = File(directory, "${"a".repeat(64)}.request")
         RandomAccessFile(old, "rw").use { it.setLength(ExactTranslationRequestCache.MAX_BYTES) }
         old.setLastModified(1)
+        val oldSiblings = listOf(".bak", ".new").map { suffix ->
+            File(directory, old.name + suffix).apply {
+                RandomAccessFile(this, "rw").use { it.setLength(1024 * 1024) }
+                setLastModified(1)
+            }
+        }
+        // Interrupted AtomicFile writes can leave only a backup/new file for a
+        // key. They still occupy the request cache's advertised disk budget.
+        repeat(10) { index ->
+            val name = "%064x.request".format(index + 1) + if (index % 2 == 0) ".bak" else ".new"
+            RandomAccessFile(File(directory, name), "rw").use { it.setLength(1024 * 1024) }
+        }
         val unrelated = File(directory, "keep-original.txt").apply { writeText("Untouched") }
+        val lookalike = File(directory, "${"f".repeat(64)}.request.bak.keep").apply { writeText("Unrelated suffix") }
         requests.write(key, listOf("Bonjour"))
         assertFalse(old.exists()); assertEquals(listOf("Bonjour"), requests.read(key))
-        assertTrue(directory.listFiles()!!.filter { it.name.endsWith(".request") }.sumOf { it.length() } <= ExactTranslationRequestCache.MAX_BYTES)
+        assertTrue("An evicted AtomicFile key must not leave its backup or new file", oldSiblings.none { it.exists() })
+        assertTrue("Backups and new files count even when their base file is missing",
+            directory.listFiles()!!.filter { it != unrelated && it != lookalike }.sumOf { it.length() } <= ExactTranslationRequestCache.MAX_BYTES)
         requests.clear()
         assertEquals("Untouched", unrelated.readText())
+        assertEquals("Unrelated suffix", lookalike.readText())
+        assertEquals(setOf(unrelated.name, lookalike.name), directory.listFiles()!!.map { it.name }.toSet())
         assertNull(requests.read(key))
     }
 }
