@@ -1,0 +1,9 @@
+{
+  "tag": "v0.5.11-models",
+  "source_sha": "5b7071d717308d8f97a7daaae909ec20bf633c70",
+  "apk_sha256": "4fc2e6900b6a4d19dc1ac57fedba9f840543cd5a827aff487617c0d9e67ae3f3",
+  "signer_sha256": "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d",
+  "apk_file": "release-upload/SousTitresVoix-0.5.11-models.apk",
+  "notes_file": "release-upload/notes.md",
+  "title": "Sous-titres en voix 0.5.11 — Modèles GGUF et profils de traduction (préversion)"
+}
