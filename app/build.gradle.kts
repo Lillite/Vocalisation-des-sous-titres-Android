@@ -64,6 +64,20 @@ val generateTranslationTestModel = tasks.register<Exec>("generateTranslationTest
     doFirst { translationTestModel.get().asFile.parentFile.mkdirs() }
     commandLine("python3", generator.absolutePath, translationTestModel.get().asFile.absolutePath, "--terminating", "--roundtrip")
 }
+// This second synthetic fixture exercises the model's own ChatML control
+// tokens through the real chat-template JNI/IPC path. It is test-APK only.
+val translationChatTestModel = translationTestAssets.map { it.file("translation_chat_test_model.gguf") }
+val generateTranslationChatTestModel = tasks.register<Exec>("generateTranslationChatTestModel") {
+    val generator = file("src/main/cpp/tests/make_tiny_gguf.py")
+    inputs.file(generator)
+    inputs.property("terminating", true)
+    inputs.property("roundtrip", true)
+    inputs.property("chatTemplate", "controls")
+    outputs.file(translationChatTestModel)
+    doFirst { translationChatTestModel.get().asFile.parentFile.mkdirs() }
+    commandLine("python3", generator.absolutePath, translationChatTestModel.get().asFile.absolutePath,
+        "--terminating", "--roundtrip", "--chat-template", "controls")
+}
 android {
     namespace = "fr.soustitresvoix.player"
     compileSdk = 36
@@ -73,8 +87,8 @@ android {
         applicationId = "fr.soustitresvoix.player.translation"
         minSdk = 26
         targetSdk = 36
-        versionCode = 17
-        versionName = "0.5.10-quality"
+        versionCode = 18
+        versionName = "0.5.11-models"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild { cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" } }
@@ -124,7 +138,10 @@ tasks.named("preBuild") { dependsOn(generateDemo); dependsOn(generateDiagnosticM
 // provider as its producer. All AndroidTest consumers, including lint model
 // generation, must depend on this small deterministic test-only asset.
 tasks.configureEach {
-    if (name.contains("AndroidTest")) dependsOn(generateTranslationTestModel)
+    if (name.contains("AndroidTest")) {
+        dependsOn(generateTranslationTestModel)
+        dependsOn(generateTranslationChatTestModel)
+    }
 }
 kotlin { jvmToolchain(17) }
 dependencies {

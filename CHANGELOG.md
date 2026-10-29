@@ -2,9 +2,20 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
-## 0.5.10-quality — candidate de qualité et fiabilité de la traduction locale
+## 0.5.11-models — candidate de compatibilité des modèles GGUF
 
-VersionCode **17**, identité Traduction et certificat durable conservés. [Guide](docs/TRADUCTION_QUALITE_0510.md) · [Notes et limites](docs/releases/0.5.10-quality.md). La 0.5.2 reste la dernière stable. Les preuves propres à cette candidate doivent être établies avant distribution.
+VersionCode **18**, identité Traduction et certificat durable conservés. [Guide](docs/COMPATIBILITE_GGUF_0511.md) · [Notes et limites](docs/releases/0.5.11-models.md). La 0.5.2 reste la dernière stable. Les preuves propres à cette candidate doivent être établies avant distribution.
+
+- Ajout du profil **Index-Translate**, distinct de TranslateGemma et Hy-MT ; l’architecture native seule ne détermine pas les consignes de traduction.
+- En mode automatique, conservation des familles spécialisées reconnues puis prise en charge du gabarit de conversation intégré des autres GGUF instruct nativement compatibles.
+- Profil explicite **Gabarit intégré au GGUF — formats reconnus**, avec reconnaissance d’un format de conversation pris en charge par le moteur natif et rendu d’un message utilisateur ; aucune exécution arbitraire de la logique Jinja.
+- Absence, format inconnu ou erreur de gabarit rendus perceptibles ; aucun envoi de texte brut présenté comme un format de conversation équivalent.
+- Parcours locaux, stratégies de contexte, reprise, caches, minutages et vocalisation intégrale conservés ; aucun poids téléchargé automatiquement ni calcul NPU ou OCR ajouté.
+- La reconnaissance d’un profil ne garantit ni chargement d’un modèle 9B Q6, mémoire disponible, exécution GPU ou qualité de traduction supérieure.
+
+## 0.5.10-quality — qualité et fiabilité de la traduction locale publiées
+
+VersionCode **17**, identité Traduction et certificat durable conservés. [Guide](docs/TRADUCTION_QUALITE_0510.md) · [Notes et limites](docs/releases/0.5.10-quality.md). La 0.5.2 reste la dernière stable. La [PR #26](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/26) a réussi **800 tests avant fusion**, dont 111 sur l’APK release sous Android 17. Reconstruction, signature et téléchargement public ont ensuite été vérifiés.
 
 - Stratégies de contexte explicites : deux échanges récents par défaut, occurrence isolée ou blocs de six occurrences ; comparaison sur GPU des 32 occurrences de référence ou de 18 phrases inédites, avec critères de relecture séparés et sans classement automatique de fidélité.
 - Export TXT intégral des rapports du comparatif après fin ou arrêt, utile lorsque la copie dépasse la capacité protégée du presse-papiers ; aucun texte de traduction n’est tronqué.

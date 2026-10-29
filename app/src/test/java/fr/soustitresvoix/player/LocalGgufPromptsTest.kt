@@ -53,9 +53,21 @@ class LocalGgufPromptsTest {
     }
 
     @Test fun bothFamiliesRejectReservedSyntaxInEveryContentPosition() {
-        val tokens = listOf("<bos>", "<eos>", "<pad>", "<unk>", "<mask>", "<start_of_turn>", "<end_of_turn>",
-            "<start_of_image>", "<end_of_image>", "<image_soft_token>", "<unused0>", "<unused98>",
-            "<|endoftext|>", "<|startoftext|>", "<|bos|>", "<|eos|>", "<|pad|>", "<|extra_0|>", "<|extra_203|>")
+        // All 33 added tokens in the pinned Index tokenizer are included, even special=false.
+        val tokens = listOf(
+            "<bos>", "<eos>", "<pad>", "<unk>",
+            "<mask>", "<start_of_turn>", "<end_of_turn>", "<start_of_image>",
+            "<end_of_image>", "<image_soft_token>", "<unused0>", "<unused98>",
+            "<|endoftext|>", "<|startoftext|>", "<|bos|>", "<|eos|>",
+            "<|pad|>", "<|extra_0|>", "<|extra_203|>", "<|im_start|>",
+            "<|im_end|>", "<|object_ref_start|>", "<|object_ref_end|>", "<|box_start|>",
+            "<|box_end|>", "<|quad_start|>", "<|quad_end|>", "<|vision_start|>",
+            "<|vision_end|>", "<|vision_pad|>", "<|image_pad|>", "<|video_pad|>",
+            "<tool_call>", "</tool_call>", "<|fim_prefix|>", "<|fim_middle|>",
+            "<|fim_suffix|>", "<|fim_pad|>", "<|repo_name|>", "<|file_sep|>",
+            "<tool_response>", "</tool_response>", "<think>", "</think>",
+            "<|audio_start|>", "<|audio_end|>", "<tts_pad>", "<tts_text_bos>",
+            "<tts_text_eod>", "<tts_text_bos_single>", "<|audio_pad|>")
         for (family in LocalGgufPrompts.Family.values()) for (token in tokens) for (slot in 0..3) {
             rejects {
                 LocalGgufPrompts.render(family, if (slot == 0) "Literal $token" else "Source.", "en", "fr",
@@ -88,4 +100,59 @@ class LocalGgufPromptsTest {
             source, "en", "fr", emptyList(), "")
         assertTrue(hy.endsWith("explanation:\n$source<|extra_0|>"))
     }
+    @Test fun indexEnglishFrenchPlainTaskMatchesPublisherInstructionAndNonThinkingWrapper() {
+        // Independent literal fixture: Index official trans_prompt + tokenizer
+        // 4e06279e62352dab96bbeb6fa0579bca5e822d75, one user and enable_thinking=false.
+        val expected = "<|im_start|>user\n" +
+            "请将以下英语文本翻译为法语，直接输出翻译结果，不要进行任何解释。\n\n" +
+            "The blue door is closed.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+        val actual = LocalGgufPrompts.render(LocalGgufPrompts.Family.INDEX_TRANSLATE,
+            "The blue door is closed.", "en", "fr", emptyList(), "")
+        assertEquals(expected, actual)
+        // Independently executed from the publisher's Jinja using Jinja2 3.1.6.
+        assertEquals(191, actual.toByteArray(Charsets.UTF_8).size)
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(actual.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(java.util.Locale.ROOT, it.toInt() and 255) }
+        assertEquals("41e72950780222dfb9e749eb363678a67b28f480d98e9b34c1640213f8c458ec", digest)
+    }
+
+    @Test fun indexConstraintBackgroundAndCompleteHistoryStaySeparateFromVerbatimCurrentText() {
+        val source = " \nDo not return it to him. 😀\n "
+        val pairs = listOf(LocalGgufPrompts.PairContext("Earlier source " + "a".repeat(450),
+            "Traduction précédente " + "b".repeat(450)))
+        val background = "Maya owns the original letter."
+        val prompt = LocalGgufPrompts.render(LocalGgufPrompts.Family.INDEX_TRANSLATE,
+            source, "en", "fr", pairs, background)
+        assertTrue(prompt.contains("请将以下英语字幕翻译成法语，并且严格遵循所有约束要求。"))
+        assertTrue(prompt.contains("【源文】\n$source\n\n【约束要求】"))
+        assertTrue(prompt.indexOf(source) < prompt.indexOf(background))
+        assertTrue(prompt.contains(pairs.single().source)); assertTrue(prompt.contains(pairs.single().translated))
+        assertTrue(prompt.endsWith("<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"))
+        val isolated = LocalGgufPrompts.render(LocalGgufPrompts.Family.INDEX_TRANSLATE, source, "en", "fr", emptyList(), "")
+        assertTrue(isolated.contains("\n\n$source<|im_end|>"))
+    }
+
+    @Test fun indexPublisherNamesHaveStandardLanguageAliasesAndUnknownCodesAreRefused() {
+        val expected = mapOf("en" to "英语", "fr" to "法语", "ja" to "日语", "es" to "西班牙语",
+            "uk" to "乌克兰语", "fa" to "波斯语", "cs" to "捷克语", "nb" to "书面挪威语", "fil" to "菲律宾语")
+        expected.forEach { (code, name) -> assertEquals(name, LocalGgufExtendedPrompts.indexLanguage(code)) }
+        assertEquals("法语", LocalGgufExtendedPrompts.indexLanguage("fr-FR"))
+        assertEquals("繁体中文", LocalGgufExtendedPrompts.indexLanguage("zh-Hant"))
+        try { LocalGgufExtendedPrompts.indexLanguage("zz"); fail("Invented language must fail visibly") }
+        catch (failure: TranslationFailure) { assertEquals(TranslationFailure.Reason.LANGUAGE, failure.reason) }
+    }
+
+    @Test fun genericRequestContainsOneUnframedUserContentAndPreservesSourceWhitespace() {
+        val source = " \nAmina did not give it to Chen. 😀\n "
+        val prompt = LocalGgufPrompts.render(LocalGgufPrompts.Family.MODEL_TEMPLATE, source, "en", "fr",
+            listOf(LocalGgufPrompts.PairContext("Earlier source.", "Traduction précédente.")), "A fictional scene.")
+        assertTrue(prompt.contains("English (en) into French (fr)"))
+        assertTrue(prompt.contains("[Source text]\n$source\n[End source text]"))
+        assertTrue(prompt.contains("[Previous source]\nEarlier source."))
+        assertTrue(prompt.contains("[Previous translation]\nTraduction précédente."))
+        assertTrue(prompt.contains("[Background for interpretation only]\nA fictional scene."))
+        assertFalse(LocalGgufPrompts.hasControlTokens(prompt))
+        assertFalse(prompt.contains("<|im_start|>")); assertFalse(prompt.contains("<bos>"))
+    }
+
 }

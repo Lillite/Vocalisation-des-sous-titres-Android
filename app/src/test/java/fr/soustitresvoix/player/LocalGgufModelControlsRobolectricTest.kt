@@ -172,6 +172,76 @@ class LocalGgufModelControlsRobolectricTest {
         }
     }
 
+    @Test fun everyPublishedProfileIsOfferedOnceWithItsReadableCanonicalLabelAndSelectionIsPassive() {
+        Fixture().use { f ->
+            val spinner = descendants(f.root).filterIsInstance<Spinner>().single {
+                it.contentDescription == "Profil de traduction du modèle GGUF"
+            }
+            val profiles = LocalGgufProfile.entries
+            val parent = f.root as ViewGroup
+            assertEquals(profiles.size, spinner.count)
+            assertEquals(profiles.size, (0 until spinner.count).map { spinner.getItemAtPosition(it).toString() }.distinct().size)
+            assertTrue(profiles.containsAll(listOf(LocalGgufProfile.INDEX_TRANSLATE, LocalGgufProfile.MODEL_TEMPLATE)))
+            for ((index, profile) in profiles.withIndex()) {
+                assertEquals(profile.label, spinner.getItemAtPosition(index).toString())
+                spinner.setSelection(index)
+                assertEquals("Snapshots must see explicit selection before a deferred AdapterView callback", profile, f.controls.profile)
+                shadowOf(Looper.getMainLooper()).idle()
+                assertEquals(profile, f.controls.profile)
+                f.controls.saveChoices()
+                assertEquals(profile.name, f.activity.getSharedPreferences("translation-choices-v1", Activity.MODE_PRIVATE)
+                    .getString("local-profile", null))
+                for (row in listOf(spinner.adapter.getView(index, null, parent),
+                    spinner.adapter.getDropDownView(index, null, parent))) {
+                    val text = row as TextView
+                    assertEquals(profile.label, text.text.toString())
+                    assertTrue(text.textSize + .1f >= 18f * f.activity.resources.displayMetrics.scaledDensity)
+                    assertNull(text.ellipsize)
+                    assertTrue(text.maxLines > 1)
+                    assertTrue(text.minimumHeight >= (56 * f.activity.resources.displayMetrics.density).toInt())
+                }
+            }
+            assertNull(f.controls.model)
+            assertFalse(f.controls.busy)
+            assertEquals(0, f.launches)
+            assertEquals(0, f.changed)
+            assertTrue(f.messages.isEmpty())
+            assertTrue(f.directory.listFiles().orEmpty().isEmpty())
+            assertTrue(f.text().contains("format de conversation reconnu dans le GGUF"))
+            assertTrue(f.text().contains("son absence ou une incompatibilité est signalée"))
+            assertTrue(f.text().contains("Les gabarits personnalisés et les architectures absentes du moteur peuvent rester incompatibles"))
+        }
+    }
+
+    @Test fun legacyAndNewProfilePreferencesRestoreByNameWithoutImportOrAutomaticExecution() {
+        Fixture().use { f ->
+            f.controls.close()
+            val preferences = f.activity.getSharedPreferences("translation-choices-v1", Activity.MODE_PRIVATE)
+            for (stored in LocalGgufProfile.entries.map { it.name } + "UNKNOWN_FUTURE_PROFILE") {
+                preferences.edit().putString("local-profile", stored).commit()
+                val expected = LocalGgufProfile.entries.firstOrNull { it.name == stored } ?: LocalGgufProfile.AUTO
+                val controls = LocalGgufModelControls(f.activity, { false }, { f.launches++ }, { f.changed++ }, { f.messages += it })
+                try {
+                    val view = controls.view()
+                    val spinner = descendants(view).filterIsInstance<Spinner>().single {
+                        it.contentDescription == "Profil de traduction du modèle GGUF"
+                    }
+                    assertEquals(expected, controls.profile)
+                    assertEquals(expected.label, spinner.selectedItem.toString())
+                    shadowOf(Looper.getMainLooper()).idle()
+                    assertEquals(expected, controls.profile)
+                    assertEquals("Opening the form must not rewrite a stored choice", stored, preferences.getString("local-profile", null))
+                    assertNull(controls.model)
+                    assertFalse(controls.busy)
+                } finally { controls.close() }
+            }
+            assertEquals(0, f.launches)
+            assertEquals(0, f.changed)
+            assertTrue(f.messages.isEmpty())
+            assertTrue(f.directory.listFiles().orEmpty().isEmpty())
+        }
+    }
+
     @Test fun cancellationAfterACommittedPreparationAdoptsTheCurrentDescriptorInsteadOfTheOldHash() {
         Fixture().use { f ->
             f.controls.close()

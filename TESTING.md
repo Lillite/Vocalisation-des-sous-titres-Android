@@ -2,7 +2,51 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Essais sur téléphone](docs/TESTS_TELEPHONE.md) · [Contribution](CONTRIBUTING.md)
 
-## Candidate 0.5.10-quality — validation à établir
+## Candidate 0.5.11-models — validation à établir
+
+Les sources préparent **0.5.11-models / code 18**, avec la même identité Android et le même certificat durable. Le [guide](docs/COMPATIBILITE_GGUF_0511.md) et les [notes](docs/releases/0.5.11-models.md) décrivent le profil Index-Translate et le rendu local du gabarit intégré de modèles GGUF instruct compatibles. La reconnaissance du profil, le chargement natif, l’exécution GPU et la fidélité linguistique sont des validations distinctes.
+
+Les régressions doivent préserver les prompts spécialisés TranslateGemma et Hy-MT, les anciennes identités de configuration et résultats, vérifier la sélection automatique ou explicite d’Index-Translate et le choix du gabarit intégré lorsque les conditions sont réunies. Le rendu doit utiliser un format de conversation reconnu par `llama_chat_apply_template`, ne recevoir qu’un message utilisateur et ne pas exécuter la logique Jinja arbitraire. Les templates absents, inconnus, entrées hors bornes ou échecs de rendu doivent produire une erreur perceptible. Les erreurs ne doivent pas devenir un repli opaque sur une consigne brute. Les essais doivent aussi préserver annulation, fermeture, limites d’entrée et de sortie, cache exact, reprise et conservation de chaque occurrence.
+
+Une seconde fixture miniature, `translation_chat_test_model.gguf`, est générée avec `--terminating --roundtrip --chat-template controls` dans les assets AndroidTest uniquement. Elle doit exercer le vrai JNI/IPC du format ChatML, l’EOS, le cache de préfixe et les marqueurs propres au vocabulaire ; elle ne doit pas être redistribuée dans l’APK principal. Cette déclaration de tâche ne constitue pas une construction ou une exécution instrumentée.
+
+L’inventaire source final contient **196 méthodes noyau, 515 méthodes JVM application et 112 méthodes Android**, soit **823 méthodes attendues**. Ces effectifs et leurs identités exactes doivent être retrouvés dans les XML frais du commit final, sans méthode ignorée, manquante, inattendue ou dupliquée ; cet inventaire ne constitue pas un résultat d’exécution. Les **800 réussites historiques de la 0.5.10 ne valident pas ces changements**. La campagne doit construire et tester l’APK release sous **Android 17 / API 37**, compilation et ciblage API 36 conservés, avant une fusion à deux parents. La reconstruction après fusion doit vérifier provenance et contenu applicatif identiques hors signature, **sans rejouer les suites réussies**. Signature durable et fichiers publiés doivent être vérifiés avant annonce de distribution.
+
+Un test avec un petit GGUF et un template synthétique ne valide pas Index-Translate 9B Q6 sur le OnePlus. Les quantifications, la mémoire disponible et le backend doivent être essayés séparément ; ni réussite de chargement ni réponse EOS ne prouve une meilleure traduction. Aucun nouveau modèle de production n’est redistribué ou téléchargé automatiquement. Aucun NPU, OCR de film ou essai TalkBack réel n’est déduit de la campagne. La **0.5.2 reste la dernière stable**.
+
+### Préparation documentaire et contrôles hors réseau de la 0.5.11
+
+Les **67 tests Python hors réseau** ont réussi : **20** de publication, **23** de synchronisation de l’historique, **10** de nettoyage documentaire, **6** de provenance après fusion et **8** de lecture des mesures natives. Les **8 essais synthétiques des helpers privés 0.5.11** ont également réussi, sans clé, signature réelle, réseau ni modification Git. Le contrôle structurel du projet a réussi. Ces résultats ne constituent ni compilation Android ni exécution instrumentée de cette candidate.
+
+Les notes historiques 0.5.10 ont été comparées au corps de la release publique puis reprises à l’identique : **7 828 octets**, SHA-256 **7439c870842be98da80f944a6fd3f5ee28097382924e7cdde1bd65522a8cf337**. Les identifiants de publication historique ont été résolus depuis l’API ; la déclaration de la nouvelle version ne contient aucun identifiant ou SHA d’APK encore inconnu.
+
+### Premier passage complet et correction de l’isolation des essais
+
+La PR #27 au head `c598c7573455e0222c4b01749bdd67e247b3a674` a exécuté la campagne [40947300814](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40947300814). Les **196 tests noyau, 515 tests JVM application et 112 tests Android** ont été exécutés : un seul échec Android, sans erreur ni test ignoré. Le nouveau test de format GGUF a réussi. L’échec `prefixReuseAndAcknowledgedCloseAllowAnImmediateBackendChange` est survenu dès son **premier** `cpu.open`, avant sa propre vérification du passage d’un backend à l’autre ; le service a répondu `BUSY`.
+
+Les XML et le logcat montrent que `tokenLimitCannotPublishPartialOutputAndCloseReleasesModelForNextTask` venait de finir avec un `next.close()` asynchrone. Les nettoyages des fixtures du runtime attendent désormais `closeAndAwait()` pour confirmer la libération avant le prochain test. Le scénario qui vérifie explicitement une fermeture asynchrone suivie de sa barrière reste intact. Aucun délai, retry ou affaiblissement d’assertion n’est ajouté ; aucun code de production ne change pour cette correction. La proposition corrigée doit réussir une nouvelle campagne complète avant fusion ; ce premier passage échoué n’autorise pas une distribution.
+
+### Construction et essais locaux de la 0.5.11
+
+Les **96 méthodes JVM ciblées** des six classes profils, prompts, moteur, runtime, import et contrôles de modèles ont réussi ; leurs identités correspondent aux sources, sans échec, erreur, omission ni doublon. Six anciens XML d’une autre classe ont été exclus explicitement du relevé local, sans rejouer les tests. Le noyau inchangé était `UP-TO-DATE` ; sa validation fraîche reste requise dans la campagne complète.
+
+Les tâches requises noyau, lint, APK debug et APK d’instrumentation ont terminé avec succès. Un premier passage a échoué sur des chemins temporaires `llvm-strip` orphelins ; seules les sorties générées de fusion et de stripping debug ont été régénérées, puis la construction a réussi en **49 s**. Lint rapporte **0 erreur, 95 avertissements et 1 conseil**. Le manifeste compilé confirme version 0.5.11-models/code18 et identité conservée ; ELF et ZIP 16 Kio, dépendance OpenCL optionnelle et signature debug ont passé les contrôles. Ces essais ne remplacent pas l’instrumentation release Android 17 avant fusion.
+
+### Contrôles natifs hôte et référence de format Index
+
+Le passage natif hôte final a réussi en **4,37 secondes** : **55 générations synthétiques complètes**, **18 refus attendus**, **14 fixtures**, **5 contrôles de bornes** et **3 formats réels reconnus**. Les huit régressions du lecteur de mesures et les trois exécutables hôte de traduction, sonde et diagnostic ont réussi. La garde finale inclut les marqueurs du vocabulaire de type **CONTROL, USER_DEFINED et UNKNOWN**, y compris une orthographe personnalisée du token inconnu. Le résumé de ce passage porte le SHA-256 **5d45ed1a54582f18fa2694e80f9a254d86533db78ade549e4091b07395b3bd78**. Aucun Android, GPU ou modèle Index de production n’a été exécuté par ce passage ; ces contrôles restent distincts des effectifs JVM et instrumentés de la proposition finale.
+
+Le gabarit officiel Index, SHA-256 **a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715**, a été réellement rendu avec **Jinja2 3.1.6 dans un outil de référence hôte extérieur à la production**, `enable_thinking=false` et ajout du début de réponse assistant. Les **191 octets** produits, SHA-256 **41e72950780222dfb9e749eb363678a67b28f480d98e9b34c1640213f8c458ec**, correspondent exactement au littéral préparé pour l’encadrement spécialisé. Aucun modèle n’a été chargé pour ce contrôle de **format**, qui ne mesure pas la fidélité de traduction. Cette exécution de référence n’ajoute pas de moteur Jinja arbitraire à l’application : le profil générique reste un rendu natif de formats reconnus.
+
+## Préversion publiée 0.5.10-quality — résultats vérifiés
+
+La [PR #26](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/26) a réussi le [run 40905629491](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40905629491) : **196 tests noyau, 493 tests JVM application et 111 tests Android**, soit **800 réussites**, sans échec, erreur, test ignoré, manquant ou dupliqué. Les 111 tests ont réellement porté sur l’APK release dans un émulateur **Android 17 / API 37 / x86_64**. Les essais natifs hôte ont confirmé les choix du nouveau greedy et les continuations sur les modèles miniatures.
+
+La source fusionnée est **911888461e046418fe029b74d09b22fc62af687f**, arbre **469aa0494457420af7902e0c39be31b921efbaa9**. Le [run après fusion 40910473051](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40910473051) a vérifié les mêmes arbre et parents que la proposition testée, puis le contenu applicatif identique de l’APK reconstruit hors signature, **sans rejouer les suites**. Le [run de publication 40912498777](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40912498777) et le téléchargement public indépendant ont confirmé l’APK signé de **53 644 273 octets**, SHA-256 **0ed4e99d10ef1505b5715d458c2eb4cc299fd56c6c8139ac4319977f3ca7b392**, certificat durable **304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d**. Release **428124298**, asset APK **689179993** ; stable 0.5.2 conservée.
+
+### Préparation et preuves locales historiques de la 0.5.10
+
+Les paragraphes suivants conservent les étapes antérieures à la validation finale ; leurs formulations au futur ne demandent pas de rejouer les suites déjà réussies.
 
 Les sources préparent **0.5.10-quality / code 17**, avec la même identité Android et le même certificat durable. Le [guide](docs/TRADUCTION_QUALITE_0510.md) et les [notes](docs/releases/0.5.10-quality.md) décrivent les stratégies de contexte explicites, la reprise incrémentale, les contrôles numériques et les optimisations de ressources qui préservent la conservation des occurrences.
 

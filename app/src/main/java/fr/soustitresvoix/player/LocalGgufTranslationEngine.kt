@@ -11,11 +11,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** A small injectable boundary; production always uses the private native service. */
 internal interface LocalGgufBackend : AutoCloseable {
     data class Info(val name: String, val architecture: String,
-        val performance: LocalTranslationPerformance = LocalTranslationPerformance(phase = "load", backend = "CPU"))
+        val performance: LocalTranslationPerformance = LocalTranslationPerformance(phase = "load", backend = "CPU"),
+        val chatTemplateAvailable: Boolean = false)
     data class Generation(val output: String, val stopReason: String = "end_of_generation",
         val performance: LocalTranslationPerformance = LocalTranslationPerformance(backend = "CPU"))
     fun open(file: File, threads: Int, contextTokens: Int, cancelled: () -> Boolean, executionMode: String): Info
     fun generate(prompt: String, maxOutputTokens: Int, cancelled: () -> Boolean): Generation
+    fun generateChat(userContent: String, maxOutputTokens: Int, cancelled: () -> Boolean): Generation =
+        throw TranslationFailure(TranslationFailure.Reason.LOCAL_TEMPLATE)
     fun cancel()
     fun closeAndAwait(cancelled: () -> Boolean = { false }, timeoutMs: Long = 10_000) { close() }
 }
@@ -28,20 +31,23 @@ private class NativeTranslationBackend(context: Context) : LocalGgufBackend {
                 requestedMode = it.requestedMode, backend = it.backend, device = it.device,
                 gpuObserved = false, loadMs = it.loadMs, peakRssBytes = it.peakRssBytes,
                 currentRssBytes = it.residentBytes, availableRamBytes = it.availableRamBytes, fallbackReason = it.fallbackReason,
-                diagnostic = it.diagnostic, openClTransport = it.openClTransport, loadProfile = it.loadProfile))
+                diagnostic = it.diagnostic, openClTransport = it.openClTransport, loadProfile = it.loadProfile),
+                chatTemplateAvailable = it.chatTemplateAvailable)
         }
     override fun generate(prompt: String, maxOutputTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Generation =
-        client.generate(prompt, maxOutputTokens, addSpecialTokens = false, cancelled = cancelled)
-            .let {
-                LocalGgufBackend.Generation(it.output, it.stopReason, LocalTranslationPerformance(
-                    requestedMode = it.requestedMode, backend = it.backend, device = it.device, gpuObserved = it.gpuObserved,
-                    promptMs = it.promptMs, generationMs = it.generationMs, promptTokens = it.promptTokens,
-                    generatedTokens = it.generatedTokens, cachedPromptTokens = it.cachedPromptTokens,
-                    promptEvaluatedTokens = it.promptEvaluatedTokens, peakRssBytes = it.peakRssBytes,
-                    currentRssBytes = it.residentBytes, availableRamBytes = it.availableRamBytes,
-                    gpuGraphNodes = it.gpuGraphNodes, fallbackReason = it.fallbackReason, diagnostic = it.diagnostic,
-                    openClTransport = it.openClTransport))
-            }
+        generation(client.generate(prompt, maxOutputTokens, addSpecialTokens = false, cancelled = cancelled))
+    override fun generateChat(userContent: String, maxOutputTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Generation =
+        generation(client.generateChat(userContent, maxOutputTokens, cancelled = cancelled))
+    private fun generation(value: LocalGgufRuntime.Generation): LocalGgufBackend.Generation = with(value) {
+        LocalGgufBackend.Generation(output, stopReason, LocalTranslationPerformance(
+            requestedMode = requestedMode, backend = backend, device = device, gpuObserved = gpuObserved,
+            promptMs = promptMs, generationMs = generationMs, promptTokens = promptTokens,
+            generatedTokens = generatedTokens, cachedPromptTokens = cachedPromptTokens,
+            promptEvaluatedTokens = promptEvaluatedTokens, peakRssBytes = peakRssBytes,
+            currentRssBytes = residentBytes, availableRamBytes = availableRamBytes,
+            gpuGraphNodes = gpuGraphNodes, fallbackReason = fallbackReason, diagnostic = diagnostic,
+            openClTransport = openClTransport))
+    }
     override fun cancel() = client.cancel()
     override fun close() = client.close()
     override fun closeAndAwait(cancelled: () -> Boolean, timeoutMs: Long) = client.closeAndAwait(cancelled, timeoutMs)
@@ -162,7 +168,9 @@ class LocalGgufTranslationEngine internal constructor(
                     throw TranslationFailure(TranslationFailure.Reason.LOCAL_CONTEXT)
                 val prompt = LocalGgufPrompts.render(kind, text, sourceLanguage, targetLanguage, preceding, context)
                 try {
-                    val result = worker.generate(prompt, OUTPUT_TOKENS) { closed.get() || cancelled() }
+                    val result = if (kind.usesChatTemplate)
+                        worker.generateChat(prompt, OUTPUT_TOKENS) { closed.get() || cancelled() }
+                    else worker.generate(prompt, OUTPUT_TOKENS) { closed.get() || cancelled() }
                     checkCancelled(cancelled)
                     if (result.stopReason != "end_of_generation")
                         throw TranslationFailure(TranslationFailure.Reason.LOCAL_TRUNCATED)
@@ -207,6 +215,7 @@ class LocalGgufTranslationEngine internal constructor(
                 LocalGgufRuntime.Code.BUSY -> TranslationFailure.Reason.LOCAL_BUSY
                 LocalGgufRuntime.Code.MODEL -> TranslationFailure.Reason.LOCAL_MODEL
                 LocalGgufRuntime.Code.BACKEND -> TranslationFailure.Reason.LOCAL_BACKEND
+                LocalGgufRuntime.Code.TEMPLATE -> TranslationFailure.Reason.LOCAL_TEMPLATE
                 LocalGgufRuntime.Code.MEMORY -> TranslationFailure.Reason.LOCAL_MEMORY
                 LocalGgufRuntime.Code.CONTEXT, LocalGgufRuntime.Code.INPUT_TOO_LONG -> TranslationFailure.Reason.LOCAL_CONTEXT
                 LocalGgufRuntime.Code.OUTPUT_LIMIT -> TranslationFailure.Reason.LOCAL_TRUNCATED
@@ -244,7 +253,8 @@ class LocalGgufTranslationEngine internal constructor(
         try {
             val metadata = created.open(model.file, threads, CONTEXT_TOKENS, { closed.get() || cancelled() }, runningMode)
             checkCancelled(cancelled)
-            family = LocalGgufProfiles.select(profile, metadata.architecture, metadata.name, model.sha256, model.metadata)
+            family = LocalGgufProfiles.select(profile, metadata.architecture, metadata.name, model.sha256, model.metadata,
+                chatTemplateAvailable = metadata.chatTemplateAvailable)
             openPerformance = metadata.performance
             if (metadata.performance.backend == "CPU") runningMode = "CPU"
             measured(metadata.performance.copy(phase = "load"))
@@ -394,7 +404,9 @@ class LocalGgufTranslationEngine internal constructor(
  * field and does not guarantee better linguistic fidelity.
  */
 internal object LocalGgufPrompts {
-    enum class Family { TRANSLATE_GEMMA, HY_MT }
+    enum class Family(val usesChatTemplate: Boolean = false) {
+        TRANSLATE_GEMMA, HY_MT, INDEX_TRANSLATE, MODEL_TEMPLATE(true)
+    }
     data class PairContext(val source: String, val translated: String)
     data class Language(val code: String, val name: String)
     private val ordinaryLanguages = Locale.getISOLanguages().toSet()
@@ -406,7 +418,13 @@ internal object LocalGgufPrompts {
     // cover the Gemma text/image framing and the Hy-MT tokenizer controls.
     private val controls = listOf("<bos>", "<eos>", "<pad>", "<unk>", "<mask>",
         "<start_of_turn>", "<end_of_turn>", "<start_of_image>", "<end_of_image>", "<image_soft_token>",
-        "<|endoftext|>", "<|startoftext|>", "<|bos|>", "<|eos|>", "<|pad|>")
+        "<|endoftext|>", "<|startoftext|>", "<|bos|>", "<|eos|>", "<|pad|>",
+        "<|im_start|>", "<|im_end|>", "<|im_sep|>", "<|object_ref_start|>", "<|object_ref_end|>",
+        "<|box_start|>", "<|box_end|>", "<|quad_start|>", "<|quad_end|>", "<|vision_start|>",
+        "<|vision_end|>", "<|vision_pad|>", "<|image_pad|>", "<|video_pad|>", "<tool_call>", "</tool_call>",
+        "<|fim_prefix|>", "<|fim_middle|>", "<|fim_suffix|>", "<|fim_pad|>", "<|repo_name|>", "<|file_sep|>",
+        "<tool_response>", "</tool_response>", "<think>", "</think>", "<|audio_start|>", "<|audio_end|>",
+        "<tts_pad>", "<tts_text_bos>", "<tts_text_eod>", "<tts_text_bos_single>", "<|audio_pad|>")
     private val numberedControls = Regex("<\\|extra_[0-9]+\\|>|<unused[0-9]+>")
     private val hyNames = mapOf("zh" to "Chinese", "en" to "English", "fr" to "French", "pt" to "Portuguese",
         "es" to "Spanish", "ja" to "Japanese", "tr" to "Turkish", "ru" to "Russian", "ar" to "Arabic",
@@ -442,6 +460,7 @@ internal object LocalGgufPrompts {
         }
         if (family == Family.HY_MT && language.code !in hyNames)
             throw TranslationFailure(TranslationFailure.Reason.LANGUAGE)
+        if (family == Family.INDEX_TRANSLATE) LocalGgufExtendedPrompts.indexLanguage(value)
     }
     fun render(family: Family, text: String, source: String, target: String,
         previous: List<PairContext>, context: String): String {
@@ -452,6 +471,8 @@ internal object LocalGgufPrompts {
         val to = language(target)
         validateLanguage(family, source); validateLanguage(family, target)
         return when (family) {
+            Family.INDEX_TRANSLATE -> LocalGgufExtendedPrompts.index(text, source, target, previous, context)
+            Family.MODEL_TEMPLATE -> LocalGgufExtendedPrompts.generic(text, from, to, previous, context)
             Family.TRANSLATE_GEMMA -> buildString {
                 append("<bos>")
                 previous.forEach { pair ->

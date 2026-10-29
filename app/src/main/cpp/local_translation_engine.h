@@ -38,6 +38,10 @@ struct Response {
     int requested_gpu_layers = 0;
     int actual_gpu_layers = 0;
     bool gpu_observed = false;
+    // Reports only a bounded, locally supported model chat framing path.
+    // It is not proof that the weights, language or GPU are compatible.
+    bool chat_template_available = false;
+    std::string chat_template_mode;
     long long gpu_graph_nodes = 0;
     int cached_prompt_tokens = 0;
     int prompt_evaluated_tokens = 0;
@@ -60,10 +64,12 @@ public:
     Session();
     ~Session();
     Response open(const std::string & path, int threads, int context_tokens, const std::string & execution = "CPU", int gpu_layers = -1, const std::string & cache_path = "");
-    Response generate(const std::string & prompt, int output_tokens, bool add_special);
+    Response generate(const std::string & prompt, int output_tokens, bool add_special,
+        bool use_model_template = false);
     void cancel();
 #ifdef SUBTITLE_NATIVE_TESTING
     std::vector<float> test_logits();
+    std::string test_render_chat(const std::string & user_content);
 #endif
 private:
     struct State;

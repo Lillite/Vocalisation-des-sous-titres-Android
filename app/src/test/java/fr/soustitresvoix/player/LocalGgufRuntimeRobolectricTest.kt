@@ -165,11 +165,48 @@ class LocalGgufRuntimeRobolectricTest {
             }
         } finally { host.destroy(); shadowOf(Looper.getMainLooper()).idle() }
     }
+    @Test fun builtinTemplateCapabilityMustHaveStrictConsistentMetadata() {
+        val plain = JSONObject().put("code", "OK").put("name", "Synthetic model")
+            .put("architecture", "llama").put("fileType", "Q4_0").put("contextTokens", 512)
+            .put("modelBytes", 1024).put("modelParameters", 100).put("loadMs", 5).put("peakRssBytes", 1000)
+        assertFalse(LocalGgufRuntime.info(plain.toString()).chatTemplateAvailable)
+        assertEquals("", LocalGgufRuntime.info(plain.toString()).chatTemplateMode)
+        val builtin = JSONObject(plain.toString()).put("chatTemplateAvailable", true).put("chatTemplateMode", "BUILTIN_FORMAT")
+        val observed = LocalGgufRuntime.info(builtin.toString())
+        assertTrue(observed.chatTemplateAvailable)
+        assertEquals("BUILTIN_FORMAT", observed.chatTemplateMode)
+        assertFalse(observed.gpuObserved)
+        val malformed = mutableListOf(
+            JSONObject(builtin.toString()).put("chatTemplateAvailable", false),
+            JSONObject(plain.toString()).put("chatTemplateAvailable", true),
+            JSONObject(builtin.toString()).put("chatTemplateMode", "JINJA_PROGRAM"))
+        for (value in listOf<Any>("true", 1, JSONObject.NULL))
+            malformed += JSONObject(builtin.toString()).put("chatTemplateAvailable", value)
+        for (value in listOf<Any>(true, 1, JSONObject.NULL))
+            malformed += JSONObject(builtin.toString()).put("chatTemplateMode", value)
+        for (invalid in malformed) {
+            try { LocalGgufRuntime.info(invalid.toString()); fail("Malformed or contradictory template capability accepted") }
+            catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.RESPONSE, failure.code) }
+        }
+    }
+    @Test fun templateErrorSurvivesThePrivateServiceBoundaryWithoutPayloadLeak() {
+        val host = Robolectric.buildService(LocalGgufTranslationService::class.java).create()
+        try {
+            val error = host.get().javaClass.getDeclaredMethod("error", LocalGgufRuntime.Code::class.java,
+                LocalGgufDiagnostic::class.java).apply { isAccessible = true }
+            val encoded = error.invoke(host.get(), LocalGgufRuntime.Code.TEMPLATE, null) as String
+            try { LocalGgufRuntime.response(encoded); fail("Template failure was erased") }
+            catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.TEMPLATE, failure.code) }
+            assertFalse(TranslationFailure(TranslationFailure.Reason.LOCAL_TEMPLATE).message.orEmpty().contains("private"))
+        } finally { host.destroy(); shadowOf(Looper.getMainLooper()).idle() }
+    }
     @Test fun mainThreadCallsFailBeforeBindingAndCloseNeverWaits() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val client = LocalGgufRuntime.Client(context)
         try {
             try { client.open(File(context.filesDir, "absent.gguf")); fail("Main-thread inference accepted") }
+            catch (_: IllegalStateException) { }
+            try { client.generateChat("A translation request."); fail("Main-thread chat inference accepted") }
             catch (_: IllegalStateException) { }
             client.cancel(); client.close(); client.close()
             try { client.closeAndAwait(); fail("Main-thread release wait accepted") }

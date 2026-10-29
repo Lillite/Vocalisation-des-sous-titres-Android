@@ -2,7 +2,7 @@
 
 [Accueil](../README.md) · [Documentation](README.md) · [Comparatif CPU/GPU](COMPARATIF_LOCAL_058.md) · [Notes 0.5.10](releases/0.5.10-quality.md) · [Corpus de fidélité](CORPUS_FIDELITE_0510.md) · [Validation](../TESTING.md)
 
-La candidate **0.5.10-quality / code 17** donne la priorité à la fidélité et à la conservation des résultats. Elle expose plusieurs politiques de contexte, améliore la reprise et les contrôles de nombres, et retire des travaux répétitifs qui n’apportaient pas de qualité. Elle conserve le modèle choisi, ses poids, sa précision, les noyaux de calcul, le contexte natif de 2 048 tokens et la borne de génération de 512 tokens.
+La préversion publiée **0.5.10-quality / code 17** donne la priorité à la fidélité et à la conservation des résultats. Elle expose plusieurs politiques de contexte, améliore la reprise et les contrôles de nombres, et retire des travaux répétitifs qui n’apportaient pas de qualité. Elle conserve le modèle choisi, ses poids, sa précision, les noyaux de calcul, le contexte natif de 2 048 tokens et la borne de génération de 512 tokens.
 
 Une occurrence techniquement terminée n’est pas une traduction dont le sens a été certifié. Les exemples connus ne sont pas corrigés en dur. Le meilleur profil doit être établi sur des textes nouveaux et dans l’usage réel ; la version ne choisit pas automatiquement le profil le plus rapide ni un modèle réputé « meilleur ».
 

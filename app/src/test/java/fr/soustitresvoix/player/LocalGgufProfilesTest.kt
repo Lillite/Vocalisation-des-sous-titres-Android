@@ -19,9 +19,9 @@ class LocalGgufProfilesTest {
     }
     private fun publisherHeader() = header(listOf("general.architecture" to "hunyuan-dense",
         "general.type" to "model", "general.name" to "Global_Step_560", "general.size_label" to "7.5B"))
-    private fun rejects(block: () -> Unit) {
-        try { block(); fail("Expected an explicit profile refusal") }
-        catch (failure: TranslationFailure) { assertEquals(TranslationFailure.Reason.LOCAL_PROFILE, failure.reason) }
+    private fun rejects(reason: TranslationFailure.Reason = TranslationFailure.Reason.LOCAL_PROFILE, block: () -> Unit) {
+        try { block(); fail("Expected an explicit profile/template refusal") }
+        catch (failure: TranslationFailure) { assertEquals(reason, failure.reason) }
     }
 
     @Test fun actualOfficialHyMt2NameIsRecognizedByVerifiedPublisherIdentityAndArchitecture() {
@@ -36,7 +36,7 @@ class LocalGgufProfilesTest {
 
     @Test fun identicalGenericHunyuanHeaderWithoutKnownIdentityNeedsExplicitProfile() {
         val metadata = LocalGgufMetadataReader.parse(publisherHeader())
-        rejects { LocalGgufProfiles.select(LocalGgufProfile.AUTO, metadata.architecture, metadata.name, "0".repeat(64), metadata) }
+        rejects(TranslationFailure.Reason.LOCAL_TEMPLATE) { LocalGgufProfiles.select(LocalGgufProfile.AUTO, metadata.architecture, metadata.name, "0".repeat(64), metadata) }
         assertEquals(LocalGgufPrompts.Family.HY_MT,
             LocalGgufProfiles.select(LocalGgufProfile.HY_MT, metadata.architecture, metadata.name, "0".repeat(64), metadata))
     }
@@ -54,7 +54,7 @@ class LocalGgufProfilesTest {
         assertEquals(LocalGgufPrompts.Family.TRANSLATE_GEMMA,
             LocalGgufProfiles.select(LocalGgufProfile.AUTO, "gemma3", "Checkpoint", "0".repeat(64),
                 LocalGgufMetadata(finetune = "TranslateGemma IT")))
-        rejects { LocalGgufProfiles.select(LocalGgufProfile.AUTO, "hunyuan-dense", "Hunyuan general chat", "0".repeat(64)) }
+        rejects(TranslationFailure.Reason.LOCAL_TEMPLATE) { LocalGgufProfiles.select(LocalGgufProfile.AUTO, "hunyuan-dense", "Hunyuan general chat", "0".repeat(64)) }
     }
 
     @Test fun boundedMetadataParserKeepsEarlyHintsWhenTokenizerDataExceedsItsBudget() {
@@ -77,4 +77,54 @@ class LocalGgufProfilesTest {
         for (bytes in listOf(ByteArray(0), ByteArray(23), wrongMagic, wrongVersion))
             assertEquals(LocalGgufMetadata(), LocalGgufMetadataReader.parse(bytes))
     }
+    @Test fun officialIndexGenericNameIsRecognizedByEachVerifiedQuantizationIdentity() {
+        val metadata = LocalGgufMetadata(architecture = "qwen35", name = "9b", finetune = "9b")
+        for (digest in listOf(LocalGgufProfiles.OFFICIAL_INDEX_Q4, LocalGgufProfiles.OFFICIAL_INDEX_Q5,
+            LocalGgufProfiles.OFFICIAL_INDEX_Q6, LocalGgufProfiles.OFFICIAL_INDEX_Q8)) {
+            assertEquals(LocalGgufPrompts.Family.INDEX_TRANSLATE,
+                LocalGgufProfiles.select(LocalGgufProfile.AUTO, "qwen35", "9b", digest, metadata))
+            rejects { LocalGgufProfiles.select(LocalGgufProfile.AUTO, "llama", "9b", digest, metadata) }
+        }
+        assertEquals("5e47c636c75de6c5065f8550869a744e049451ac591a001968872d5c8b4b7898", LocalGgufProfiles.OFFICIAL_INDEX_Q6)
+    }
+
+    @Test fun architectureAloneNeverMisidentifiesAnotherQwenAsIndex() {
+        val digest = "0".repeat(64)
+        assertEquals(LocalGgufPrompts.Family.MODEL_TEMPLATE,
+            LocalGgufProfiles.select(LocalGgufProfile.AUTO, "qwen35", "9b", digest, chatTemplateAvailable = true))
+        assertEquals(LocalGgufPrompts.Family.INDEX_TRANSLATE,
+            LocalGgufProfiles.select(LocalGgufProfile.AUTO, "qwen35", "Index-Translate-9B", digest))
+        assertEquals(LocalGgufPrompts.Family.INDEX_TRANSLATE,
+            LocalGgufProfiles.select(LocalGgufProfile.INDEX_TRANSLATE, "qwen35", "9b", digest))
+        rejects { LocalGgufProfiles.select(LocalGgufProfile.INDEX_TRANSLATE, "gemma3", "Index-Translate", digest) }
+    }
+
+    @Test fun absentHeaderHintsDeferTheDecisionAndRuntimeCapabilityOverridesHeaderHints() {
+        fun model(metadata: LocalGgufMetadata) = LocalGgufModel(java.io.File("synthetic-no-weights.gguf"), "0".repeat(64), 24, 0, metadata)
+        assertNull(LocalGgufProfiles.preflight(model(LocalGgufMetadata()), LocalGgufProfile.AUTO))
+        assertNull(LocalGgufProfiles.preflight(model(LocalGgufMetadata(architecture = "qwen35", name = "9b")), LocalGgufProfile.AUTO))
+        assertNull(LocalGgufProfiles.preflight(model(LocalGgufMetadata(architecture = "llama")), LocalGgufProfile.MODEL_TEMPLATE))
+        val hint = LocalGgufMetadata(architecture = "llama", chatTemplateAvailable = true)
+        assertEquals(LocalGgufPrompts.Family.MODEL_TEMPLATE,
+            LocalGgufProfiles.preflight(model(hint), LocalGgufProfile.AUTO))
+        rejects(TranslationFailure.Reason.LOCAL_TEMPLATE) {
+            LocalGgufProfiles.select(LocalGgufProfile.AUTO, "llama", "A chat model", "0".repeat(64), hint, chatTemplateAvailable = false)
+        }
+        assertEquals(LocalGgufPrompts.Family.MODEL_TEMPLATE,
+            LocalGgufProfiles.select(LocalGgufProfile.AUTO, "llama", "A chat model", "0".repeat(64), chatTemplateAvailable = true))
+    }
+
+    @Test fun specializedProfilesStayPreferredOverGenericConversationTemplates() {
+        for ((architecture, name, expected) in listOf(
+            Triple("gemma3", "TranslateGemma", LocalGgufPrompts.Family.TRANSLATE_GEMMA),
+            Triple("hunyuan-dense", "HY-MT2", LocalGgufPrompts.Family.HY_MT))) {
+            val profile = if (expected == LocalGgufPrompts.Family.TRANSLATE_GEMMA)
+                LocalGgufProfile.TRANSLATE_GEMMA else LocalGgufProfile.HY_MT
+            assertEquals(expected, LocalGgufProfiles.select(profile, architecture,
+                name, "0".repeat(64), chatTemplateAvailable = true))
+            assertEquals(expected, LocalGgufProfiles.select(LocalGgufProfile.AUTO, architecture,
+                name, "0".repeat(64), chatTemplateAvailable = true))
+        }
+    }
+
 }

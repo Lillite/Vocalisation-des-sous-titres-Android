@@ -31,6 +31,7 @@ internal object LocalGgufMetadataReader {
         val input = ByteBuffer.wrap(bytes, 0, minOf(bytes.size, MAX_HEADER_BYTES)).order(ByteOrder.LITTLE_ENDIAN)
         val fields = HashMap<String, String>()
         var translationTemplate = false
+        var chatTemplateAvailable = false
         fun count(): Long {
             if (input.remaining() < 8) throw EOFException()
             return input.long.also { if (it < 0) throw EOFException() }
@@ -84,6 +85,7 @@ internal object LocalGgufMetadataReader {
                 if (type == 8 && key in setOf("general.architecture", "general.name", "general.basename", "general.finetune", "tokenizer.chat_template")) {
                     val value = text()
                     if (key == "tokenizer.chat_template") {
+                        chatTemplateAvailable = value.isNotBlank()
                         translationTemplate = "You are a professional" in value && "translator" in value &&
                             "source_lang_code" in value && "target_lang_code" in value
                     } else fields[key] = value
@@ -99,6 +101,7 @@ internal object LocalGgufMetadataReader {
                 else value.substring(0, value.offsetByCodePoints(0, maximum))
         }
         return LocalGgufMetadata(safe("general.architecture", 128), safe("general.name", 256),
-            safe("general.basename", 256), safe("general.finetune", 256), safe("general.file_type", 64), translationTemplate)
+            safe("general.basename", 256), safe("general.finetune", 256), safe("general.file_type", 64), translationTemplate,
+            chatTemplateAvailable)
     }
 }
