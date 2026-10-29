@@ -30,10 +30,12 @@ internal class LocalGgufBenchmark(
     },
     private val playbackSnapshot: () -> PlaybackObservation? = { null }
 ) : AutoCloseable {
-    enum class Scenario { SHORT, VARIED }
+    enum class Scenario { SHORT, VARIED, CONTEXT_POLICIES }
     enum class Order { CPU_THEN_GPU, GPU_THEN_CPU }
     data class Options(val scenario: Scenario = Scenario.SHORT,
-        val order: Order = Order.CPU_THEN_GPU, val reopenForLoad: Boolean = false)
+        val order: Order = Order.CPU_THEN_GPU, val reopenForLoad: Boolean = false,
+        val contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO,
+        val qualityCorpus: Boolean = false)
     /** Immutable, read-only observations supplied by the player's application thread. */
     data class PlaybackObservation(val observedAtMs: Long = 0, val mediaGeneration: Long = 0,
         val mediaOpened: Boolean = false, val playing: Boolean = false, val positionMs: Long = 0,
@@ -112,7 +114,8 @@ internal class LocalGgufBenchmark(
         val lastPerformance: LocalTranslationPerformance? = null, val reopening: Boolean = false,
         val loadPerformance: LocalTranslationPerformance? = null, val plannedSamples: Int = 2,
         val playbackBefore: PlaybackObservation? = null, val playbackAfter: PlaybackObservation? = null,
-        val startedAtMs: Long = 0, val finishedAtMs: Long = 0)
+        val startedAtMs: Long = 0, val finishedAtMs: Long = 0,
+        val contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO)
     data class State(val status: String = "Prêt. Aucun essai comparatif lancé.", val busy: Boolean = false,
         val modelSha256: String = "", val modelBytes: Long = 0, val threads: Int = 4,
         val profile: LocalGgufProfile = LocalGgufProfile.AUTO, val runs: List<Run> = emptyList(),
@@ -144,10 +147,14 @@ internal class LocalGgufBenchmark(
             try {
                 LocalGgufModelStore(app).acquire(model).use {
                     val modes = if (options.order == Order.CPU_THEN_GPU) listOf("CPU", "OPENCL") else listOf("OPENCL", "CPU")
-                    sessions@ for (mode in modes) {
-                        for (reopening in if (options.reopenForLoad) listOf(false, true) else listOf(false)) {
+                    val contextComparison = options.scenario == Scenario.CONTEXT_POLICIES
+                    val executions = if (contextComparison) LocalGgufContextPolicy.entries.map { "OPENCL" to it }
+                        else modes.map { it to options.contextPolicy }
+                    sessions@ for ((mode, policy) in executions) {
+                        val runLabel = if (contextComparison) "GPU — ${policy.label}" else "Mode $mode"
+                        for (reopening in if (options.reopenForLoad && !contextComparison) listOf(false, true) else listOf(false)) {
                             if (token.get() || closed) break@sessions
-                            val planned = if (reopening) cues(options.scenario).take(1) else cues(options.scenario)
+                            val planned = if (reopening) cues(options).take(1) else cues(options)
                             val before = snapshot()
                             val playbackBefore = readPlayback()
                             val started = clock()
@@ -163,7 +170,7 @@ internal class LocalGgufBenchmark(
                             try {
                                 val config = TranslationProviderConfig(TranslationProvider.LOCAL_GGUF,
                                     localModel = model, localThreads = threads, localContext = "",
-                                    localExecution = mode, localProfile = profile)
+                                    localExecution = mode, localProfile = profile, localContextPolicy = policy)
                                 val activeEngine = engineFactory(config).also { engine = it }
                                 (activeEngine as? LocalTranslationPerformanceSource)?.setPerformanceListener { performance ->
                                     latest = performance
@@ -174,14 +181,14 @@ internal class LocalGgufBenchmark(
                                         if (frames.size < MAX_PERFORMANCE_FRAMES) frames += performance else tooManyFrames = true
                                     }
                                     post(owner) {
-                                        it.copy(status = "Mode $mode : " + if (performance.phase == "load")
+                                        it.copy(status = "$runLabel : " + if (performance.phase == "load")
                                             "modèle chargé ; calcul du texte intégré…" else "passage calculé…",
                                             currentPerformance = performance)
                                     }
                                 }
                                 planned.forEachIndexed { index, cue ->
                                     if (token.get() || closed) throw TranslationCancelledException()
-                                    post(owner) { it.copy(status = "Mode $mode${if (reopening) ", réouverture" else ""}, " +
+                                    post(owner) { it.copy(status = "$runLabel${if (reopening) ", réouverture" else ""}, " +
                                         "occurrence ${index + 1} sur ${planned.size}. Durée inconnue ; annulation disponible.",
                                         currentPerformance = if (index == 0) null else it.currentPerformance) }
                                     latest = null
@@ -190,8 +197,10 @@ internal class LocalGgufBenchmark(
                                     tooManyFrames = false
                                     val callStarted = clock()
                                     val output = try {
-                                        if (options.scenario == Scenario.VARIED && activeEngine is ContextualTranslationEngine) {
-                                            val history = samples.takeLast(2)
+                                        if (options.scenario != Scenario.SHORT && activeEngine is ContextualTranslationEngine) {
+                                            // Use the declared policy even for injectable synthetic engines.
+                                            // All history comes from this same completed run, never another policy.
+                                            val history = samples.subList(policy.contextStartIndex(index), samples.size)
                                             activeEngine.translateWithContext(listOf(cue.source), "en", "fr",
                                                 history.map { requireNotNull(it.cue).source }, history.map { it.output }) { token.get() || closed }
                                         } else activeEngine.translate(listOf(cue.source), "en", "fr") { token.get() || closed }
@@ -235,10 +244,10 @@ internal class LocalGgufBenchmark(
                             val playbackReadAt = clock()
                             results += Run(mode, samples.toList(), before, environmentAfter, (finished - started).coerceAtLeast(0),
                                 failure, clean, loadMs, latest, reopening, loadPerformance, planned.size,
-                                playbackBefore, playbackAfter, started, playbackReadAt)
+                                playbackBefore, playbackAfter, started, playbackReadAt, policy)
                             val copy = results.toList()
                             post(owner) { it.copy(runs = copy, currentPerformance = null,
-                                status = if (failure == null) "Mode $mode${if (reopening) ", réouverture" else ""} terminé." else "Mode $mode : $failure") }
+                                status = if (failure == null) "$runLabel${if (reopening) ", réouverture" else ""} terminé." else "$runLabel : $failure") }
                             if (fatal || token.get() || closed || failure != null) break@sessions
                         }
                     }
@@ -251,12 +260,16 @@ internal class LocalGgufBenchmark(
                 post(owner) { it.copy(status = "Le modèle a changé ou n’est plus disponible. Prépare le modèle actuel avant de relancer le comparatif.") }
             } finally {
                 val copy = results.toList()
-                val expected = if (options.reopenForLoad) 4 else 2
+                val expected = if (options.scenario == Scenario.CONTEXT_POLICIES) LocalGgufContextPolicy.entries.size
+                    else if (options.reopenForLoad) 4 else 2
                 post(owner) {
                     it.copy(busy = false, runs = copy, currentPerformance = null, status = when {
                         token.get() -> "Comparatif annulé. Les résultats des passages terminés sont conservés."
                         fatal -> it.status
-                        copy.size == expected && copy.all { run -> run.failure == null } -> "Comparatif terminé. Compare les temps, les moteurs observés et les sorties synthétiques."
+                        copy.size == expected && copy.all { run -> run.failure == null } ->
+                            if (options.scenario == Scenario.CONTEXT_POLICIES)
+                                "Comparatif des stratégies terminé. Compare chaque source et traduction ; aucun classement automatique de fidélité."
+                            else "Comparatif terminé. Compare les temps, les moteurs observés et les sorties synthétiques."
                         copy.any { run -> run.failure != null } -> "Comparatif interrompu après un échec. Consulte le résultat du mode concerné."
                         else -> "Comparatif terminé sans exécution GPU validée."
                     })
@@ -296,8 +309,11 @@ internal class LocalGgufBenchmark(
         private const val MAX_PERFORMANCE_FRAMES = 256
         // A fixed synthetic cue has a bounded response, keeping a complete report copyable.
         private const val MAX_OUTPUT_BYTES = 2_048
+        fun cues(options: Options): List<LocalGgufBenchmarkCue> =
+            if (options.scenario == Scenario.CONTEXT_POLICIES && options.qualityCorpus) LocalGgufQualityCorpus.cues
+            else cues(options.scenario)
         fun cues(scenario: Scenario): List<LocalGgufBenchmarkCue> = when (scenario) {
-            Scenario.VARIED -> LocalGgufBenchmarkCorpus.cues
+            Scenario.VARIED, Scenario.CONTEXT_POLICIES -> LocalGgufBenchmarkCorpus.cues
             Scenario.SHORT -> listOf(LocalGgufBenchmarkCue("short-01", 0, 3_000, SOURCE, "dialogue"),
                 LocalGgufBenchmarkCue("short-02", 4_000, 7_000, SOURCE, "dialogue"))
         }

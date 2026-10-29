@@ -266,6 +266,9 @@ class TranslationSessionRobolectricTest {
                     controls.show()
                     val panel = requireNotNull(ShadowAlertDialog.getLatestAlertDialog())
                     button(panel, "Vérifier les alertes linguistiques").performClick()
+                    await("The asynchronously prepared Google review dialog did not open") {
+                        ShadowAlertDialog.getLatestAlertDialog()?.let { it !== panel && it.isShowing } == true
+                    }
                     requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).also { assertBadge(it); it.dismiss() }
                     button(panel, "Corriger une réplique de la traduction complète").performClick()
                     requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).getButton(DialogInterface.BUTTON_POSITIVE).performClick()
@@ -927,6 +930,76 @@ class TranslationSessionRobolectricTest {
                 assertFalse(fixture.session.machine.snapshot().wantsPlayback)
                 assertNull(fixture.session.translation.textFor(fixture.session.ahead.selected("external-subtitle")[20]))
             } finally { release.countDown() }
+        }
+    }
+
+    @Test fun asynchronousExportsPreserveEveryOccurrenceAndReturnOnMainWithoutStartingPlayback() {
+        Fixture().use { fixture ->
+            fixture.translate()
+            val outputs = linkedMapOf<SubtitleExportFormat, String?>()
+            var review: String? = null
+            val expected = SubtitleExportFormat.values().associateWith { fixture.session.translation.exportCurrent(it) }
+            for (format in SubtitleExportFormat.values()) fixture.session.translation.exportCurrentAsync(format) { output ->
+                assertEquals(Looper.getMainLooper(), Looper.myLooper())
+                outputs[format] = output
+            }
+            fixture.session.translation.reviewCurrentAsync { report ->
+                assertEquals(Looper.getMainLooper(), Looper.myLooper())
+                review = report
+            }
+            assertTrue("An export must return before its worker result is delivered", outputs.isEmpty())
+            assertNull(review)
+            await("Both export formats and the review did not complete") {
+                outputs.size == SubtitleExportFormat.values().size && review != null
+            }
+            assertEquals(expected, outputs)
+            for (output in outputs.values) assertEquals(5, Regex(" --> ").findAll(requireNotNull(output)).count())
+            assertTrue(requireNotNull(review).contains("5 occurrences traduites"))
+            assertTrue(requireNotNull(review).contains("ne prouve pas la fidélité linguistique"))
+            assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+            assertTrue(fixture.components.speech.requests.isEmpty())
+        }
+    }
+
+    @Test fun editingDuringExportInvalidatesTheOldRevisionExactlyOnceAndNewExportUsesTheCorrection() {
+        Fixture().use { fixture ->
+            fixture.translate()
+            val callbacks = mutableListOf<String?>()
+            val reviewCallbacks = mutableListOf<String?>()
+            fixture.session.translation.exportCurrentAsync(SubtitleExportFormat.SRT) { callbacks += it }
+            fixture.session.translation.reviewCurrentAsync { reviewCallbacks += it }
+            val cue = fixture.session.translation.editableCues()[1]
+            assertTrue(fixture.session.translation.editCue(cue.id, "Bonjour révisé pour cet export."))
+            assertEquals(listOf<String?>(null), callbacks)
+            assertEquals(listOf<String?>(null), reviewCallbacks)
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500))
+            assertEquals("A late worker cannot publish the previous revision", listOf<String?>(null), callbacks)
+            assertEquals(listOf<String?>(null), reviewCallbacks)
+            var corrected: String? = null
+            fixture.session.translation.exportCurrentAsync(SubtitleExportFormat.SRT) { corrected = it }
+            await("The current revision did not export") { corrected != null }
+            assertTrue(requireNotNull(corrected).contains("Bonjour révisé pour cet export."))
+            assertEquals(5, Regex(" --> ").findAll(requireNotNull(corrected)).count())
+            assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+            assertTrue(fixture.components.speech.requests.isEmpty())
+        }
+    }
+
+    @Test fun resetAndCloseInvalidatePendingExportsExactlyOnce() {
+        for (close in listOf(false, true)) Fixture().use { fixture ->
+            fixture.translate()
+            val callbacks = mutableListOf<String?>()
+            val reviewCallbacks = mutableListOf<String?>()
+            fixture.session.translation.exportCurrentAsync(SubtitleExportFormat.SRT) { callbacks += it }
+            fixture.session.translation.reviewCurrentAsync { reviewCallbacks += it }
+            if (close) fixture.session.translation.close() else fixture.session.translation.useOriginal()
+            assertEquals(listOf<String?>(null), callbacks)
+            assertEquals(listOf<String?>(null), reviewCallbacks)
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500))
+            assertEquals(listOf<String?>(null), callbacks)
+            assertEquals(listOf<String?>(null), reviewCallbacks)
+            assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+            assertTrue(fixture.components.speech.requests.isEmpty())
         }
     }
 

@@ -19,6 +19,7 @@ import java.nio.charset.CodingErrorAction
 class TranslationRunner(private val directory: File,
     checkpointDirectory: File? = null, private val retainedDirectory: File? = null) {
     private val checkpoints = checkpointDirectory?.let { TranslationCheckpointStore(it) }
+    private val exactRequests = ExactTranslationRequestCache(File(directory, "requests"))
     fun checkpointSummary(plan: TranslationPlan): Pair<Int, Boolean> = checkpoints?.read(plan)?.let { it.texts.size to it.uncertainRequest } ?: (0 to false)
     @Synchronized fun readExisting(plan: TranslationPlan, expectedResultFingerprint: String? = null): TranslatedTrack? =
         readRetained(plan, expectedResultFingerprint) ?: read(plan)?.takeIf { expectedResultFingerprint == null || it.fingerprint == expectedResultFingerprint }
@@ -99,6 +100,8 @@ class TranslationRunner(private val directory: File,
         checkCancelled(cancelled)
         progress(0, plan.cues.size)
         val restored = checkpoints?.read(plan)
+        if (restored?.recoveredTail == true)
+            cacheWarning = "Un journal interrompu ou endommagé a été récupéré jusqu’au dernier lot entièrement vérifié."
         val texts = ArrayList<String>(plan.cues.size).apply { restored?.texts?.let { addAll(it) } }
         // Only whole validated batch boundaries are resumable. No partial request is guessed.
         val validBoundary = texts.size == plan.cues.size || batches.any { it.firstIndex == texts.size }
@@ -110,6 +113,11 @@ class TranslationRunner(private val directory: File,
         val remainingCharacters = plan.cues.drop(texts.size).sumOf { it.text.length.toLong() }
         if (remainingCharacters > policy.maximumNewCharacters) throw TranslationFailure(TranslationFailure.Reason.BUDGET)
         var translatedCharacters = texts.sumOf { it.length.toLong() }
+        fun saveCheckpoint(additions: List<String>, uncertain: Boolean): Boolean = checkpoints?.let { store ->
+            // The normal path writes only the additions. A failed prior append,
+            // a reset or a legacy journal can still recover via an atomic snapshot.
+            store.append(plan, texts.size - additions.size, additions, uncertain) || store.write(plan, texts, uncertain)
+        } ?: true
         for (batch in batches) {
             if (batch.firstIndex < texts.size) continue
             checkCancelled(cancelled)
@@ -117,15 +125,32 @@ class TranslationRunner(private val directory: File,
             // Local work already saved this exact validated prefix after its
             // previous occurrence: do not rewrite/fsync it a second time. Every
             // newly validated occurrence is still saved below before publishing.
-            if (policy.requestMayConsumeRemoteQuota) checkpoints?.let {
-                if (!it.write(plan, texts, true)) cacheWarning = "La progression n’a pas pu être enregistrée ; garde cette session ouverte."
-            }
+            if (policy.requestMayConsumeRemoteQuota && !saveCheckpoint(emptyList(), true))
+                cacheWarning = "La progression n’a pas pu être enregistrée ; garde cette session ouverte."
+            val part = TranslationPlan.create(
+                plan.cues.subList(batch.firstIndex, batch.firstIndex + batch.texts.size),
+                plan.sourceLanguage, plan.targetLanguage, plan.providerId)
+            var exactKey: String? = null
+            var exactHit = false
             val response = try {
                 if (engine is ContextualTranslationEngine) {
-                    val contextStart = (batch.firstIndex - 2).coerceAtLeast(0)
-                    engine.translateWithContext(batch.texts, plan.sourceLanguage, plan.targetLanguage,
-                        plan.cues.subList(contextStart, batch.firstIndex).map { it.text },
-                        texts.subList(contextStart, batch.firstIndex).toList(), cancelled).toList()
+                    val contextStart = engine.contextStartIndex(batch.firstIndex)
+                    if (contextStart !in 0..batch.firstIndex)
+                        throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
+                    val sources = plan.cues.subList(contextStart, batch.firstIndex).map { it.text }
+                    val translations = texts.subList(contextStart, batch.firstIndex).toList()
+                    // Only explicitly opted-in local engines may reuse a whole
+                    // linguistic request. Same text with different history is a miss.
+                    if (engine.requiresDurableResult && engine.supportsExactRequestCache && !policy.requestMayConsumeRemoteQuota)
+                        exactKey = exactRequests.key(engine.id, plan.sourceLanguage, plan.targetLanguage,
+                            batch.texts, sources, translations)
+                    val cached = exactKey?.let(exactRequests::read)?.also {
+                        engine.validateExactRequestCacheHit(batch.texts, plan.sourceLanguage, plan.targetLanguage,
+                            sources, translations, cancelled)
+                    }?.takeIf { runCatching { part.complete(it) }.isSuccess }
+                    if (cached != null) { exactHit = true; cached }
+                    else engine.translateWithContext(batch.texts, plan.sourceLanguage, plan.targetLanguage,
+                        sources, translations, cancelled).toList()
                 } else engine.translate(batch.texts, plan.sourceLanguage, plan.targetLanguage, cancelled).toList()
             } catch (failure: TranslationFailure) {
                 // An explicit refusal did not produce a billable translation. Preserve
@@ -134,24 +159,23 @@ class TranslationRunner(private val directory: File,
                     TranslationFailure.Reason.AUTHENTICATION, TranslationFailure.Reason.CONFIGURATION,
                     TranslationFailure.Reason.LANGUAGE, TranslationFailure.Reason.REDIRECT, TranslationFailure.Reason.GOOGLE_BLOCKED,
                     TranslationFailure.Reason.MODEL_DOWNLOAD, TranslationFailure.Reason.LOCAL_TRANSLATION)) {
-                    checkpoints?.let { if (!it.write(plan, texts, false))
+                    if (!saveCheckpoint(emptyList(), false))
                         cacheWarning = "La progression n’a pas pu être enregistrée ; garde cette session ouverte." }
-                }
                 throw failure
             }
             checkCancelled(cancelled)
             // Validate each response immediately, so an invalid first lot cannot
             // trigger further billable requests before whole-track validation.
-            val part = TranslationPlan.create(
-                plan.cues.subList(batch.firstIndex, batch.firstIndex + batch.texts.size),
-                plan.sourceLanguage, plan.targetLanguage, plan.providerId)
             try { part.complete(response) }
             catch (_: IllegalArgumentException) { throw TranslationFailure(TranslationFailure.Reason.RESPONSE) }
             texts.addAll(response)
             translatedCharacters += response.sumOf { it.length.toLong() }
             if (translatedCharacters > TranslationPlan.MAX_TRACK_CHARACTERS)
                 throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
-            checkpoints?.let { if (!it.write(plan, texts, false)) cacheWarning = "Un lot validé n’a pas pu être enregistré pour la reprise." }
+            if (!saveCheckpoint(response, false)) cacheWarning = "Un lot validé n’a pas pu être enregistré pour la reprise."
+            if (exactHit) (engine as ContextualTranslationEngine).onExactRequestCacheHit()
+            else exactKey?.let { exactRequests.write(it, response) }
+            checkCancelled(cancelled)
             if (validatedPrefix !== NO_VALIDATED_PREFIX) validatedPrefix(texts.toList())
             progress(texts.size, plan.cues.size)
         }
@@ -201,6 +225,7 @@ class TranslationRunner(private val directory: File,
     /** Clears only files owned by this cache; imported subtitle files are untouched. */
     @Synchronized fun clear() {
         directory.listFiles()?.filter { owned(it) }?.forEach { it.delete() }
+        exactRequests.clear()
     }
 
     private fun read(plan: TranslationPlan, folder: File = directory): TranslatedTrack? = try {
@@ -304,6 +329,6 @@ class TranslationRunner(private val directory: File,
         private val ENTRY = Regex("[0-9a-f]{64}\\.track")
         private val WORK_KEY = Regex("[0-9a-f]{64}")
         private const val MAX_RETAINED_WORKS = 256
-        private val NO_VALIDATED_PREFIX: (List<String>) -> Unit = {}
+        internal val NO_VALIDATED_PREFIX: (List<String>) -> Unit = {}
     }
 }

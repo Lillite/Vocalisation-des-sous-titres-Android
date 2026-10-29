@@ -62,6 +62,21 @@ std::string quote(const std::string & value) {
 }
 bool abort(void * value) { return static_cast<std::atomic<bool> *>(value)->load(); }
 bool progress(float, void * value) { return !abort(value); }
+using Sampler = std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)>;
+Sampler greedy_sampler() {
+    auto parameters = llama_sampler_chain_default_params();
+    // Generation is already measured around the whole loop. A one-element
+    // chain keeps the same CPU greedy choice while allowing llama.cpp to reuse
+    // its candidate buffer instead of allocating it for every sampled token.
+    // Do not attach it to the context: backend sampling is a separate change.
+    parameters.no_perf = true;
+    Sampler chain(llama_sampler_chain_init(parameters), llama_sampler_free);
+    Sampler greedy(llama_sampler_init_greedy(), llama_sampler_free);
+    if (!chain || !greedy) return Sampler(nullptr, llama_sampler_free);
+    llama_sampler_chain_add(chain.get(), greedy.get());
+    greedy.release(); // The chain owns its child only after the add succeeded.
+    return chain;
+}
 }
 namespace {
 long long resident_bytes() {
@@ -317,8 +332,15 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
         }
         llama_synchronize(state_->context.get());
         result.prompt_ms = elapsed(prompt_start);
-        std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)> sampler(llama_sampler_init_greedy(), llama_sampler_free);
+        auto sampler = greedy_sampler();
         if (!sampler) return failed("RESPONSE");
+#ifdef SUBTITLE_NATIVE_TESTING
+        // The host smoke compares every real selection, including EOS, with
+        // the previous direct sampler on the identical computed logits. This
+        // reference is absent from all Android builds and production timings.
+        Sampler reference(llama_sampler_init_greedy(), llama_sampler_free);
+        if (!reference) return failed("RESPONSE");
+#endif
         const auto generation_start = Clock::now();
         tokens.reserve(tokens.size() + static_cast<size_t>(output_tokens));
         std::vector<char> piece(256);
@@ -326,6 +348,10 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
         for (int i = 0; i <= output_tokens; ++i) {
             if (cancelled_.load()) return failed("CANCELLED", "cancelled");
             const auto id = llama_sampler_sample(sampler.get(), state_->context.get(), -1);
+#ifdef SUBTITLE_NATIVE_TESTING
+            if (id != llama_sampler_sample(reference.get(), state_->context.get(), -1))
+                return failed("RESPONSE", "sampler_mismatch");
+#endif
             if (llama_vocab_is_eog(vocab, id)) { result.code = "OK"; result.stop_reason = "end_of_generation"; break; }
             if (i == output_tokens) break;
             int length = llama_token_to_piece(vocab, id, piece.data(), static_cast<int>(piece.size()), 0, false);

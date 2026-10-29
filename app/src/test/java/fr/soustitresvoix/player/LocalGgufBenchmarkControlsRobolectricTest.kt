@@ -39,7 +39,8 @@ import java.util.concurrent.TimeUnit
 @Config(sdk = [36])
 @LooperMode(LooperMode.Mode.PAUSED)
 class LocalGgufBenchmarkControlsRobolectricTest {
-    private class Fixture(private val measured: Boolean = false, private val blockGeneration: Boolean = false) : AutoCloseable {
+    private class Fixture(private val measured: Boolean = false, private val blockGeneration: Boolean = false,
+        private val largeReport: Boolean = false) : AutoCloseable {
         private val owner = Robolectric.buildActivity(Activity::class.java).setup().visible()
         val activity = owner.get().apply { setTheme(R.style.AppTheme) }
         init {
@@ -57,10 +58,12 @@ class LocalGgufBenchmarkControlsRobolectricTest {
         var engines = 0
         val openedModes = Collections.synchronizedList(mutableListOf<String>())
         val inputs = Collections.synchronizedList(mutableListOf<String>())
+        val exports = Collections.synchronizedList(mutableListOf<Triple<String, String, String>>())
         val generationEntered = CountDownLatch(1)
         val generationExited = CountDownLatch(1)
         private val releaseGeneration = CountDownLatch(1)
-        val controls = LocalGgufBenchmarkControls(activity, { otherBusy }, { modelPicks++ }, benchmarkFactory = { changed ->
+        val controls = LocalGgufBenchmarkControls(activity, { otherBusy }, { modelPicks++ },
+            onExport = { mime, name, report -> exports += Triple(mime, name, report) }, benchmarkFactory = { changed ->
             LocalGgufBenchmark(activity, changed, engineFactory = { config ->
                 engines++
                 if (!measured) error("No model was selected")
@@ -88,18 +91,28 @@ class LocalGgufBenchmarkControlsRobolectricTest {
                             if (calls++ == 0) listener?.invoke(LocalTranslationPerformance(phase = "load",
                                 requestedMode = config.localExecution, backend = config.localExecution, loadMs = 1,
                                 openClTransport = if (gpu) "DIRECT" else ""))
-                            listener?.invoke(LocalTranslationPerformance(requestedMode = config.localExecution,
-                                backend = config.localExecution, device = "synthetic measured backend",
-                                gpuObserved = gpu, gpuGraphNodes = if (gpu) 1 else 0,
-                                promptMs = 2, generationMs = 3, endToEndMs = 5,
+                            val frame = LocalTranslationPerformance(requestedMode = config.localExecution,
+                                backend = config.localExecution, device = if (largeReport) "d".repeat(300) else "synthetic measured backend",
+                                gpuObserved = gpu, gpuGraphNodes = if (gpu) { if (largeReport) Long.MAX_VALUE else 1 } else 0,
+                                promptMs = if (largeReport) 86_400_000 else 2, generationMs = if (largeReport) 86_400_000 else 3,
+                                endToEndMs = if (largeReport) Long.MAX_VALUE else 5,
+                                peakRssBytes = if (largeReport) Long.MAX_VALUE else 0,
+                                currentRssBytes = if (largeReport) Long.MAX_VALUE else 0,
+                                availableRamBytes = if (largeReport) Long.MAX_VALUE else 0,
+                                fallbackReason = if (largeReport) "f".repeat(300) else "",
                                 promptTokens = 4, promptEvaluatedTokens = 4, generatedTokens = 2,
-                                openClTransport = if (gpu) "DIRECT" else ""))
-                            return listOf("Traduction synthétique complète.")
+                                openClTransport = if (gpu) "DIRECT" else "")
+                            repeat(if (largeReport) 2 else 1) { listener?.invoke(frame) }
+                            return listOf(if (largeReport) "x".repeat(2048) else "Traduction synthétique complète.")
                         } finally { generationExited.countDown() }
                     }
                     override fun close() = Unit
                 }
-            })
+            }, snapshot = { if (largeReport) LocalGgufBenchmark.Environment(Long.MAX_VALUE, 6, Int.MAX_VALUE)
+                else LocalGgufBenchmark.Environment.read(activity) },
+                clock = { if (largeReport) 10_000 else android.os.SystemClock.elapsedRealtime() },
+                playbackSnapshot = { if (largeReport) LocalGgufBenchmark.PlaybackObservation(9_999, 1, true, true,
+                    Long.MAX_VALUE, Long.MAX_VALUE, true, true, true) else null })
         })
         fun open(): AlertDialog {
             controls.show(); shadowOf(Looper.getMainLooper()).idle()
@@ -263,7 +276,17 @@ class LocalGgufBenchmarkControlsRobolectricTest {
                 val profile = views(panel).filterIsInstance<Spinner>()
                     .single { it.contentDescription == "Profil de traduction du modèle GGUF" }
                 assertEquals("Profil de traduction du modèle GGUF", profile.contentDescription)
-                assertEquals(2, views(panel).filterIsInstance<Spinner>().count())
+                assertEquals(3, views(panel).filterIsInstance<Spinner>().count())
+                val contextPolicy = views(panel).filterIsInstance<Spinner>()
+                    .single { it.contentDescription == "Contexte des sous-titres GGUF" }
+                assertEquals(1, views(panel).filterIsInstance<TextView>().count { it.labelFor == contextPolicy.id })
+                for (choice in views(panel).filterIsInstance<Spinner>()) {
+                    val selected = choice.selectedView as? TextView ?: error("Readable selected choice required")
+                    assertNull(selected.ellipsize); assertTrue(selected.maxLines > 1)
+                    selected.layout?.let { layout ->
+                        for (line in 0 until layout.lineCount) assertEquals(0, layout.getEllipsisCount(line))
+                    }
+                }
                 assertEquals(1, views(panel).filterIsInstance<TextView>().count { it.labelFor == order(panel).id })
                 assertEquals(LocalGgufBenchmarkControls.REOPEN_LABEL, reopening(panel).text.toString())
                 for (action in descendants(scroll).filterIsInstance<Button>()) {
@@ -277,4 +300,59 @@ class LocalGgufBenchmarkControlsRobolectricTest {
             }
         } finally { RuntimeEnvironment.setFontScale(scale); RuntimeEnvironment.setQualifiers(qualifiers) }
     }
+    @Test fun contextComparisonButtonsAreOptInGpuOnlyAndCopyEveryQualitySource() {
+        Fixture(measured = true).use { f ->
+            val panel = f.open()
+            assertEquals(0, f.engines)
+            assertTrue(button(panel, LocalGgufBenchmarkControls.CONTEXT_START_LABEL).isEnabled)
+            assertTrue(button(panel, LocalGgufBenchmarkControls.QUALITY_START_LABEL).isEnabled)
+            reopening(panel).isChecked = true
+            order(panel).setSelection(1)
+            button(panel, LocalGgufBenchmarkControls.QUALITY_START_LABEL).performClick()
+            await("All three synthetic policy sessions must finish") { !f.controls.busy }
+            assertEquals(listOf("OPENCL", "OPENCL", "OPENCL"), f.openedModes.toList())
+            assertEquals(LocalGgufQualityCorpus.cues.map { it.source }.let { it + it + it }, f.inputs.toList())
+            button(panel, "Copier le rapport CPU / GPU").performClick()
+            val report = f.activity.getSystemService(ClipboardManager::class.java).primaryClip!!.getItemAt(0).text.toString()
+            assertTrue(report.startsWith("Comparatif local GPU — stratégies de contexte"))
+            assertTrue(report.contains(LocalGgufQualityCorpus.VERSION))
+            assertEquals(LocalGgufQualityCorpus.cues.size * 3,
+                Regex("Sortie sur le texte synthétique uniquement").findAll(report).count())
+            assertFalse(report.contains("synthetic private context must not enter a benchmark"))
+            assertFalse(report.contains("Réouverture demandée"))
+            assertTrue(reopening(panel).isChecked)
+        }
+    }
+
+    @Test fun oversizedReportCanBeExportedIntactWithoutChangingClipboardOrStartingAnotherCalculation() {
+        Fixture(measured = true, largeReport = true).use { f ->
+            val clipboard = f.activity.getSystemService(ClipboardManager::class.java)
+            clipboard.setPrimaryClip(ClipData.newPlainText("Existing", "keep this previous clip"))
+            val panel = f.open()
+            assertFalse(button(panel, LocalGgufBenchmarkControls.EXPORT_LABEL).isEnabled)
+            button(panel, LocalGgufBenchmarkControls.CONTEXT_START_LABEL).performClick()
+            await("The three large synthetic report sessions must finish") { !f.controls.busy }
+            val report = views(panel).filterIsInstance<TextView>().single {
+                it.text.toString().startsWith("Comparatif local GPU — stratégies de contexte")
+            }.text.toString()
+            assertTrue("The fixture must exercise the copy refusal", report.length > 400_000)
+            assertEquals(96, Regex("Sortie sur le texte synthétique uniquement").findAll(report).count())
+            assertEquals(96, Regex("x".repeat(2048)).findAll(report).count())
+            for (cue in LocalGgufBenchmarkCorpus.cues) assertTrue(report.contains(cue.source))
+            button(panel, "Copier le rapport CPU / GPU").performClick()
+            assertEquals("keep this previous clip", clipboard.primaryClip!!.getItemAt(0).text.toString())
+            assertTrue(text(panel).contains("trop volumineux pour le presse-papiers"))
+            assertTrue(button(panel, LocalGgufBenchmarkControls.EXPORT_LABEL).isEnabled)
+            button(panel, LocalGgufBenchmarkControls.EXPORT_LABEL).performClick()
+            button(panel, LocalGgufBenchmarkControls.EXPORT_LABEL).performClick()
+            await("The complete immutable report must reach the export callback once") { f.exports.size == 1 }
+            val exported = f.exports.single()
+            assertEquals("text/plain", exported.first)
+            assertEquals("comparatif-local-gguf.txt", exported.second)
+            assertEquals(report, exported.third)
+            assertEquals(3, f.engines)
+            assertEquals("keep this previous clip", clipboard.primaryClip!!.getItemAt(0).text.toString())
+        }
+    }
+
 }

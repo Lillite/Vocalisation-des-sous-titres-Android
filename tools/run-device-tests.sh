@@ -185,7 +185,7 @@ tail -n 180 "$evidence/device-console.txt"
 # Check all method identities, so missing, duplicated or skipped tests cannot
 # satisfy the release gate. These are actual device XML results, not inventory.
 python3 tools/verify-test-results.py \
-  --reports "$reports" --expected-count 110 --sources app/src/androidTest/java \
+  --reports "$reports" --expected-count 111 --sources app/src/androidTest/java \
   --not-before-ns "$started_ns" --output "$evidence/android-test-summary.json"
 report_status=$?
 if [[ "$status" == 0 && "$report_status" != 0 ]]; then status=$report_status; fi

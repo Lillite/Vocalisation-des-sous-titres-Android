@@ -3,6 +3,8 @@ package fr.soustitresvoix.player
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.net.Uri
 import android.os.Looper
 import android.view.View
@@ -28,6 +30,9 @@ import java.io.File
 import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /** Real local preparation form: no video, model inference, provider or network is needed. */
 @UnstableApi
@@ -35,13 +40,15 @@ import java.nio.ByteOrder
 @Config(sdk = [36])
 @LooperMode(LooperMode.Mode.PAUSED)
 class LocalSrtTranslationControlsRobolectricTest {
-    private class Fixture(private val capturedConfigurations: MutableList<TranslationProviderConfig>? = null) : AutoCloseable {
+    private class Fixture(private val capturedConfigurations: MutableList<TranslationProviderConfig>? = null,
+        private val controlledEngine: ((TranslationProviderConfig) -> TranslationEngine)? = null) : AutoCloseable {
         private val owner = Robolectric.buildActivity(Activity::class.java).setup().visible()
         val activity = owner.get().apply { setTheme(R.style.AppTheme) }
         init {
             activity.getSharedPreferences("translation-choices-v1", Context.MODE_PRIVATE).edit().clear().commit()
             for (directory in listOf("local-diagnostic", "local-srt-source-v1", "local-srt-progress-v1", "local-srt-results-v1"))
                 File(activity.filesDir, directory).deleteRecursively()
+            activity.getSystemService(ClipboardManager::class.java).clearPrimaryClip()
         }
         var otherBusy = false
         var subtitlePicks = 0
@@ -50,7 +57,8 @@ class LocalSrtTranslationControlsRobolectricTest {
         val controls = LocalSrtTranslationControls(activity, { otherBusy }, { subtitlePicks++ }, { modelPicks++ },
             onExport = { _, _, _ -> exports++ },
             jobFactory = { context, changed ->
-                if (capturedConfigurations == null) LocalSrtTranslationJob(context, onChanged = changed)
+                if (controlledEngine != null) LocalSrtTranslationJob(context, onChanged = changed, engineFactory = controlledEngine)
+                else if (capturedConfigurations == null) LocalSrtTranslationJob(context, onChanged = changed)
                 else LocalSrtTranslationJob(context, onChanged = changed, engineFactory = { config ->
                     capturedConfigurations += config
                     object : TranslationEngine {
@@ -165,6 +173,7 @@ class LocalSrtTranslationControlsRobolectricTest {
             field(panel, "GGUF local : threads de calcul").setText("3")
             views(panel).filterIsInstance<Spinner>().single { it.contentDescription == "Exécution du modèle GGUF" }.setSelection(1)
             views(panel).filterIsInstance<Spinner>().single { it.contentDescription == "Profil de traduction du modèle GGUF" }.setSelection(2)
+            views(panel).filterIsInstance<Spinner>().single { it.contentDescription == "Contexte des sous-titres GGUF" }.setSelection(2)
             shadowOf(Looper.getMainLooper()).idle()
             button(panel, "Traduire le SRT hors ligne / reprendre").performClick()
             val confirmation = requireNotNull(ShadowAlertDialog.getLatestAlertDialog())
@@ -179,9 +188,23 @@ class LocalSrtTranslationControlsRobolectricTest {
             assertEquals(3, used.localThreads)
             assertEquals("CPU", used.localExecution)
             assertEquals(LocalGgufProfile.HY_MT, used.localProfile)
+            assertEquals(LocalGgufContextPolicy.BLOCKS_SIX, used.localContextPolicy)
             assertEquals(model.sha256, used.localModel?.sha256)
             assertTrue(text(panel).contains("Occurrences validées : 8 / 8"))
             assertEquals(context, f.activity.getSharedPreferences("translation-choices-v1", Context.MODE_PRIVATE).getString("local-context", null))
+            button(panel, "Consulter les indices linguistiques de la traduction complète").performClick()
+            val review = requireNotNull(ShadowAlertDialog.getLatestAlertDialog())
+            assertTrue(text(review).contains("Vérification heuristique — en vers fr"))
+            assertTrue(text(review).contains("ne prouve pas la fidélité linguistique"))
+            val clipboard = f.activity.getSystemService(ClipboardManager::class.java)
+            assertNull("Review text must only be copied after an explicit action", clipboard.primaryClip)
+            review.getButton(AlertDialog.BUTTON_NEUTRAL).performClick()
+            // AlertDialog dispatches this listener through its main Handler.
+            shadowOf(Looper.getMainLooper()).idle()
+            val copied = requireNotNull(clipboard.primaryClip)
+            assertTrue(copied.getItemAt(0).text.toString().contains("Vérification heuristique — en vers fr"))
+            assertEquals(true, copied.description.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE))
+            assertEquals(0, f.exports)
 
             panel.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
             shadowOf(Looper.getMainLooper()).idle()
@@ -192,9 +215,11 @@ class LocalSrtTranslationControlsRobolectricTest {
                 localModel = LocalGgufModelStore(f.activity).current(),
                 localThreads = field(reopened, "GGUF local : threads de calcul").text.toString().toInt(),
                 localContext = field(reopened, "GGUF local : contexte de l’œuvre").text.toString(),
-                localExecution = "CPU", localProfile = LocalGgufProfile.HY_MT)
+                localExecution = "CPU", localProfile = LocalGgufProfile.HY_MT,
+                localContextPolicy = LocalGgufContextPolicy.BLOCKS_SIX)
             assertEquals(1, views(reopened).filterIsInstance<Spinner>().single { it.contentDescription == "Exécution du modèle GGUF" }.selectedItemPosition)
             assertEquals(2, views(reopened).filterIsInstance<Spinner>().single { it.contentDescription == "Profil de traduction du modèle GGUF" }.selectedItemPosition)
+            assertEquals(2, views(reopened).filterIsInstance<Spinner>().single { it.contentDescription == "Contexte des sous-titres GGUF" }.selectedItemPosition)
             assertEquals(TranslationEngines.translationIdentity(used), TranslationEngines.translationIdentity(restored))
             reopened.dismiss()
 
@@ -207,7 +232,88 @@ class LocalSrtTranslationControlsRobolectricTest {
                 assertEquals("3", field(reader, "GGUF local : threads de calcul").text.toString())
                 assertEquals(1, views(reader).filterIsInstance<Spinner>().single { it.contentDescription == "Exécution du modèle GGUF" }.selectedItemPosition)
                 assertEquals(2, views(reader).filterIsInstance<Spinner>().single { it.contentDescription == "Profil de traduction du modèle GGUF" }.selectedItemPosition)
+                assertEquals(2, views(reader).filterIsInstance<Spinner>().single { it.contentDescription == "Contexte des sous-titres GGUF" }.selectedItemPosition)
             } finally { readerControls.close(); playback.close() }
+        }
+    }
+
+    @Test fun qualityExampleIsExplicitAndDoesNotStartInferenceOrExport() {
+        val configurations = mutableListOf<TranslationProviderConfig>()
+        Fixture(configurations).use { f ->
+            val panel = f.open(); f.ready()
+            field(panel, "Langue originale des sous-titres").setText("ja")
+            button(panel, "Charger le SRT de contrôle de fidélité — phrases inédites").performClick()
+            f.ready()
+            assertEquals("en", field(panel, "Langue originale des sous-titres").text.toString())
+            assertTrue(text(panel).contains("qualite-traduction-en.srt"))
+            assertTrue(configurations.isEmpty())
+            assertEquals(0, f.subtitlePicks)
+            assertEquals(0, f.modelPicks)
+            assertEquals(0, f.exports)
+            assertFalse(button(panel, "Consulter les dernières mesures du moteur local").isEnabled)
+            button(panel, "Consulter les indices linguistiques de la traduction complète").performClick()
+            assertTrue(text(panel).contains("Termine d’abord la traduction complète de ce SRT"))
+            assertTrue(configurations.isEmpty())
+        }
+    }
+
+    @Test fun performanceUpdatesLeaveTheLiveStatusAndFocusStableWhileDetailsRemainConsultable() {
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val observations = AtomicReference<((LocalTranslationPerformance) -> Unit)?>(null)
+        Fixture(controlledEngine = { config ->
+            object : TranslationEngine, LocalTranslationPerformanceSource {
+                override val id = TranslationEngines.translationIdentity(config)
+                override val maxBatchItems = 1
+                override fun setPerformanceListener(listener: ((LocalTranslationPerformance) -> Unit)?) { observations.set(listener) }
+                override fun translate(texts: List<String>, sourceLanguage: String, targetLanguage: String,
+                    cancelled: () -> Boolean): List<String> {
+                    entered.countDown()
+                    assertTrue(release.await(10, TimeUnit.SECONDS))
+                    if (cancelled()) throw TranslationCancelledException()
+                    return texts.map { "Traduction synthétique : $it" }
+                }
+                override fun close() = Unit
+            }
+        }).use { f ->
+            try {
+                val header = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
+                    .put(byteArrayOf(71, 71, 85, 70)).putInt(3).putLong(0).putLong(0).array()
+                LocalGgufModelStore(f.activity).importModel(ByteArrayInputStream(header), header.size.toLong())
+                val panel = f.open(); f.ready()
+                button(panel, "Charger l’exemple SRT anglais intégré").performClick(); f.ready()
+                button(panel, "Traduire le SRT hors ligne / reprendre").performClick()
+                requireNotNull(ShadowAlertDialog.getLatestAlertDialog()).getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+                await { entered.count == 0L && text(panel).contains("Occurrences validées : 0 / 8") }
+                val status = views(panel).filterIsInstance<TextView>().single { it.tag == LocalSrtTranslationControls.STATUS_TAG }
+                val progress = views(panel).filterIsInstance<TextView>().single { it.tag == LocalSrtTranslationControls.PROGRESS_TAG }
+                val initial = status.text.toString()
+                assertEquals(View.ACCESSIBILITY_LIVE_REGION_POLITE, status.accessibilityLiveRegion)
+                assertEquals(View.ACCESSIBILITY_LIVE_REGION_NONE, progress.accessibilityLiveRegion)
+                val input = field(panel, "Langue originale des sous-titres")
+                input.requestFocus()
+                val measures = button(panel, "Consulter les dernières mesures du moteur local")
+                assertFalse(measures.isEnabled)
+                for (tokens in 1..3) {
+                    requireNotNull(observations.get()).invoke(LocalTranslationPerformance(backend = "OPENCL",
+                        device = "Adreno synthétique", gpuObserved = true, generationMs = 10, generatedTokens = tokens))
+                    shadowOf(Looper.getMainLooper()).idle()
+                    assertEquals(initial, status.text.toString())
+                    assertTrue(input.hasFocus())
+                    assertFalse(status.text.toString().contains("Adreno"))
+                }
+                assertTrue(measures.isEnabled)
+                measures.performClick()
+                val details = requireNotNull(ShadowAlertDialog.getLatestAlertDialog())
+                assertTrue(text(details).contains("Adreno synthétique"))
+                details.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+                button(panel, "Annuler la traduction du SRT — conserver la progression").performClick()
+                assertTrue(status.text.toString().contains("Arrêt demandé"))
+                release.countDown()
+                f.ready()
+                assertTrue(status.text.toString().contains("arrêtée", ignoreCase = true))
+                assertEquals(0, f.exports)
+            } finally { release.countDown() }
         }
     }
 
@@ -237,7 +343,7 @@ class LocalSrtTranslationControlsRobolectricTest {
                     assertTrue(input.textSize >= 18 * density)
                 }
                 val actions = descendants(scroll).filterIsInstance<Button>().toList()
-                assertEquals(11, actions.size)
+                assertEquals(14, actions.size)
                 for (action in actions) {
                     assertNull(action.ellipsize)
                     assertTrue(action.maxLines > 1)

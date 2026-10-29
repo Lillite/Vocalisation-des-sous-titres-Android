@@ -1,11 +1,14 @@
 #include "local_translation_engine.h"
 #include "model_probe_engine.h"
+#include "llama.h"
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <limits>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -38,9 +41,53 @@ float difference(const std::vector<float> & left, const std::vector<float> & rig
     for (size_t i = 0; i < left.size(); ++i) maximum = std::max(maximum, std::abs(left[i] - right[i]));
     return maximum;
 }
+void check_greedy_chain_equivalence() {
+    using Sampler = std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)>;
+    auto parameters = llama_sampler_chain_default_params();
+    parameters.no_perf = true;
+    Sampler chain(llama_sampler_chain_init(parameters), llama_sampler_free);
+    Sampler direct(llama_sampler_init_greedy(), llama_sampler_free);
+    assert(chain && direct);
+    llama_sampler_chain_add(chain.get(), llama_sampler_init_greedy());
+    assert(llama_sampler_chain_n(chain.get()) == 1);
+    const auto infinity = std::numeric_limits<float>::infinity();
+    const auto nan = std::numeric_limits<float>::quiet_NaN();
+    // Preserve the old ordering and tie-breaking even at the extremes; this
+    // checks equivalence, not a claim that NaN is a valid linguistic result.
+    const std::vector<std::vector<float>> cases = {
+        {-9.0f, -2.0f, -4.0f},
+        {3.0f, 3.0f, 1.0f},
+        {-2.0f, 5.0f, 5.0f},
+        {-infinity, -infinity, -infinity},
+        {0.0f, infinity, infinity},
+        {nan, 4.0f, 8.0f},
+        {0.0f, nan, 8.0f}
+    };
+    for (int pass = 0; pass < 3; ++pass) {
+        if (pass == 1) { llama_sampler_reset(chain.get()); llama_sampler_reset(direct.get()); }
+        for (const auto & values : cases) {
+            std::vector<llama_token_data> direct_values, chain_values;
+            for (size_t i = 0; i < values.size(); ++i)
+                direct_values.push_back({static_cast<llama_token>(17 + i * 3), values[i], 0.0f});
+            chain_values = direct_values;
+            llama_token_data_array direct_array{direct_values.data(), direct_values.size(), -1, false};
+            llama_token_data_array chain_array{chain_values.data(), chain_values.size(), -1, false};
+            llama_sampler_apply(direct.get(), &direct_array);
+            llama_sampler_apply(chain.get(), &chain_array);
+            assert(direct_array.selected == chain_array.selected);
+            assert(direct_array.size == chain_array.size);
+            const auto selected = chain_array.data[chain_array.selected].id;
+            assert(selected == direct_array.data[direct_array.selected].id);
+            llama_sampler_accept(chain.get(), selected);
+            llama_sampler_accept(direct.get(), selected);
+        }
+    }
+    std::cout << "Greedy chain: 21 finite/tie/non-finite/reset selections match the prior direct rule; real host generations also compare every sampled token, including EOS.\n";
+}
 }
 int main(int argc, char ** argv) {
     assert(argc == 3 || argc == 4);
+    check_greedy_chain_equivalence();
     {
         subtitle_local::Session first;
         const auto info = first.open(argv[1], 1, 512);

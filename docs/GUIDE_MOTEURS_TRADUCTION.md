@@ -24,7 +24,9 @@ La narration utilise les occurrences françaises validées. L’affichage propos
 
 Les résultats ont trois usages distincts :
 
-- **Cache** : réutilisation des traductions complètes validées, dans une limite de 32 Mio ; une entrée peut être évincée.
+- **Cache de pistes** : réutilisation des traductions complètes validées, dans une limite de 32 Mio par parcours — vidéo ou SRT indépendant ; une entrée peut être évincée.
+- **Cache de requêtes GGUF exactes — 0.5.10** : 8 Mio supplémentaires par parcours, réservés au travail local explicitement compatible. Modèle, configuration, langues, texte et historique doivent correspondre ; chaque occurrence garde ses propres identifiants et minutages. Une réutilisation n’est pas présentée comme un nouveau calcul GPU.
+- **Journal de reprise** : distinct des caches évictables, borné à 32 Mio par plan. Effacer le cache d’un parcours retire aussi ses requêtes exactes, sans retirer les résultats conservés durablement. Voir les [différences et limites 0.5.10](TRADUCTION_QUALITE_0510.md).
 - **Progression** : lots déjà validés conservés pour reprendre avec la même piste et les mêmes paramètres. Un lot au résultat incertain demande une confirmation avant un éventuel renvoi.
 - **Conservation et export** : conservation durable explicite d’une traduction complète, ou export SRT/VTT à l’emplacement choisi. L’export peut ensuite être réimporté comme piste française.
 

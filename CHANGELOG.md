@@ -2,9 +2,23 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
-## 0.5.9-local — candidate de traduction locale et cache
+## 0.5.10-quality — candidate de qualité et fiabilité de la traduction locale
 
-VersionCode **16**, identité Traduction et certificat durable conservés. [Guide](docs/TRADUCTION_LOCALE_059.md) · [Notes et limites](docs/releases/0.5.9-local.md). La 0.5.2 reste la dernière stable. La validation propre de cette candidate doit être établie avant distribution.
+VersionCode **17**, identité Traduction et certificat durable conservés. [Guide](docs/TRADUCTION_QUALITE_0510.md) · [Notes et limites](docs/releases/0.5.10-quality.md). La 0.5.2 reste la dernière stable. Les preuves propres à cette candidate doivent être établies avant distribution.
+
+- Stratégies de contexte explicites : deux échanges récents par défaut, occurrence isolée ou blocs de six occurrences ; comparaison sur GPU des 32 occurrences de référence ou de 18 phrases inédites, avec critères de relecture séparés et sans classement automatique de fidélité.
+- Export TXT intégral des rapports du comparatif après fin ou arrêt, utile lorsque la copie dépasse la capacité protégée du presse-papiers ; aucun texte de traduction n’est tronqué.
+- Identité de configuration v4 incluant la stratégie et l’exécution demandée ; conservation des anciens résultats sous leur identité d’origine.
+- Journal de progression incrémental durable et reprise vérifiée ; préservation des occurrences, minutages et états validés.
+- Cache de requêtes locales exactes de 8 Mio par parcours, incluant configuration et historique complet ; réponse revalidée et occurrence conservée, sans mesure GPU fictive.
+- Contrôles numériques améliorés pour les formats anglais et français, sans réécriture automatique des traductions ni certification sémantique.
+- Réutilisation du buffer de sélection native avec le même greedy ; poids, précision, noyaux et limites du contexte et de génération conservés.
+- Suivi accessible plus court, détails techniques consultables et réduction des travaux d’interface évitables.
+- Aucun NPU, OCR de film, téléchargement de modèle ni nouveau service réseau ajouté. La fidélité et les performances de production restent à mesurer.
+
+## 0.5.9-local — traduction locale et cache publiés
+
+VersionCode **16**, identité Traduction et certificat durable conservés. [Guide](docs/TRADUCTION_LOCALE_059.md) · [Notes et limites](docs/releases/0.5.9-local.md). La 0.5.2 reste la dernière stable. La [PR #25](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/25) a réussi **741 tests avant fusion**, dont 110 sur l’APK release sous Android 17. Reconstruction, signature et téléchargement public ont ensuite été vérifiés.
 
 - Alignement de la séparation instruction/source TranslateGemma sur le template épinglé ; rendu cohérent du contexte personnel dans les tours historiques.
 - Conservation entière des paires source/traduction du contexte récent, sans coupe indépendante à 300 points de code. En cas de manque de place, retrait de paires historiques entières avant subdivision éventuelle de la source courante conservée intégralement.

@@ -102,7 +102,7 @@ class MainActivity : ComponentActivity() {
         pendingSubtitleExport = null
         val uri = result.data?.data
         if (result.resultCode == RESULT_OK && uri != null && content == null && !closed) {
-            showMessage("L’export a été interrompu pendant le choix du fichier. Relance l’export depuis la traduction.", true)
+            showMessage("L’export a été interrompu pendant le choix du fichier. Relance l’export depuis son panneau.", true)
         }
         if (result.resultCode == RESULT_OK && uri != null && content != null) {
             io.execute {
@@ -111,7 +111,7 @@ class MainActivity : ComponentActivity() {
                         .bufferedWriter(Charsets.UTF_8).use { it.write(content) }
                 }.isSuccess
                 main.post {
-                    if (!closed) showMessage(if (succeeded) "Sous-titres exportés en UTF-8." else "Impossible d’écrire l’export dans le fichier choisi. Vérifie l’emplacement et réessaie.", !succeeded)
+                    if (!closed) showMessage(if (succeeded) "Fichier exporté en UTF-8." else "Impossible d’écrire l’export dans le fichier choisi. Vérifie l’emplacement et réessaie.", !succeeded)
                 }
             }
         }
@@ -176,7 +176,7 @@ class MainActivity : ComponentActivity() {
             otherPreparationBusy = { session.isPreparing || localSrtTranslationControls.busy ||
                 (::preparationDiagnostics.isInitialized && preparationDiagnostics.isBusy) },
             launchModelPicker = { localBenchmarkModelPicker.launch(arrayOf("*/*")) }, onChanged = { refreshUi() },
-            playbackSnapshot = { localBenchmarkPlayback })
+            playbackSnapshot = { localBenchmarkPlayback }, onExport = ::requestSubtitleExport)
         preparationDiagnostics = PreparationDiagnosticsController(this,
             playbackIdle = {
                 val state = session.machine.snapshot()

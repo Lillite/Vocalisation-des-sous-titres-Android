@@ -59,16 +59,24 @@ class LocalGgufTranslationEngine internal constructor(
     private val threads: Int = 4,
     private val context: String = "",
     private val profile: LocalGgufProfile = LocalGgufProfile.AUTO,
-    private val executionMode: String = "AUTO"
+    private val executionMode: String = "AUTO",
+    private val contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO
 ) : ContextualTranslationEngine, LocalTranslationPerformanceSource {
     constructor(appContext: Context, model: LocalGgufModel, threads: Int = 4, context: String = "",
-        profile: LocalGgufProfile = LocalGgufProfile.AUTO, executionMode: String = "AUTO") :
-        this(model, LocalGgufModelStore(appContext), { NativeTranslationBackend(appContext) }, threads, context, profile, executionMode)
+        profile: LocalGgufProfile = LocalGgufProfile.AUTO, executionMode: String = "AUTO",
+        contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO) :
+        this(model, LocalGgufModelStore(appContext), { NativeTranslationBackend(appContext) }, threads, context, profile, executionMode, contextPolicy)
 
-    override val id: String = identity(model, threads, context, profile, executionMode)
+    override val id: String = identity(model, threads, context, profile, executionMode, contextPolicy)
     override val maxBatchItems: Int = 1
     override val maxBatchCharacters: Int = TranslationPlan.MAX_CUE_CHARACTERS
     override val requiresDurableResult: Boolean = true
+    override val supportsExactRequestCache: Boolean = true
+    override fun onExactRequestCacheHit() {
+        // A reused result has no new runtime observation, including no previous fallback.
+        runCatching { performanceListener?.invoke(LocalTranslationPerformance(phase = "cache", requestedMode = executionMode)) }
+    }
+    override fun contextStartIndex(occurrenceIndex: Int): Int = contextPolicy.contextStartIndex(occurrenceIndex)
     private val closed = AtomicBoolean(false)
     private val working = AtomicBoolean(false)
     private val unloadAcknowledged = AtomicBoolean(false)
@@ -95,31 +103,52 @@ class LocalGgufTranslationEngine internal constructor(
         cancelled: () -> Boolean): List<String> =
         translateWithContext(texts, sourceLanguage, targetLanguage, emptyList(), emptyList(), cancelled)
 
+    override fun validateExactRequestCacheHit(texts: List<String>, sourceLanguage: String, targetLanguage: String,
+        previousSources: List<String>, previousTranslations: List<String>, cancelled: () -> Boolean) {
+        checkCancelled(cancelled)
+        if (working.get()) throw TranslationFailure(TranslationFailure.Reason.LOCAL_BUSY)
+        validateRequest(texts, sourceLanguage, targetLanguage, previousSources, previousTranslations, cancelled)
+    }
+
+    private fun validateRequest(texts: List<String>, sourceLanguage: String, targetLanguage: String,
+        previousSources: List<String>, previousTranslations: List<String>, cancelled: () -> Boolean): List<LocalGgufPrompts.PairContext> {
+        checkCancelled(cancelled)
+        if (texts.size != 1 || previousSources.size != previousTranslations.size)
+            throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
+        validateSettings(threads, context, executionMode)
+        validateLanguages(sourceLanguage, targetLanguage)
+        // Header hints can validate family-specific languages without loading weights.
+        // Unknown hints are not a reason to invent a family for a previously completed exact key.
+        val knownFamily = family ?: LocalGgufProfiles.preflight(model, profile)
+        knownFamily?.let { kind ->
+            LocalGgufPrompts.validateLanguage(kind, sourceLanguage)
+            LocalGgufPrompts.validateLanguage(kind, targetLanguage)
+        }
+        val source = texts.single()
+        if (!validText(source) || source.isBlank() || source.length > TranslationPlan.MAX_CUE_CHARACTERS)
+            throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
+        if (LocalGgufPrompts.hasControlTokens(source))
+            throw TranslationFailure(TranslationFailure.Reason.LOCAL_CONTEXT)
+        return previousSources.zip(previousTranslations).takeLast(contextPolicy.maximumPreviousPairs).map { (original, translated) ->
+            if (!validText(original) || !validText(translated))
+                throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
+            if (LocalGgufPrompts.hasControlTokens(original) || LocalGgufPrompts.hasControlTokens(translated))
+                throw TranslationFailure(TranslationFailure.Reason.LOCAL_CONTEXT)
+            // A clipped source and a separately clipped translation need not
+            // mean the same thing. Keep a complete pair or remove it whole
+            // when the native input budget rejects the oldest context.
+            LocalGgufPrompts.PairContext(original, translated)
+        }
+    }
+
     override fun translateWithContext(texts: List<String>, sourceLanguage: String, targetLanguage: String,
         previousSources: List<String>, previousTranslations: List<String>, cancelled: () -> Boolean): List<String> {
         val occurrenceStart = System.nanoTime()
         checkCancelled(cancelled)
         if (!working.compareAndSet(false, true)) throw TranslationFailure(TranslationFailure.Reason.LOCAL_BUSY)
         try {
-            if (texts.size != 1 || previousSources.size != previousTranslations.size)
-                throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
-            validateSettings(threads, context, executionMode)
-            validateLanguages(sourceLanguage, targetLanguage)
+            val history = validateRequest(texts, sourceLanguage, targetLanguage, previousSources, previousTranslations, cancelled)
             val source = texts.single()
-            if (!validText(source) || source.isBlank() || source.length > TranslationPlan.MAX_CUE_CHARACTERS)
-                throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
-            if (LocalGgufPrompts.hasControlTokens(source))
-                throw TranslationFailure(TranslationFailure.Reason.LOCAL_CONTEXT)
-            val history = previousSources.zip(previousTranslations).takeLast(2).map { (original, translated) ->
-                if (!validText(original) || !validText(translated))
-                    throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
-                if (LocalGgufPrompts.hasControlTokens(original) || LocalGgufPrompts.hasControlTokens(translated))
-                    throw TranslationFailure(TranslationFailure.Reason.LOCAL_CONTEXT)
-                // A clipped source and a separately clipped translation need not
-                // mean the same thing. Keep a complete pair or remove it whole
-                // when the native input budget rejects the oldest context.
-                LocalGgufPrompts.PairContext(original, translated)
-            }
             val alreadyOpen = backend != null
             var worker = openWithFallback(cancelled)
             var occurrenceLoadMs = if (alreadyOpen) 0 else openPerformance.loadMs
@@ -157,7 +186,7 @@ class LocalGgufTranslationEngine internal constructor(
                         if (parts == null) throw TranslationFailure(if (failure.code == LocalGgufRuntime.Code.OUTPUT_LIMIT)
                             TranslationFailure.Reason.LOCAL_TRUNCATED else TranslationFailure.Reason.LOCAL_CONTEXT)
                         val left = generate(parts.first, preceding, depth + 1)
-                        val nextContext = (preceding + LocalGgufPrompts.PairContext(parts.first, left)).takeLast(2)
+                        val nextContext = (preceding + LocalGgufPrompts.PairContext(parts.first, left)).takeLast(contextPolicy.maximumPreviousPairs.coerceAtLeast(1))
                         val right = generate(parts.second, nextContext, depth + 1)
                         return "$left\n$right".also {
                             if (it.length > TranslationPlan.MAX_CUE_CHARACTERS)
@@ -313,12 +342,12 @@ class LocalGgufTranslationEngine internal constructor(
             LocalGgufPrompts.language(target)
         }
         fun identity(model: LocalGgufModel, threads: Int = 4, context: String = "", profile: LocalGgufProfile = LocalGgufProfile.AUTO,
-            executionMode: String = "AUTO"): String {
+            executionMode: String = "AUTO", contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO): String {
             validateSettings(threads, context, executionMode)
-            val input = "local-gguf-text-v3\n${model.sha256}\n${LocalModelProbe.REVISION}\n$threads\n$CONTEXT_TOKENS\n$OUTPUT_TOKENS\n${profile.id}\n$executionMode\n$context"
+            val input = "local-gguf-text-v4\n${model.sha256}\n${LocalModelProbe.REVISION}\n$threads\n$CONTEXT_TOKENS\n$OUTPUT_TOKENS\n${profile.id}\n$executionMode\n${contextPolicy.id}\n$context"
             val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
                 .joinToString("") { "%02x".format(Locale.ROOT, it.toInt() and 255) }
-            return "local-gguf-v3-$digest"
+            return "local-gguf-v4-$digest"
         }
         internal fun validText(text: String): Boolean {
             var index = 0
@@ -425,7 +454,7 @@ internal object LocalGgufPrompts {
         return when (family) {
             Family.TRANSLATE_GEMMA -> buildString {
                 append("<bos>")
-                previous.takeLast(2).forEach { pair ->
+                previous.forEach { pair ->
                     append(gemmaTurn(pair.source, from, to, context))
                     append(pair.translated); append("<end_of_turn>\n")
                 }
@@ -437,7 +466,7 @@ internal object LocalGgufPrompts {
                 if (context.isNotBlank() || previous.isNotEmpty()) {
                     append("[Background Information]\n")
                     if (context.isNotBlank()) { append(context); append('\n') }
-                    previous.takeLast(2).forEach { pair ->
+                    previous.forEach { pair ->
                         append("Previous source: "); append(pair.source)
                         append("\nPrevious translation: "); append(pair.translated); append('\n')
                     }

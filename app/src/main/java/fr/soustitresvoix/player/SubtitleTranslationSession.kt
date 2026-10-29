@@ -79,7 +79,9 @@ class SubtitleTranslationSession(
     private val currentSourcePositionUs: Long get() = observedSourcePositionUs ?: (owner.player.currentPosition * 1000)
     var complete = false; private set
     val sourceCues: List<TranslationCue> get() = activePlan?.cues ?: emptyList()
-    val reviewHints: List<TranslationReviewHint> get() = activePlan?.let { plan -> active?.let { TranslationReview.inspect(plan.cues, it.cues) } } ?: emptyList()
+    val reviewHints: List<TranslationReviewHint> get() = activePlan?.let { plan -> active?.let {
+        TranslationReview.inspect(plan.cues, it.cues, plan.sourceLanguage, plan.targetLanguage)
+    } } ?: emptyList()
     private var sequence = 0L
     private var restoreCompletion: Pair<Long, (Boolean) -> Unit>? = null
     private fun finishRestore(success: Boolean) {
@@ -94,6 +96,13 @@ class SubtitleTranslationSession(
     }
     private var retentionTicket = 0L
     private val pendingRetentions = linkedMapOf<Long, (Boolean) -> Unit>()
+    private var resultRequestTicket = 0L
+    private val pendingResultRequests = linkedMapOf<Long, (String?) -> Unit>()
+    private fun invalidateDerivedResults() {
+        resultRequestTicket++
+        val callbacks = pendingResultRequests.values.toList(); pendingResultRequests.clear()
+        callbacks.forEach { it(null) }
+    }
     private fun invalidateRetentions() {
         retentionTicket++
         val callbacks = pendingRetentions.values.toList(); pendingRetentions.clear()
@@ -129,7 +138,7 @@ class SubtitleTranslationSession(
         require(bufferSeconds in 10..120) { "Le tampon doit être compris entre 10 et 120 secondes." }
         val media = owner.media ?: run { message("Ouvre d’abord une vidéo.", true); return }
         val track = owner.selectedTextId() ?: run { message("Choisis une piste de sous-titres textuelle chargée avant de traduire.", true); return }
-        finishRestore(false); invalidateRetentions()
+        finishRestore(false); invalidateRetentions(); invalidateDerivedResults()
         owner.pause(); owner.cancelIndexing(); cancelJob()
         required = true; active = null; clearPartial(); activePlan = null; complete = false; performance = null; observedSourcePositionUs = null; this.progressive = progressive; this.bufferSeconds = bufferSeconds; preview = null; requestedTrack = track
         owner.resetNarrationForTranslation()
@@ -231,7 +240,7 @@ class SubtitleTranslationSession(
                         }
                     }, TranslationRunPolicy(value.maximumNewCharacters,
                         requestMayConsumeRemoteQuota = !value.plan.providerId.startsWith("local-gguf-") &&
-                            !value.plan.providerId.startsWith("google-local-"))) { texts ->
+                            !value.plan.providerId.startsWith("google-local-")), validatedPrefix = if (value.progressive) ({ texts ->
                         if (value.progressive && texts.size < value.plan.cues.size) {
                             // The runner already validates every returned occurrence. Hash only
                             // additions, then coalesce fast local/cache responses on the UI loop.
@@ -252,7 +261,7 @@ class SubtitleTranslationSession(
                                 }
                             }
                         }
-                    }
+                    }) else TranslationRunner.NO_VALIDATED_PREFIX)
                 } finally {
                     (service as? LocalTranslationPerformanceSource)?.setPerformanceListener(null)
                     cleanupWarning = closeTranslationEngineOnWorker(service)
@@ -340,7 +349,7 @@ class SubtitleTranslationSession(
 
     fun cancel() {
         if (closed) return
-        finishRestore(false); invalidateRetentions(); resumeAfterBuffer = false; cancelJob(); preview = null; sequence++
+        finishRestore(false); invalidateRetentions(); invalidateDerivedResults(); resumeAfterBuffer = false; cancelJob(); preview = null; sequence++
         status = if (ready) "Traduction française conservée" else "Traduction annulée. Relance-la ou reviens explicitement à la piste originale."
         changed()
     }
@@ -353,7 +362,7 @@ class SubtitleTranslationSession(
     }
     fun trackChanged() {
         if (!required) return
-        finishRestore(false); invalidateRetentions(); cancelJob(); sequence++; preview = null; active = null; clearPartial(); activePlan = null; complete = false; performance = null
+        finishRestore(false); invalidateRetentions(); invalidateDerivedResults(); cancelJob(); sequence++; preview = null; active = null; clearPartial(); activePlan = null; complete = false; performance = null
         status = "Piste modifiée : une nouvelle traduction est nécessaire avant la lecture française."
         changed()
     }
@@ -363,7 +372,7 @@ class SubtitleTranslationSession(
         }
     }
     fun reset() {
-        finishRestore(false); invalidateRetentions(); cancelJob(); sequence++; preview = null; active = null; clearPartial(); activePlan = null; complete = false; performance = null; progressive = false; nextUntranslatedUs = Long.MAX_VALUE; observedSourcePositionUs = null; required = false; requestedTrack = null
+        finishRestore(false); invalidateRetentions(); invalidateDerivedResults(); cancelJob(); sequence++; preview = null; active = null; clearPartial(); activePlan = null; complete = false; performance = null; progressive = false; nextUntranslatedUs = Long.MAX_VALUE; observedSourcePositionUs = null; required = false; requestedTrack = null
         status = "Traduction désactivée : vocalisation de la piste originale"
     }
     fun setDisplayMode(mode: TranslationDisplayMode) {
@@ -422,6 +431,7 @@ class SubtitleTranslationSession(
         if (!complete || busy || activeGeneration != owner.generation || activeTrack != owner.selectedTextId() || track.cues.none { it.id == id }) return false
         return try {
             val replacement = plan.complete(track.cues.map { if (it.id == id) text else it.text })
+            invalidateDerivedResults()
             owner.pause(); owner.resetNarrationForTranslation(); active = replacement
             owner.rearmCurrentSubtitles(); status = "Réplique corrigée. Le cache vocal dépend du nouveau texte ; appuie sur Lire."
             changed(); true
@@ -455,6 +465,41 @@ class SubtitleTranslationSession(
         changed(); return true
     }
     fun exportCurrent(format: SubtitleExportFormat): String? = if (complete && ready) active?.let { TranslatedSubtitleExport.encode(it.cues, format) } else null
+
+    fun exportCurrentAsync(format: SubtitleExportFormat, onDone: (String?) -> Unit) = deriveCurrentAsync(onDone) { _, track ->
+        TranslatedSubtitleExport.encode(track.cues, format)
+    }
+
+    /** Full inspection and bounded report formatting both stay off the UI. */
+    fun reviewCurrentAsync(onDone: (String?) -> Unit) = deriveCurrentAsync(onDone, LocalTranslationReviewReport::render)
+
+    /** Capture the exact complete result on the UI, derive data on the worker,
+     * then publish once only while that same selection and revision remain active. */
+    private fun deriveCurrentAsync(onDone: (String?) -> Unit, render: (TranslationPlan, TranslatedTrack) -> String) {
+        if (Looper.myLooper() != Looper.getMainLooper()) { main.post { deriveCurrentAsync(onDone, render) }; return }
+        val track = active
+        val plan = activePlan
+        if (closed || track == null || plan == null || !complete || !ready) { onDone(null); return }
+        val ticket = ++resultRequestTicket
+        val generation = owner.generation
+        val selectedTrack = owner.selectedTextId()
+        val translationSequence = sequence
+        pendingResultRequests[ticket] = onDone
+        try {
+            worker.execute {
+                val output = runCatching { render(plan, track) }.getOrNull()
+                main.post {
+                    val callback = pendingResultRequests.remove(ticket) ?: return@post
+                    val current = !closed && generation == owner.generation && translationSequence == sequence &&
+                        selectedTrack == owner.selectedTextId() && activeGeneration == generation &&
+                        activeTrack == selectedTrack && active === track && activePlan === plan && complete && ready
+                    callback(if (current) output else null)
+                }
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            pendingResultRequests.remove(ticket)?.invoke(null)
+        }
+    }
     fun saveCurrentTranslation(): Boolean {
         val plan = activePlan ?: return false
         val track = active ?: return false
@@ -584,7 +629,7 @@ class SubtitleTranslationSession(
         true
     } catch (_: Exception) {
         if (!closed) {
-            owner.pause(); finishRestore(false); invalidateRetentions(); cancelJob(); sequence++
+            owner.pause(); finishRestore(false); invalidateRetentions(); invalidateDerivedResults(); cancelJob(); sequence++
             preview = null; active = null; clearPartial(); activePlan = null; complete = false; performance = null; required = true
             requestedTrack = owner.selectedTextId()
             status = "Sélection de traduction indisponible. Choisis sa réparation ou Revenir à la piste originale."

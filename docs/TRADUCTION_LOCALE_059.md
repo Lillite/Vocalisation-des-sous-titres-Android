@@ -2,7 +2,7 @@
 
 [Accueil](../README.md) · [Documentation](README.md) · [Comparatif CPU/GPU](COMPARATIF_LOCAL_058.md) · [Notes 0.5.9](releases/0.5.9-local.md) · [Validation](../TESTING.md)
 
-La candidate **0.5.9-local / code 16** corrige le format de traduction, la conservation du contexte récent et la réutilisation du cache natif. Le modèle reste choisi explicitement sur le téléphone. Ses poids, sa quantification, les noyaux de calcul et la taille du contexte natif ne changent pas.
+La préversion publiée **0.5.9-local / code 16** corrige le format de traduction, la conservation du contexte récent et la réutilisation du cache natif. Le modèle reste choisi explicitement sur le téléphone. Ses poids, sa quantification, les noyaux de calcul et la taille du contexte natif ne changent pas.
 
 Les corrections portent sur l’intégration du modèle dans l’application. Elles ne prouvent pas que toute traduction est fidèle ni que chaque sous-titre sera traduit plus vite. Une réponse terminée reste une validation de structure, pas une certification linguistique.
 

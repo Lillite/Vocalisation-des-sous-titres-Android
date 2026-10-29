@@ -163,7 +163,8 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
             localThreads = if (selected() == TranslationProvider.LOCAL_GGUF) localThreads.text.toString().toIntOrNull() ?: 0 else 4,
             localContext = if (selected() == TranslationProvider.LOCAL_GGUF) localContext.text.toString() else "",
             localExecution = if (selected() == TranslationProvider.LOCAL_GGUF) localModels.execution else "AUTO",
-            localProfile = if (selected() == TranslationProvider.LOCAL_GGUF) localModels.profile else LocalGgufProfile.AUTO)
+            localProfile = if (selected() == TranslationProvider.LOCAL_GGUF) localModels.profile else LocalGgufProfile.AUTO,
+            localContextPolicy = if (selected() == TranslationProvider.LOCAL_GGUF) localModels.contextPolicy else LocalGgufContextPolicy.RECENT_TWO)
         fun credentialScope(): String? = if (selected() != TranslationProvider.LIBRE) selected().id else
             try { providerIdentity(TranslationProviderConfig(TranslationProvider.LIBRE, endpoint = endpoint.text.toString().trim())) }
             catch (_: Exception) { null }
@@ -264,7 +265,7 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                 }
                 val destination = if (provider == TranslationProvider.LIBRE) TranslationEngines.libreEndpoint(config.endpoint).host else provider.label
                 val privacy = when (provider) {
-                    TranslationProvider.LOCAL_GGUF -> "Traduction locale avec le fichier GGUF préparé. Exécution demandée : ${config.localExecution}. Les mesures afficheront le moteur réellement utilisé et un éventuel repli CPU. Le texte, le contexte, la vidéo et l’audio restent sur le téléphone ; aucun serveur, clé API ou téléchargement de modèle n’est utilisé. Le modèle reste chargé pendant cette tâche puis ses ressources sont libérées. Le téléphone peut chauffer et Android peut interrompre un traitement ; les occurrences validées sont enregistrées pour reprise."
+                    TranslationProvider.LOCAL_GGUF -> "Traduction locale avec le fichier GGUF préparé. Exécution demandée : ${config.localExecution}. Contexte : ${config.localContextPolicy.label}. Les mesures afficheront le moteur réellement utilisé et un éventuel repli CPU. Le texte, le contexte, la vidéo et l’audio restent sur le téléphone ; aucun serveur, clé API ou téléchargement de modèle n’est utilisé. Le modèle reste chargé pendant cette tâche puis ses ressources sont libérées. Le téléphone peut chauffer et Android peut interrompre un traitement ; les occurrences validées sont enregistrées pour reprise."
                     TranslationProvider.GOOGLE_LOCAL -> "Traduction automatique par Google Traduction (ML Kit) sur le téléphone. Le texte, la vidéo et l’audio ne sont pas envoyés au traducteur. Les modèles nécessaires seront téléchargés ${if (config.execution.allowMobileModelDownload) "en Wi-Fi ou avec les données mobiles autorisées" else "en Wi-Fi seulement"} (environ 30 Mo par modèle). Le SDK peut terminer un téléchargement déjà commencé même après annulation de l’attente ; il peut transmettre à Google des données techniques sur l’appareil, les performances et les langues, sans envoyer le texte au traducteur."
                     TranslationProvider.GOOGLE_WEB -> "Le texte sera envoyé directement à Google par un accès non officiel sans clé. Une requête à la fois, délai minimal ${config.execution.googleIntervalMillis} ms, ralentissement adaptatif et attentes bornées. Aucun blocage ne sera contourné. Le cache réduit les appels mais ne garantit pas la disponibilité de Google. La vidéo et l’audio ne sont pas envoyés."
                     else -> "Le texte intégral sera envoyé à $destination si aucun cache complet correspondant n’existe. La vidéo et l’audio ne sont pas envoyés. Vérifie le quota et les plafonds de ton compte. DeepL : 500 ms minimum entre appels, cinq nouvelles tentatives maximum après refus de débit, deux minutes d’attente cumulée maximum par lot ; aucune relance automatique des quotas épuisés ou des réponses réseau perdues."
@@ -277,7 +278,7 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                         pendingPreview = false; clearLocalStatus()
                         if (provider == TranslationProvider.LOCAL_GGUF)
                             storage.edit().putString("local-context", config.localContext).putInt("local-threads", config.localThreads).apply()
-                        if (provider == TranslationProvider.LOCAL_GGUF) localModels.saveChoices(config.localExecution, config.localProfile)
+                        if (provider == TranslationProvider.LOCAL_GGUF) localModels.saveChoices(config.localExecution, config.localProfile, config.localContextPolicy)
                         if (saveKey && config.apiKey.isNotBlank()) {
                             try { credentials.save(credentialIdentity, config.apiKey) }
                             catch (_: Exception) { showLocalStatus("La clé n’a pas pu être mémorisée. Elle sera utilisée uniquement pour cette demande.") }
@@ -373,20 +374,50 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                         .setNegativeButton("Annuler", null).show()
                 }.show()
         })
+        var exportPending = false
         for (format in SubtitleExportFormat.values()) column.addView(button("Exporter la traduction en ${format.name}") {
-            val output = session.translation.exportCurrent(format)
-            if (output == null) showLocalStatus("Termine d’abord la traduction complète de cette piste.")
-            else onExport(format.mimeType, "sous-titres-francais.${format.extension}", output)
+            if (generation != panelGeneration || panel?.isShowing != true) return@button
+            if (exportPending) showLocalStatus("Un export est déjà en cours de préparation.")
+            else if (!session.translation.complete || !session.translation.ready)
+                showLocalStatus("Termine d’abord la traduction complète de cette piste.")
+            else {
+                exportPending = true
+                showLocalStatus("Préparation de l’export ${format.name}…")
+                session.translation.exportCurrentAsync(format) { output ->
+                    if (generation == panelGeneration && panel?.isShowing == true) {
+                        exportPending = false
+                        if (output == null) showLocalStatus("Export indisponible : la traduction a changé ou sa préparation a échoué. Relance l’export de la piste actuelle.")
+                        else {
+                            clearLocalStatus()
+                            onExport(format.mimeType, "sous-titres-francais.${format.extension}", output)
+                        }
+                    }
+                }
+            }
         })
         column.addView(text("Un SRT/VTT exporté peut être réimporté avec Ajouter des sous-titres dans la bibliothèque. Il conserve le texte et les temps, sans styles avancés ni secrets. Il devient une piste française autonome ; n’active pas de nouvelle traduction français vers français."))
+        var reviewPending = false
         column.addView(button("Vérifier les alertes linguistiques") {
-            val hints = session.translation.reviewHints
-            val message = if (hints.isEmpty()) "Aucun indice détecté. Cela ne prouve pas la fidélité linguistique de la traduction." else hints.take(100).joinToString("\n\n") { hint ->
-                val index = session.translation.sourceCues.indexOfFirst { it.id == hint.cueId } + 1
-                "Occurrence $index : ${hint.reasons.joinToString(" ")}" } + if (hints.size > 100) "\nAutres alertes non affichées : ${hints.size - 100}." else ""
-            AlertDialog.Builder(activity).setTitle("Indices à vérifier, sans certitude de contresens").setView(ScrollView(activity).apply {
-                addView(GoogleTranslationAttribution.results(activity, text(message), session.translation.googleTranslationActive))
-            }).setPositiveButton("Fermer", null).show()
+            if (generation != panelGeneration || panel?.isShowing != true) return@button
+            if (reviewPending) showLocalStatus("La vérification linguistique est déjà en cours de préparation.")
+            else if (!session.translation.complete || !session.translation.ready)
+                showLocalStatus("Termine d’abord la traduction complète de cette piste avant de vérifier ses indices linguistiques.")
+            else {
+                reviewPending = true
+                showLocalStatus("Préparation des indices linguistiques…")
+                session.translation.reviewCurrentAsync { report ->
+                    if (generation == panelGeneration && panel?.isShowing == true) {
+                        reviewPending = false
+                        if (report == null) showLocalStatus("Vérification indisponible : la traduction a changé ou sa préparation a échoué. La traduction et ses exports restent disponibles.")
+                        else {
+                            clearLocalStatus()
+                            AlertDialog.Builder(activity).setTitle("Indices à vérifier, sans certitude de contresens").setView(ScrollView(activity).apply {
+                                addView(GoogleTranslationAttribution.results(activity, text(report), session.translation.googleTranslationActive))
+                            }).setPositiveButton("Fermer", null).show()
+                        }
+                    }
+                }
+            }
         })
         column.addView(button("Corriger une réplique de la traduction complète") {
             val cues = session.translation.editableCues()

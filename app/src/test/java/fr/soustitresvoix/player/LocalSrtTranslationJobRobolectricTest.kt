@@ -133,11 +133,13 @@ class LocalSrtTranslationJobRobolectricTest {
             assertTrue("A missing release ACK must keep the task busy", job.state.busy)
             assertFalse(job.state.complete)
             assertNull(job.completedExport())
+            assertNull(job.completedReview())
             job.start("en", configuration())
             assertEquals("A second owner cannot be constructed during release", 1, constructions)
             backend.acknowledgeRelease.countDown()
             await { !job.state.busy }
             assertTrue(job.state.status, job.state.complete)
+            assertNotNull(job.completedReview())
             val exported = requireNotNull(job.completedExport())
             assertEquals(4, Regex(" --> ").findAll(exported).count())
             job.start("en", configuration())
@@ -250,6 +252,49 @@ class LocalSrtTranslationJobRobolectricTest {
         assertTrue(output.contains("FR Good evening, Élodie."))
         assertTrue(output.contains("FR Platform 4 — tickets cost €12.50."))
         assertEquals("exemple-traduction-en.fr.srt", job.exportFileName())
+    }
+
+    @Test fun completedReviewUsesTheSourceAndTargetLanguagesAndCannotLeakIntoANewSourceSelection() {
+        val source = """
+            1
+            00:00:00,000 --> 00:00:03,000
+            twelve minutes
+
+            2
+            00:00:04,000 --> 00:00:07,000
+            1,024 records
+
+            3
+            00:00:08,000 --> 00:00:11,000
+            at 07:30
+
+            4
+            00:00:12,000 --> 00:00:15,000
+            twelve minutes
+
+        """.trimIndent()
+        val translations = listOf("12 minutes", "1 024 documents", "à 7h30", "onze minutes")
+        val job = job({ Engine(it) { call, _ -> listOf(translations[call - 1]) } })
+        import(job, source)
+        assertNull(job.completedReview())
+        job.start("en", configuration())
+        await { !job.state.busy }
+        assertTrue(job.state.status, job.state.complete)
+        val report = requireNotNull(job.completedReview())
+        assertTrue(report.contains("en vers fr"))
+        assertTrue(report.contains("Occurrence 4"))
+        for (correct in 1..3) assertFalse(report, report.contains("Occurrence $correct\n"))
+        assertTrue(report.contains("Source : twelve minutes"))
+        assertTrue(report.contains("Traduction : onze minutes"))
+        assertTrue(report.contains("ne prouve pas la fidélité"))
+        assertFalse(report.contains(model.file.absolutePath))
+        assertFalse(report.contains(model.sha256))
+        assertEquals(4, Regex(" --> ").findAll(requireNotNull(job.completedExport())).count())
+        job.importExample()
+        assertNull(job.completedReview())
+        await { !job.state.busy }
+        assertNull(job.completedReview())
+        assertNull(job.completedExport())
     }
 
     @Test fun aNewOwnerRestoresTheSourceAndCompleteDurableResultAfterCacheEviction() {
