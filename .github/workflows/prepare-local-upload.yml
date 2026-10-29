@@ -1,0 +1,45 @@
+name: Préparer les objets APK 0.5.10-quality sans publier
+
+on:
+  push:
+    branches: ['release-prepare/v0.5.10-quality']
+    paths:
+      - '.github/workflows/prepare-local-upload.yml'
+      - 'tools/prepare-local-upload.py'
+      - 'release-transport/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-upload-v0.5.10-quality
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: >-
+      github.repository == 'Lillite/Vocalisation-des-sous-titres-Android' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/release-prepare/v0.5.10-quality' &&
+      !github.event.deleted
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Vérifier le transport et préparer seulement les objets Git
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/prepare-local-upload.py
+      - name: Conserver la preuve sans créer de branche de publication
+        uses: actions/upload-artifact@v4
+        with:
+          name: Local-upload-preparation-0.5.10
+          path: build/release-upload-preparation.json
+          if-no-files-found: error
+          retention-days: 14
