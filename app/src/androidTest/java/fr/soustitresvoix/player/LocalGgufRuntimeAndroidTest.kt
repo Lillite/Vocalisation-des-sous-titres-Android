@@ -114,6 +114,22 @@ class LocalGgufRuntimeAndroidTest {
             assertEquals("", cold.openClTransport)
             assertEquals("", warm.openClTransport)
             assertEquals(0L, warm.gpuGraphNodes)
+            val continuation = "Prefix cache synthetic request.${warm.output}</s> Another request."
+            val continued = cpu.generate(continuation, 1, true)
+            assertEquals(" probe", continued.output)
+            assertEquals("end_of_generation", continued.stopReason)
+            // Real JNI/IPC must report reuse of an evaluated output token,
+            // beyond the previous prompt, rather than just its input prefix.
+            // The sampled EOS was never decoded and must not count as reused.
+            assertTrue(continued.cachedPromptTokens > warm.promptTokens)
+            assertEquals(warm.promptTokens + warm.generatedTokens, continued.cachedPromptTokens)
+            assertEquals(continued.promptTokens, continued.cachedPromptTokens + continued.promptEvaluatedTokens)
+            assertTrue(continued.promptEvaluatedTokens >= 1)
+            try { cpu.generate("x".repeat(8192), 32, true); fail("Oversized input was accepted") }
+            catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.INPUT_TOO_LONG, failure.code) }
+            val resumed = cpu.generate(continuation, 1, true)
+            assertEquals(continued.output, resumed.output)
+            assertEquals(0, resumed.cachedPromptTokens)
             // This barrier is valid even when an asynchronous UI close happened first.
             cpu.close()
             cpu.closeAndAwait()

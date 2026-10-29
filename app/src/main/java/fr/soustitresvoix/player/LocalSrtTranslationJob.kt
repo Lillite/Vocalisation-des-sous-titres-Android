@@ -173,6 +173,10 @@ class LocalSrtTranslationJob(
         update(State("Indexation complète du fichier de sous-titres…", busy = true, sourceName = selected.name))
         worker.execute {
             synchronized(WORK_LOCK) {
+                var terminal: State? = null
+                var translated: TranslatedTrack? = null
+                var exports: Map<SubtitleExportFormat, String> = emptyMap()
+                var cleanupWarning: String? = null
                 try {
                     ensureActive(current)
                     // A panel can retain the descriptor of a model that was
@@ -219,48 +223,57 @@ class LocalSrtTranslationJob(
                             busy = true, sourceName = selected.name, done = done, total = total, performance = current.performance))
                     }, TranslationRunPolicy(requestMayConsumeRemoteQuota = false))
                     ensureActive(current)
-                    val exports = SubtitleExportFormat.values().associateWith { TranslatedSubtitleExport.encode(result.cues, it) }
+                    exports = SubtitleExportFormat.values().associateWith { TranslatedSubtitleExport.encode(result.cues, it) }
                     ensureActive(current)
                     val warning = runner.cacheWarning
-                    main.post {
-                        if (isCurrent(current, ticket)) {
-                            active = null
-                            if (current.cancelled.get()) {
-                                update(state.copy(status = "Traduction arrêtée. Les occurrences validées sont conservées pour la reprise.", busy = false))
-                            } else {
-                                completed = result
-                                completedExports = exports
-                                update(State("Traduction complète : ${result.cues.size} occurrences. Export SRT disponible." +
-                                    (warning?.let { "\n$it" } ?: ""), busy = false, sourceName = selected.name,
-                                    done = result.cues.size, total = result.cues.size, complete = true, performance = current.performance))
-                            }
-                        }
-                    }
+                    translated = result
+                    terminal = State("Traduction complète : ${result.cues.size} occurrences. Export SRT disponible." +
+                        (warning?.let { "\n$it" } ?: ""), busy = false, sourceName = selected.name,
+                        done = result.cues.size, total = result.cues.size, complete = true, performance = current.performance)
                 } catch (_: ReplacedModelSelection) {
-                    finishFailure(current, ticket, state.copy(status =
+                    terminal = state.copy(status =
                         "Le modèle local a été remplacé depuis sa sélection. Prépare ou sélectionne le modèle actuel avant de relancer ; les traductions précédentes restent conservées avec leur propre identité.",
-                        busy = false, complete = false))
+                        busy = false, complete = false)
                 } catch (_: SrtSourceIntegrity.InvalidSource) {
-                    finishFailure(current, ticket, state.copy(status =
+                    terminal = state.copy(status =
                         SrtSourceIntegrity.FAILURE_MESSAGE,
-                        busy = false, complete = false))
+                        busy = false, complete = false)
                 } catch (_: TranslationCancelledException) {
-                    finishFailure(current, ticket, state.copy(status =
+                    terminal = state.copy(status =
                         "Traduction arrêtée. Les occurrences validées sont conservées ; relance avec le même fichier, modèle et réglages pour reprendre.",
-                        busy = false, complete = false))
+                        busy = false, complete = false)
                 } catch (error: TranslationFailure) {
-                    finishFailure(current, ticket, state.copy(status = error.reason.message +
-                        " Les occurrences déjà validées restent conservées.", busy = false, complete = false))
+                    terminal = state.copy(status = error.reason.message +
+                        " Les occurrences déjà validées restent conservées.", busy = false, complete = false)
                 } catch (_: Exception) {
-                    finishFailure(current, ticket, state.copy(status =
+                    terminal = state.copy(status =
                         if (current.cancelled.get() || closed || Thread.currentThread().isInterrupted)
                             "Préparation arrêtée. Les occurrences déjà validées restent conservées pour la reprise."
                         else "Préparation locale interrompue : vérifie le fichier, la langue et le modèle. Les occurrences validées restent conservées.",
-                        busy = false, complete = false))
+                        busy = false, complete = false)
                 } finally {
                     current.indexer = null
                     (current.engine as? LocalTranslationPerformanceSource)?.setPerformanceListener(null)
-                    runCatching { current.engine?.close() }; current.engine = null
+                    current.engine?.let { cleanupWarning = closeTranslationEngineOnWorker(it) }
+                    current.engine = null
+                }
+                // Only the worker can confirm that the old native owner is no
+                // longer pending. Publish availability after its bounded ACK,
+                // including a visible warning when it could not be established.
+                val finished = terminal ?: return@execute
+                main.post {
+                    if (isCurrent(current, ticket)) {
+                        active = null
+                        var result = if (current.cancelled.get()) finished.copy(
+                            status = "Traduction arrêtée. Les occurrences validées sont conservées pour la reprise.",
+                            complete = false) else finished
+                        if (result.complete) {
+                            completed = translated
+                            completedExports = exports
+                        }
+                        cleanupWarning?.let { result = result.copy(status = result.status + "\n$it") }
+                        update(result)
+                    }
                 }
             }
         }

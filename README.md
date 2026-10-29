@@ -4,7 +4,7 @@ Lecteur vidéo Android destiné d’abord à **vocaliser intégralement les occu
 
 **Version publiée recommandée : 0.5.2 — Google et traduction pendant la lecture.** [Notes 0.5.2](docs/releases/0.5.2.md) · [Guide Google](docs/TRADUCTION_GOOGLE_052.md) · [Validation GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml).
 
-**Candidate en préparation : 0.5.8-benchmark / code 15.** Comparatif CPU/GPU sur 32 occurrences synthétiques variées, profilage du chargement et observations de lecture. [Guide du comparatif étendu](docs/COMPARATIF_LOCAL_058.md) · [Notes et limites](docs/releases/0.5.8-benchmark.md). La [0.5.7-directcl publiée](docs/releases/0.5.7-directcl.md) a réussi 708 tests, dont 110 sur émulateur Android 17. Son essai reçu du OnePlus a confirmé le calcul sur Adreno 840 ; les performances prolongées et la qualité sur un film restent à évaluer.
+**Candidate en préparation : 0.5.9-local / code 16.** Corrections du format TranslateGemma, contexte récent complet, cache exact et libération coordonnée du modèle. [Guide traduction locale](docs/TRADUCTION_LOCALE_059.md) · [Notes et limites](docs/releases/0.5.9-local.md). La [0.5.8-benchmark publiée](docs/releases/0.5.8-benchmark.md) a réussi 724 tests, dont 110 sur émulateur Android 17 ; son [comparatif étendu](docs/COMPARATIF_LOCAL_058.md) reste disponible. Les résultats antérieurs ne valident pas les modifications de cette candidate.
 
 **[Télécharger SousTitresVoix-0.5.2-google.apk](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.2/SousTitresVoix-0.5.2-google.apk)** · [Release et sommes de contrôle](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.2). Les archives « Source code » ne sont pas des APK.
 
@@ -26,7 +26,7 @@ Les [attributions du calcul GGUF natif](ATTRIBUTIONS.md) regroupent les versions
 
 ## Traduction GGUF locale et diagnostic GPU
 
-Le moteur GGUF local s’intègre au parcours **Traduire les sous-titres en français**. Le modèle est choisi explicitement, copié dans l’espace privé et identifié par son contenu. Il est chargé directement par llama.cpp ; PocketPal, une clé API et un serveur ne sont pas nécessaires. Le calcul CPU reste disponible. La 0.5.5 publiée ajoute un GPU facultatif et des mesures explicites du backend réellement utilisé ; la 0.5.6 publiée précise ses causes d’échec. La 0.5.7 publiée remplace le chargeur ICD par un accès direct facultatif au pilote du téléphone. La candidate 0.5.8 ajoute un [comparatif étendu et un profilage du chargement](docs/COMPARATIF_LOCAL_058.md). Les poids ne sont pas inclus ni téléchargés automatiquement.
+Le moteur GGUF local s’intègre au parcours **Traduire les sous-titres en français**. Le modèle est choisi explicitement, copié dans l’espace privé et identifié par son contenu. Il est chargé directement par llama.cpp ; PocketPal, une clé API et un serveur ne sont pas nécessaires. Le calcul CPU reste disponible. La 0.5.5 publiée ajoute un GPU facultatif et des mesures explicites du backend réellement utilisé ; la 0.5.6 publiée précise ses causes d’échec. La 0.5.7 publiée remplace le chargeur ICD par un accès direct facultatif au pilote du téléphone. La 0.5.8 publiée ajoute un [comparatif étendu et un profilage du chargement](docs/COMPARATIF_LOCAL_058.md). La candidate 0.5.9 corrige [le format, le contexte et le cache](docs/TRADUCTION_LOCALE_059.md). Les poids ne sont pas inclus ni téléchargés automatiquement.
 
 La préparation conserve les identifiants et minutages de chaque occurrence. Les résultats validés sont enregistrés pour reprise ; une sortie interrompue ou tronquée ne devient pas une traduction complète. L’export produit un nouveau SRT ou VTT sans remplacer l’original. Le mode progressif utilise les mêmes protections d’attente, de Pause et de déplacement que les moteurs existants.
 
@@ -157,7 +157,7 @@ Les lots validés sont enregistrés pour reprise avec la même source et les mê
 | --- | --- |
 | **Google en ligne sans clé** | Accès non officiel ; intervalle de 500 à 10 000 ms, défaut 1 000 ms ; trois nouvelles tentatives temporaires au maximum, avec attente cumulée bornée à 120 s par requête, hors réseau, et respect de `Retry-After`. |
 | **Google local — ML Kit** | SDK 17.0.3, modèles téléchargés sur demande, Wi-Fi par défaut ; paire de langues contrôlée et attribution Google. |
-| **GGUF local — 0.5.7 publiée / candidate 0.5.8** | Modèle choisi sur le téléphone, reprise par occurrence et export ; [accès OpenCL direct](docs/OPENCL_DIRECT_057.md), [comparatif étendu](docs/COMPARATIF_LOCAL_058.md). |
+| **GGUF local — 0.5.8 publiée / candidate 0.5.9** | Modèle choisi sur le téléphone, reprise par occurrence et export ; [comparatif étendu](docs/COMPARATIF_LOCAL_058.md), [corrections du contexte et du cache](docs/TRADUCTION_LOCALE_059.md). |
 | **Azure Translator** | Ressource Translator, clé et région selon le compte ; langue source explicite. |
 | **DeepL API Free ou payant** | Point d’accès correspondant au contrat ; contexte facultatif, identifiant/révision d’un glossaire déjà créé, modèle et registre lorsque pris en charge ; consultation réelle du quota. |
 | **LibreTranslate HTTPS** | Serveur choisi, paire de langues installée et clé éventuelle ; traitement sur ce serveur. |

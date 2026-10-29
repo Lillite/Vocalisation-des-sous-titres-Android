@@ -242,18 +242,36 @@
       },
       "id": 427273154,
       "source_commit": "cdeec9e590c35ca69035c67c1afd3b0a6cde2157"
+    },
+    {
+      "tag": "v0.5.8-benchmark",
+      "title": "Sous-titres en voix 0.5.8 — Comparatif GGUF étendu (préversion)",
+      "prerelease": true,
+      "latest": false,
+      "notes": "docs/releases/0.5.8-benchmark.md",
+      "asset": {
+        "name": "SousTitresVoix-0.5.8-benchmark.apk",
+        "version_name": "0.5.8-benchmark",
+        "version_code": 15,
+        "application_id": "fr.soustitresvoix.player.translation",
+        "id": 687547478,
+        "size": 53611505,
+        "sha256": "68ce0689f5f60598e938dd15e04771428689ec7742549e6185f4daec437772bd"
+      },
+      "id": 427516794,
+      "source_commit": "0f0bc4ac189c8565ee47ee12fc4986292bb57716"
     }
   ],
   "next_release": {
-    "tag": "v0.5.8-benchmark",
-    "title": "Sous-titres en voix 0.5.8 — Comparatif GGUF étendu (préversion)",
+    "tag": "v0.5.9-local",
+    "title": "Sous-titres en voix 0.5.9 — Traduction locale et cache (préversion)",
     "prerelease": true,
     "latest": false,
-    "notes": "docs/releases/0.5.8-benchmark.md",
+    "notes": "docs/releases/0.5.9-local.md",
     "asset": {
-      "name": "SousTitresVoix-0.5.8-benchmark.apk",
-      "version_name": "0.5.8-benchmark",
-      "version_code": 15,
+      "name": "SousTitresVoix-0.5.9-local.apk",
+      "version_name": "0.5.9-local",
+      "version_code": 16,
       "application_id": "fr.soustitresvoix.player.translation"
     }
   }

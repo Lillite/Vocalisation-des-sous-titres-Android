@@ -29,6 +29,8 @@ import fr.soustitresvoix.core.LatencyWindow
 import fr.soustitresvoix.core.NarrationController
 import fr.soustitresvoix.core.NarrationMachine
 import fr.soustitresvoix.core.SpeechDurationModel
+import fr.soustitresvoix.core.SubtitleExportFormat
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.time.Duration
 import java.util.Collections
@@ -128,6 +130,91 @@ class TranslationSessionRobolectricTest {
             }
         }
         override fun close() { session.close(); file.delete() }
+    }
+
+    private fun localEngine(backend: DeferredTranslationCleanupBackend): LocalGgufTranslationEngine {
+        val store = LocalGgufModelStore(context)
+        val model = store.importModel(ByteArrayInputStream(byteArrayOf(71, 71, 85, 70, 3, 0, 0, 0) + ByteArray(16)))
+        return LocalGgufTranslationEngine(model, store, { backend })
+    }
+
+    @Test fun completedLocalSessionWaitsForReleaseBeforeBecomingAvailableWithoutStartingPlayback() {
+        Fixture().use { fixture ->
+            val backend = DeferredTranslationCleanupBackend()
+            val engine = localEngine(backend)
+            val preview = fixture.prepare(engine.id)
+            try {
+                fixture.session.translation.start(preview) { engine }
+                await("The local worker did not reach its release barrier") { backend.cleanupEntered.count == 0L }
+                assertTrue(fixture.session.translation.busy)
+                assertFalse(fixture.session.translation.complete)
+                assertFalse(fixture.session.translation.ready)
+                assertNull(fixture.session.translation.exportCurrent(SubtitleExportFormat.SRT))
+                assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+                assertTrue(fixture.components.speech.requests.isEmpty())
+                backend.acknowledgeRelease.countDown()
+                await("The acknowledged result was not activated") { !fixture.session.translation.busy }
+                assertTrue(fixture.session.translation.complete)
+                assertTrue(fixture.session.translation.ready)
+                assertEquals(5, Regex(" --> ").findAll(requireNotNull(
+                    fixture.session.translation.exportCurrent(SubtitleExportFormat.SRT))).count())
+                assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+                assertTrue(fixture.components.speech.requests.isEmpty())
+            } finally { backend.acknowledgeRelease.countDown(); engine.close() }
+        }
+    }
+
+    @Test fun cancellingDuringLocalReleaseKeepsOwnershipBusyAndCannotInstallTheOldTrackOverANewTask() {
+        Fixture().use { fixture ->
+            val backend = DeferredTranslationCleanupBackend()
+            val engine = localEngine(backend)
+            val preview = fixture.prepare(engine.id)
+            try {
+                fixture.session.translation.start(preview) { engine }
+                await("The local worker did not reach its release barrier") { backend.cleanupEntered.count == 0L }
+                fixture.session.translation.cancel()
+                assertTrue("Cancellation must not falsely advertise native release", fixture.session.translation.busy)
+                assertFalse(fixture.session.translation.complete)
+                var replacement: SubtitleTranslationSession.Preview? = null
+                fixture.session.translation.prepare("en", "replacement-after-release") { replacement = it }
+                shadowOf(Looper.getMainLooper()).idle()
+                assertNull("The replacement worker must remain behind the previous ACK", replacement)
+                assertFalse(fixture.session.translation.ready)
+                backend.acknowledgeRelease.countDown()
+                await("The replacement source did not become available after release") { replacement != null }
+                assertFalse("The cancelled local result must never be installed", fixture.session.translation.complete)
+                fixture.session.translation.start(requireNotNull(replacement)) { Engine(id = "replacement-after-release") }
+                await("The replacement task did not complete") { fixture.session.translation.complete }
+                val output = requireNotNull(fixture.session.translation.exportCurrent(SubtitleExportFormat.SRT))
+                assertTrue(output.contains("SORTIE"))
+                assertFalse(output.contains("Traduction synthétique"))
+                assertEquals(5, Regex(" --> ").findAll(output).count())
+                assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+                assertTrue(fixture.components.speech.requests.isEmpty())
+            } finally { backend.acknowledgeRelease.countDown(); engine.close() }
+        }
+    }
+
+    @Test fun failedLocalReleaseKeepsTheCompletedTrackAndReportsAnExplicitWarningWithoutAutoplay() {
+        Fixture().use { fixture ->
+            val backend = DeferredTranslationCleanupBackend(LocalGgufRuntime.Code.TIMEOUT)
+            val engine = localEngine(backend)
+            val preview = fixture.prepare(engine.id)
+            fixture.session.translation.start(preview) { engine }
+            await("The completed track was discarded after a cleanup failure") { !fixture.session.translation.busy }
+            assertTrue(fixture.session.translation.complete)
+            assertTrue(fixture.session.translation.ready)
+            assertTrue(fixture.session.translation.status,
+                fixture.session.translation.status.contains("libération du modèle local n’a pas été confirmée"))
+            assertTrue(fixture.messages.any { it.second && it.first.contains("libération du modèle local n’a pas été confirmée") })
+            assertEquals(5, Regex(" --> ").findAll(requireNotNull(
+                fixture.session.translation.exportCurrent(SubtitleExportFormat.SRT))).count())
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue("A queued progress callback cannot hide the final warning",
+                fixture.session.translation.status.contains("libération du modèle local n’a pas été confirmée"))
+            assertFalse(fixture.session.machine.snapshot().wantsPlayback)
+            assertTrue(fixture.components.speech.requests.isEmpty())
+        }
     }
 
     @Test fun completeFrenchNarrationRetainsPersistentPanelSimultaneousAndLaterRepeatedOccurrences() {

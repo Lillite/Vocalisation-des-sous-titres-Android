@@ -26,9 +26,11 @@ concernant leurs conversations ou leur traduction.
 La traduction utilise une session persistante distincte : `local_translation_engine`
 charge le modèle une fois et crée un contexte au plus de **2 048 tokens**. Chaque
 requête contient son contexte explicite. Un préfixe de tokens strictement identique
-peut réutiliser le KV de la même session : les positions doivent encore être
+peut réutiliser le KV de la même session, y compris les tokens de sortie réellement
+décodés après une réponse réussie : les positions doivent encore être
 présentes (`seq_pos_min == 0`, maximum suffisant), le retrait du suffixe doit
-réussir, et le dernier token de la nouvelle requête est toujours réévalué. En
+réussir, et le dernier token de la nouvelle requête est toujours réévalué. Un EOS
+seulement échantillonné, sans décodage, ne devient jamais un token du cache. En
 cas de mémoire SWA ayant évincé le début, d'erreur ou d'annulation, le cache est
 vidé. Aucun état n'est repris d'un autre modèle, d'une autre session ou d'une tâche
 reprise après fermeture. La sortie est bornée à **1 024 tokens** par génération (512 demandés par
@@ -42,7 +44,8 @@ le texte. Les séquences UTF-8 invalides sont refusées.
 entre diagnostic et traduction. Le client attend uniquement sur un worker ;
 annuler et fermer n'attendent pas un calcul natif. Une barrière `closeAndAwait`,
 réservée aux workers, attend l'acquittement de libération avant d'enchaîner deux
-mesures. Une simple déconnexion d'un Binder encore vivant ne vaut pas acquittement.
+charges dans le comparatif ; les tâches locales de production attendent aussi
+une barrière bornée avant d'annoncer leur fin. Un échec reste perceptible. Une simple déconnexion d'un Binder encore vivant ne vaut pas acquittement.
 La fermeture du service annule le calcul et libère la session. Si une opération native reste bloquée,
 seul ce processus privé peut être arrêté après le délai de grâce ; le lecteur
 n'est jamais tué par cette procédure. Cette séparation ne constitue pas un
@@ -98,9 +101,9 @@ python3 app/src/main/cpp/tests/make_tiny_gguf.py /tmp/subtitle-synthetic.gguf
 cmake -S app/src/main/cpp -B build/native-probe -DCMAKE_BUILD_TYPE=Release
 cmake --build build/native-probe --target model-probe-smoke -j2
 build/native-probe/model-probe-smoke /tmp/subtitle-synthetic.gguf
-python3 app/src/main/cpp/tests/make_tiny_gguf.py /tmp/subtitle-eos.gguf --terminating
+python3 app/src/main/cpp/tests/make_tiny_gguf.py /tmp/subtitle-eos.gguf --terminating --roundtrip
 cmake --build build/native-probe --target local-translation-smoke -j2
-python3 app/src/main/cpp/tests/make_tiny_gguf.py /tmp/subtitle-context.gguf --terminating --context-sensitive
+python3 app/src/main/cpp/tests/make_tiny_gguf.py /tmp/subtitle-context.gguf --terminating --context-sensitive --roundtrip
 build/native-probe/local-translation-smoke /tmp/subtitle-eos.gguf /tmp/subtitle-synthetic.gguf /tmp/subtitle-context.gguf
 ```
 
@@ -112,11 +115,24 @@ n'est téléchargé pour les tests.
 La fixture `--terminating` est également synthétique : elle produit un token
 « probe », puis EOS. Elle vérifie le vrai chemin de terminaison, la réutilisation
 de la session, le refus de sortie tronquée et l'exclusion du diagnostic. Cette
-fixture n'est générée que pour les assets de l'APK de tests Android ; elle ne
-constitue jamais un modèle de traduction ni une preuve de qualité linguistique.
+fixture est générée pour les assets de l'APK de tests Android et pour les essais
+hôte ; elle ne constitue jamais un modèle de traduction ni une preuve de qualité
+linguistique. Elle ne figure pas dans l'APK de l'application.
 
 Le mode `--context-sensitive`, réservé au smoke hôte, ajoute une attention non
 nulle et des embeddings déterministes variés. Les logits obtenus avec préfixe
 réutilisé sont comparés à des sessions neuves, y compris après changement ou
 raccourcissement du contexte et après erreur. L'accès aux logits de test est
 compilé uniquement hors Android ; il n'existe pas dans l'APK distribué.
+
+L’option **`--roundtrip`**, utilisée avec les fixtures EOS et contexte pour les
+essais de continuation, ajoute quatre pièces SentencePiece au vocabulaire
+miniature. Elle rend réversible la tokenisation du token de sortie `▁probe`,
+afin que le test puisse comparer une vraie correspondance exacte avec un
+recalcul frais. Le générateur sans cette option garde ses octets et son
+comportement historiques ; le diagnostic principal reste inchangé. L’asset
+AndroidTest ainsi généré mesure **51 648 octets**, SHA-256
+`4f020373b2ec384a1c33302503bf0250e2c57070cf83075241b543361007f67c`.
+Aucune assertion de réutilisation n’est relâchée pour accepter une correspondance
+approximative. Les suites gardent les cas de contexte modifié, raccourci ou
+prolongé, d’entrée rejetée et d’annulation.

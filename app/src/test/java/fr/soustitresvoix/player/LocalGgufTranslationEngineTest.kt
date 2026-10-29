@@ -225,7 +225,13 @@ class LocalGgufTranslationEngineTest {
         assertNotEquals(base, LocalGgufTranslationEngine.identity(fixture.model, threads = 2))
         assertNotEquals(base, LocalGgufTranslationEngine.identity(fixture.model, context = "A synthetic scene."))
         assertFalse(LocalGgufTranslationEngine.identity(fixture.model, context = "A synthetic scene.").contains("synthetic"))
-        assertTrue(base.matches(Regex("local-gguf-v2-[0-9a-f]{64}")))
+        assertTrue(base.matches(Regex("local-gguf-v3-[0-9a-f]{64}")))
+        // A completed v2 journal remains its own saved result. New work must
+        // not silently reuse translations made with the previous prompt rules.
+        val oldInput = "local-gguf-text-v2\n${fixture.model.sha256}\n${LocalModelProbe.REVISION}\n4\n2048\n512\nauto\nAUTO\n"
+        val oldDigest = java.security.MessageDigest.getInstance("SHA-256").digest(oldInput.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(java.util.Locale.ROOT, it.toInt() and 255) }
+        assertNotEquals("local-gguf-v2-$oldDigest", base)
         assertNotEquals(base, LocalGgufTranslationEngine.identity(fixture.model, profile = LocalGgufProfile.HY_MT))
         assertNotEquals(base, LocalGgufTranslationEngine.identity(fixture.model, executionMode = "CPU"))
     }
@@ -410,5 +416,114 @@ class LocalGgufTranslationEngineTest {
         assertNull(failure.get())
         assertEquals(1, backend.awaitedCloses)
         assertTrue(fixture.store.remove())
+    }
+
+    @Test fun completeHistoricalPairsKeepTheirFinalNegationAndQuantityForBothFamilies() {
+        val original = "Earlier description 😀. ".repeat(30) + "Do not leave before twelve minutes."
+        val translated = "Description précédente 😀. ".repeat(30) + "Ne partez pas avant douze minutes."
+        for (metadata in listOf(LocalGgufBackend.Info("TranslateGemma 4B", "gemma3"),
+            LocalGgufBackend.Info("Hy-MT2-7B", "hunyuan-dense"))) {
+            val fixture = fixture()
+            val backend = Backend(metadata)
+            val engine = engine(fixture, backend)
+            try {
+                assertEquals(listOf("Bonjour."), engine.translateWithContext(listOf("What happens next?"), "en", "fr",
+                    listOf(original), listOf(translated)) { false })
+                assertTrue(backend.prompts.single().contains(original))
+                assertTrue(backend.prompts.single().contains(translated))
+                assertEquals(1, backend.opens)
+            } finally { engine.close() }
+        }
+    }
+
+    @Test fun inputBudgetRemovesOldestWholePairsWithoutClippingTheCurrentSource() {
+        val fixture = fixture()
+        val older = "Older detail. ".repeat(40) + "Do not wait for eleven minutes."
+        val olderTranslation = "Ancien détail. ".repeat(40) + "N'attendez pas onze minutes."
+        val newer = "Newer detail 😀. ".repeat(40) + "There are twelve minutes remaining."
+        val newerTranslation = "Détail récent 😀. ".repeat(40) + "Il reste douze minutes."
+        val source = " \nKeep every character: 😀 12.\n "
+        val backend = Backend().apply { generate = { prompt, _ ->
+            if (older in prompt || newer in prompt)
+                throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.INPUT_TOO_LONG)
+            LocalGgufBackend.Generation("Conservez chaque caractère : 😀 12.")
+        } }
+        val engine = engine(fixture, backend)
+        try {
+            assertEquals(listOf("Conservez chaque caractère : 😀 12."), engine.translateWithContext(listOf(source), "en", "fr",
+                listOf(older, newer), listOf(olderTranslation, newerTranslation)) { false })
+            assertEquals(3, backend.prompts.size)
+            assertTrue(backend.prompts[0].contains(older))
+            assertTrue(backend.prompts[0].contains(olderTranslation))
+            assertTrue(backend.prompts[0].contains(newer))
+            assertTrue(backend.prompts[0].contains(newerTranslation))
+            assertFalse(backend.prompts[1].contains(older))
+            assertFalse(backend.prompts[1].contains(olderTranslation))
+            assertTrue(backend.prompts[1].contains(newer))
+            assertTrue(backend.prompts[1].contains(newerTranslation))
+            assertFalse(backend.prompts[2].contains(newer))
+            assertFalse(backend.prompts[2].contains(newerTranslation))
+            backend.prompts.forEach { assertTrue(it.endsWith(":\n\n\n$source<end_of_turn>\n<start_of_turn>model\n")) }
+            assertEquals(1, backend.opens)
+        } finally { engine.close() }
+    }
+
+    @Test fun splitCueProvidesTheCompletePreviousFragmentAndTranslationAsContext() {
+        val fixture = fixture()
+        val source = "Alpha 😀 beta gamma. ".repeat(60)
+        val fragments = mutableListOf<String>()
+        val leftTranslation = "Traduction détaillée 😀. ".repeat(30) + "Ne partez pas avant douze minutes."
+        val backend = Backend().apply { generate = { prompt, _ ->
+            val current = prompt.substringAfterLast("text into French:\n\n\n").substringBefore("<end_of_turn>")
+            if (current.codePointCount(0, current.length) > 700)
+                throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.INPUT_TOO_LONG)
+            if (fragments.isNotEmpty()) {
+                assertTrue(prompt.contains(fragments.first()))
+                assertTrue(prompt.contains(leftTranslation))
+            }
+            fragments += current
+            LocalGgufBackend.Generation(if (fragments.size == 1) leftTranslation else "Suite.")
+        } }
+        val engine = engine(fixture, backend)
+        try {
+            assertEquals(listOf("$leftTranslation\nSuite."), engine.translate(listOf(source), "en", "fr") { false })
+            assertEquals(2, fragments.size)
+            assertTrue(fragments.all { it.codePointCount(0, it.length) > 300 })
+            assertEquals(source, fragments.joinToString(""))
+            assertEquals(3, backend.prompts.size)
+        } finally { engine.close() }
+    }
+
+    @Test fun additionalReservedTokensFailBeforeOpeningAModelInSourcesAndHistory() {
+        for (token in listOf("<|endoftext|>", "<|bos|>", "<|pad|>", "<|extra_203|>", "<start_of_image>")) {
+            for (slot in 0..2) {
+                val fixture = fixture()
+                val backend = Backend()
+                val engine = engine(fixture, backend)
+                try {
+                    val failure = fails<TranslationFailure> {
+                        engine.translateWithContext(listOf(if (slot == 0) "Literal $token" else "Current source."), "en", "fr",
+                            listOf(if (slot == 1) "Literal $token" else "Earlier source."),
+                            listOf(if (slot == 2) "Literal $token" else "Traduction précédente.")) { false }
+                    }
+                    assertEquals(TranslationFailure.Reason.LOCAL_CONTEXT, failure.reason)
+                    assertEquals(0, backend.opens)
+                    assertTrue(backend.prompts.isEmpty())
+                } finally { engine.close() }
+            }
+        }
+    }
+
+    @Test fun additionalReservedTokensCannotLeaveTheEngineAsCompletedOutput() {
+        for (token in listOf("<|extra_203|>", "<start_of_image>")) {
+            val fixture = fixture()
+            val backend = Backend().apply { generate = { _, _ -> LocalGgufBackend.Generation("Une réponse $token") } }
+            val engine = engine(fixture, backend)
+            try {
+                val failure = fails<TranslationFailure> { engine.translate(listOf("Hello."), "en", "fr") { false } }
+                assertEquals(TranslationFailure.Reason.RESPONSE, failure.reason)
+                assertEquals(1, backend.prompts.size)
+            } finally { engine.close() }
+        }
     }
 }

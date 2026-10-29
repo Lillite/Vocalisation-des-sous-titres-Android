@@ -53,7 +53,7 @@ std::string prompt_for(llama_model * model, Result & result) {
                "Your goal is to accurately convey the meaning and nuances of the original English text "
                "while adhering to French grammar, vocabulary, and cultural sensitivities.\n"
                "Produce only the French translation, without any additional explanations or commentary. "
-               "Please translate the following English text into French:\n\n"
+               "Please translate the following English text into French:\n\n\n"
                "The train leaves at seven.<end_of_turn>\n<start_of_turn>model\n";
     }
     // Other architectures are tested only as completion engines. This isn't an

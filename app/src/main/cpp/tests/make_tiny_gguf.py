@@ -15,9 +15,15 @@ def string(value):
     return struct.pack('<Q', len(data)) + data
 
 
-def generate(destination, terminating=False, context_sensitive=False):
+def generate(destination, terminating=False, context_sensitive=False, roundtrip=False):
     # GGUF types: UINT32=4, FLOAT32=6, BOOL=7, STRING=8, ARRAY=9.
-    tokens = ['<unk>', '<s>', '</s>'] + [f'<0x{i:02X}>' for i in range(256)] + ['▁probe']
+    tokens = ['<unk>', '<s>', '</s>'] + [f'<0x{i:02X}>' for i in range(256)]
+    if roundtrip:
+        # SPM merges adjacent symbols: the final probe piece cannot be encoded
+        # from text without its intermediate pieces. Keep the original fixtures
+        # byte-identical by adding these only for continuation/cache tests.
+        tokens += ['▁p', '▁pr', '▁pro', '▁prob']
+    tokens += ['▁probe']
     n_vocab, embedding, hidden = len(tokens), 16, 32
     def kv(key, kind, value):
         if kind == 4: data = struct.pack('<I', value)
@@ -46,7 +52,7 @@ def generate(destination, terminating=False, context_sensitive=False):
         kv('tokenizer.ggml.model', 8, 'llama'),
         kv('tokenizer.ggml.tokens', 9, (8, tokens)),
         kv('tokenizer.ggml.scores', 9, (6, [0.0] * n_vocab)),
-        kv('tokenizer.ggml.token_type', 9, (5, [2, 3, 3] + [6] * 256 + [1])),
+        kv('tokenizer.ggml.token_type', 9, (5, [2, 3, 3] + [6] * 256 + [1] * (n_vocab - 259))),
         kv('tokenizer.ggml.bos_token_id', 4, 1),
         kv('tokenizer.ggml.eos_token_id', 4, 2),
         kv('tokenizer.ggml.unknown_token_id', 4, 0),
@@ -110,4 +116,4 @@ def generate(destination, terminating=False, context_sensitive=False):
 
 
 if __name__ == '__main__':
-    print(f"Synthetic GGUF: {generate(sys.argv[1], '--terminating' in sys.argv[2:], '--context-sensitive' in sys.argv[2:])} bytes")
+    print(f"Synthetic GGUF: {generate(sys.argv[1], '--terminating' in sys.argv[2:], '--context-sensitive' in sys.argv[2:], '--roundtrip' in sys.argv[2:])} bytes")

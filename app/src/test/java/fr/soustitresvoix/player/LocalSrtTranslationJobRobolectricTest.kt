@@ -114,6 +114,96 @@ class LocalSrtTranslationJobRobolectricTest {
         fail("The expected asynchronous job state was not reached")
     }
 
+    private fun prepareNativeModel(): LocalGgufModelStore = LocalGgufModelStore(application).also { store ->
+        model = store.importModel(ByteArrayInputStream(byteArrayOf(71, 71, 85, 70, 3, 0, 0, 0) + ByteArray(16)))
+    }
+
+    @Test fun completedLocalTrackWaitsForReleaseBeforeOfferingExportOrStartingAnotherTask() {
+        val store = prepareNativeModel()
+        val backend = DeferredTranslationCleanupBackend()
+        var constructions = 0
+        val job = job({ config ->
+            constructions++
+            LocalGgufTranslationEngine(requireNotNull(config.localModel), store, { backend })
+        })
+        import(job)
+        try {
+            job.start("en", configuration())
+            await { backend.cleanupEntered.count == 0L }
+            assertTrue("A missing release ACK must keep the task busy", job.state.busy)
+            assertFalse(job.state.complete)
+            assertNull(job.completedExport())
+            job.start("en", configuration())
+            assertEquals("A second owner cannot be constructed during release", 1, constructions)
+            backend.acknowledgeRelease.countDown()
+            await { !job.state.busy }
+            assertTrue(job.state.status, job.state.complete)
+            val exported = requireNotNull(job.completedExport())
+            assertEquals(4, Regex(" --> ").findAll(exported).count())
+            job.start("en", configuration())
+            await { !job.state.busy }
+            assertTrue(job.state.status, job.state.complete)
+            assertEquals(exported, job.completedExport())
+            assertEquals(2, constructions)
+            assertEquals("The retained result must avoid a second native open", 1, backend.openCalls.get())
+        } finally { backend.acknowledgeRelease.countDown() }
+    }
+
+    @Test fun cancelledLocalTaskRemainsBusyUntilReleaseAndResumesOnlyItsValidatedPrefix() {
+        val store = prepareNativeModel()
+        val blockedGeneration = CountDownLatch(1)
+        val backend = DeferredTranslationCleanupBackend().apply {
+            beforeGeneration = { call, _ ->
+                if (call == 2) {
+                    blockedGeneration.countDown()
+                    assertTrue(nonBlockingClose.await(10, TimeUnit.SECONDS))
+                }
+            }
+        }
+        var constructions = 0
+        val job = job({ config ->
+            constructions++
+            LocalGgufTranslationEngine(requireNotNull(config.localModel), store, { backend })
+        })
+        import(job)
+        try {
+            job.start("en", configuration())
+            await { blockedGeneration.count == 0L && job.state.done == 1 }
+            job.cancel()
+            await { backend.cleanupEntered.count == 0L }
+            assertTrue("UI cancellation must return while native release is pending", job.state.busy)
+            job.start("en", configuration())
+            assertEquals(1, constructions)
+            assertNull(job.completedExport())
+            backend.acknowledgeRelease.countDown()
+            await { !job.state.busy }
+            assertFalse(job.state.complete)
+            job.start("en", configuration())
+            await { !job.state.busy }
+            assertTrue(job.state.status, job.state.complete)
+            assertEquals(2, constructions)
+            assertEquals("One completed occurrence must be restored, not translated again", 5, backend.generateCalls.get())
+            assertEquals(4, Regex(" --> ").findAll(requireNotNull(job.completedExport())).count())
+        } finally { backend.nonBlockingClose.countDown(); backend.acknowledgeRelease.countDown() }
+    }
+
+    @Test fun localReleaseFailureRemainsVisibleAndCannotDiscardACompletedExport() {
+        val store = prepareNativeModel()
+        val backend = DeferredTranslationCleanupBackend(LocalGgufRuntime.Code.TIMEOUT)
+        val job = job({ config -> LocalGgufTranslationEngine(requireNotNull(config.localModel), store, { backend }) })
+        import(job)
+        job.start("en", configuration())
+        await { !job.state.busy }
+        assertTrue(job.state.status, job.state.complete)
+        assertTrue(job.state.status, job.state.status.contains("libération du modèle local n’a pas été confirmée"))
+        val output = requireNotNull(job.completedExport())
+        assertEquals(4, Regex(" --> ").findAll(output).count())
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue("Late progress cannot overwrite the cleanup warning",
+            job.state.status.contains("libération du modèle local n’a pas été confirmée"))
+        assertEquals(output, job.completedExport())
+    }
+
     @Test fun translatesAndExportsAnSrtWithoutAnyVideoWhilePreservingEveryOccurrence() {
         lateinit var engine: Engine
         val job = job({ Engine(it).also { value -> engine = value } })

@@ -108,17 +108,24 @@ class LocalGgufTranslationEngine internal constructor(
             val source = texts.single()
             if (!validText(source) || source.isBlank() || source.length > TranslationPlan.MAX_CUE_CHARACTERS)
                 throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
+            if (LocalGgufPrompts.hasControlTokens(source))
+                throw TranslationFailure(TranslationFailure.Reason.LOCAL_CONTEXT)
+            val history = previousSources.zip(previousTranslations).takeLast(2).map { (original, translated) ->
+                if (!validText(original) || !validText(translated))
+                    throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
+                if (LocalGgufPrompts.hasControlTokens(original) || LocalGgufPrompts.hasControlTokens(translated))
+                    throw TranslationFailure(TranslationFailure.Reason.LOCAL_CONTEXT)
+                // A clipped source and a separately clipped translation need not
+                // mean the same thing. Keep a complete pair or remove it whole
+                // when the native input budget rejects the oldest context.
+                LocalGgufPrompts.PairContext(original, translated)
+            }
             val alreadyOpen = backend != null
             var worker = openWithFallback(cancelled)
             var occurrenceLoadMs = if (alreadyOpen) 0 else openPerformance.loadMs
             val kind = requireNotNull(family)
             LocalGgufPrompts.validateLanguage(kind, sourceLanguage)
             LocalGgufPrompts.validateLanguage(kind, targetLanguage)
-            val history = previousSources.zip(previousTranslations).takeLast(2).map { (original, translated) ->
-                if (!validText(original) || !validText(translated))
-                    throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
-                LocalGgufPrompts.PairContext(clip(original, 300), clip(translated, 300))
-            }
             var requests = 0
             fun generate(text: String, preceding: List<LocalGgufPrompts.PairContext>, depth: Int): String {
                 checkCancelled(cancelled)
@@ -150,7 +157,7 @@ class LocalGgufTranslationEngine internal constructor(
                         if (parts == null) throw TranslationFailure(if (failure.code == LocalGgufRuntime.Code.OUTPUT_LIMIT)
                             TranslationFailure.Reason.LOCAL_TRUNCATED else TranslationFailure.Reason.LOCAL_CONTEXT)
                         val left = generate(parts.first, preceding, depth + 1)
-                        val nextContext = (preceding + LocalGgufPrompts.PairContext(clip(parts.first, 300), clip(left, 300))).takeLast(2)
+                        val nextContext = (preceding + LocalGgufPrompts.PairContext(parts.first, left)).takeLast(2)
                         val right = generate(parts.second, nextContext, depth + 1)
                         return "$left\n$right".also {
                             if (it.length > TranslationPlan.MAX_CUE_CHARACTERS)
@@ -308,10 +315,10 @@ class LocalGgufTranslationEngine internal constructor(
         fun identity(model: LocalGgufModel, threads: Int = 4, context: String = "", profile: LocalGgufProfile = LocalGgufProfile.AUTO,
             executionMode: String = "AUTO"): String {
             validateSettings(threads, context, executionMode)
-            val input = "local-gguf-text-v2\n${model.sha256}\n${LocalModelProbe.REVISION}\n$threads\n$CONTEXT_TOKENS\n$OUTPUT_TOKENS\n${profile.id}\n$executionMode\n$context"
+            val input = "local-gguf-text-v3\n${model.sha256}\n${LocalModelProbe.REVISION}\n$threads\n$CONTEXT_TOKENS\n$OUTPUT_TOKENS\n${profile.id}\n$executionMode\n$context"
             val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
                 .joinToString("") { "%02x".format(Locale.ROOT, it.toInt() and 255) }
-            return "local-gguf-v2-$digest"
+            return "local-gguf-v3-$digest"
         }
         internal fun validText(text: String): Boolean {
             var index = 0
@@ -328,9 +335,6 @@ class LocalGgufTranslationEngine internal constructor(
             }
             return true
         }
-        private fun clip(text: String, codePoints: Int): String = if (text.codePointCount(0, text.length) <= codePoints) text
-            else text.substring(0, text.offsetByCodePoints(0, codePoints))
-
         /** Every input character belongs to exactly one child; surrogate pairs stay whole. */
         internal fun split(text: String): Pair<String, String>? {
             val count = text.codePointCount(0, text.length)
@@ -352,7 +356,14 @@ class LocalGgufTranslationEngine internal constructor(
     }
 }
 
-/** Functional templates based on the authors' text-only translation protocols. */
+/**
+ * Text-only family templates. TranslateGemma's default task framing follows
+ * models/templates/google-translategemma-4b-it.jinja at the pinned llama.cpp
+ * revision; content is kept verbatim instead of applying Jinja's whitespace trim.
+ * Personal background is an application extension outside the source text and
+ * is repeated consistently on historical turns. It is not an official schema
+ * field and does not guarantee better linguistic fidelity.
+ */
 internal object LocalGgufPrompts {
     enum class Family { TRANSLATE_GEMMA, HY_MT }
     data class PairContext(val source: String, val translated: String)
@@ -361,7 +372,13 @@ internal object LocalGgufPrompts {
     private val regions = Locale.getISOCountries().toSet()
     private val additionalNames = mapOf("yue" to "Cantonese", "fil" to "Filipino")
     private val code = Regex("[a-zA-Z]{2,3}(?:[-_][a-zA-Z0-9]{2,8}){0,2}")
-    private val controls = listOf("<bos>", "<eos>", "<start_of_turn>", "<end_of_turn>", "<|startoftext|>", "<|extra_0|>", "<|eos|>")
+    // Native tokenization must parse wrapper specials. The same spellings in
+    // content must fail visibly rather than acquire structural meaning. These
+    // cover the Gemma text/image framing and the Hy-MT tokenizer controls.
+    private val controls = listOf("<bos>", "<eos>", "<pad>", "<unk>", "<mask>",
+        "<start_of_turn>", "<end_of_turn>", "<start_of_image>", "<end_of_image>", "<image_soft_token>",
+        "<|endoftext|>", "<|startoftext|>", "<|bos|>", "<|eos|>", "<|pad|>")
+    private val numberedControls = Regex("<\\|extra_[0-9]+\\|>|<unused[0-9]+>")
     private val hyNames = mapOf("zh" to "Chinese", "en" to "English", "fr" to "French", "pt" to "Portuguese",
         "es" to "Spanish", "ja" to "Japanese", "tr" to "Turkish", "ru" to "Russian", "ar" to "Arabic",
         "ko" to "Korean", "th" to "Thai", "it" to "Italian", "de" to "German", "vi" to "Vietnamese",
@@ -374,7 +391,7 @@ internal object LocalGgufPrompts {
     fun family(name: String, architecture: String): Family {
         return LocalGgufProfiles.select(LocalGgufProfile.AUTO, architecture, name, "")
     }
-    fun hasControlTokens(text: String): Boolean = controls.any { it in text }
+    fun hasControlTokens(text: String): Boolean = controls.any { it in text } || numberedControls.containsMatchIn(text)
     fun language(value: String): Language {
         if (!code.matches(value)) throw TranslationFailure(TranslationFailure.Reason.LANGUAGE)
         val locale = Locale.forLanguageTag(value.replace('_', '-'))
@@ -385,8 +402,9 @@ internal object LocalGgufPrompts {
     fun validateLanguage(family: Family, value: String) {
         val language = language(value)
         if (family == Family.TRANSLATE_GEMMA) {
-            // Google's official formatter accepts ISO 639-1 and optional
-            // ISO 3166 alpha-2 regions, not script tags or invented locales.
+            // This integration currently supports ISO 639-1 and optional
+            // ISO 3166 alpha-2 regions. Some script tags accepted upstream
+            // still require explicit language-name mapping here.
             if (!Regex("[a-zA-Z]{2}(?:[-_][a-zA-Z]{2})?").matches(value))
                 throw TranslationFailure(TranslationFailure.Reason.LANGUAGE)
             val locale = Locale.forLanguageTag(value.replace('_', '-'))
@@ -398,7 +416,8 @@ internal object LocalGgufPrompts {
     }
     fun render(family: Family, text: String, source: String, target: String,
         previous: List<PairContext>, context: String): String {
-        if (hasControlTokens(text) || previous.any { hasControlTokens(it.source) || hasControlTokens(it.translated) })
+        if (hasControlTokens(text) || hasControlTokens(context) ||
+            previous.any { hasControlTokens(it.source) || hasControlTokens(it.translated) })
             throw TranslationFailure(TranslationFailure.Reason.LOCAL_CONTEXT)
         val from = language(source)
         val to = language(target)
@@ -407,7 +426,7 @@ internal object LocalGgufPrompts {
             Family.TRANSLATE_GEMMA -> buildString {
                 append("<bos>")
                 previous.takeLast(2).forEach { pair ->
-                    append(gemmaTurn(pair.source, from, to, ""))
+                    append(gemmaTurn(pair.source, from, to, context))
                     append(pair.translated); append("<end_of_turn>\n")
                 }
                 append(gemmaTurn(text, from, to, context))
@@ -444,6 +463,6 @@ internal object LocalGgufPrompts {
             append(context); append('\n')
         }
         append("Please translate the following "); append(from.name); append(" text into "); append(to.name)
-        append(":\n\n"); append(text); append("<end_of_turn>\n<start_of_turn>model\n")
+        append(":\n\n\n"); append(text); append("<end_of_turn>\n<start_of_turn>model\n")
     }
 }
