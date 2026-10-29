@@ -20,6 +20,12 @@ Les **67 tests Python hors réseau** ont réussi : **20** de publication, **23**
 
 Les notes historiques 0.5.10 ont été comparées au corps de la release publique puis reprises à l’identique : **7 828 octets**, SHA-256 **7439c870842be98da80f944a6fd3f5ee28097382924e7cdde1bd65522a8cf337**. Les identifiants de publication historique ont été résolus depuis l’API ; la déclaration de la nouvelle version ne contient aucun identifiant ou SHA d’APK encore inconnu.
 
+### Premier passage complet et correction de l’isolation des essais
+
+La PR #27 au head `c598c7573455e0222c4b01749bdd67e247b3a674` a exécuté la campagne [40947300814](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40947300814). Les **196 tests noyau, 515 tests JVM application et 112 tests Android** ont été exécutés : un seul échec Android, sans erreur ni test ignoré. Le nouveau test de format GGUF a réussi. L’échec `prefixReuseAndAcknowledgedCloseAllowAnImmediateBackendChange` est survenu dès son **premier** `cpu.open`, avant sa propre vérification du passage d’un backend à l’autre ; le service a répondu `BUSY`.
+
+Les XML et le logcat montrent que `tokenLimitCannotPublishPartialOutputAndCloseReleasesModelForNextTask` venait de finir avec un `next.close()` asynchrone. Les nettoyages des fixtures du runtime attendent désormais `closeAndAwait()` pour confirmer la libération avant le prochain test. Le scénario qui vérifie explicitement une fermeture asynchrone suivie de sa barrière reste intact. Aucun délai, retry ou affaiblissement d’assertion n’est ajouté ; aucun code de production ne change pour cette correction. La proposition corrigée doit réussir une nouvelle campagne complète avant fusion ; ce premier passage échoué n’autorise pas une distribution.
+
 ### Construction et essais locaux de la 0.5.11
 
 Les **96 méthodes JVM ciblées** des six classes profils, prompts, moteur, runtime, import et contrôles de modèles ont réussi ; leurs identités correspondent aux sources, sans échec, erreur, omission ni doublon. Six anciens XML d’une autre classe ont été exclus explicitement du relevé local, sans rejouer les tests. Le noyau inchangé était `UP-TO-DATE` ; sa validation fraîche reste requise dans la campagne complète.

@@ -33,7 +33,7 @@ class LocalGgufRuntimeAndroidTest {
             val client = LocalGgufRuntime.Client(context)
             try { return client to client.open(file, threads = 1, contextTokens = 512) }
             catch (failure: LocalGgufRuntime.Failure) {
-                client.close()
+                client.closeAndAwait()
                 if (failure.code != LocalGgufRuntime.Code.BUSY || System.nanoTime() >= deadline) throw failure
                 Thread.sleep(50)
             }
@@ -121,8 +121,10 @@ class LocalGgufRuntimeAndroidTest {
                 assertEquals(LocalModelProbe.Status.BUSY, result.get().status)
             } finally { instrumentation.runOnMainSync { probe.close() } }
             assertEquals(" probe", client.generate("Still usable after rejected diagnostic.", 1, true).output)
-        } finally { client.close(); file.delete() }
+        } finally { client.closeAndAwait(); file.delete() }
     }
+    // Every fixture cleanup waits for the service ACK before the next test can open a model.
+    // An asynchronous close is exercised explicitly by the handoff test below.
     @Test fun tokenLimitCannotPublishPartialOutputAndCloseReleasesModelForNextTask() {
         val repeating = fixture(false)
         val client = open(repeating).first
@@ -131,11 +133,11 @@ class LocalGgufRuntimeAndroidTest {
             catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.OUTPUT_LIMIT, failure.code) }
             try { client.generate("a".repeat(8192), 32, true); fail("Oversized input was accepted") }
             catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.INPUT_TOO_LONG, failure.code) }
-        } finally { client.close(); repeating.delete() }
+        } finally { client.closeAndAwait(); repeating.delete() }
         val terminating = fixture(true)
         val next = open(terminating).first
         try { assertEquals(" probe", next.generate("Next task after rejected output", 1, true).output) }
-        finally { next.close(); terminating.delete() }
+        finally { next.closeAndAwait(); terminating.delete() }
     }
     @Test fun prefixReuseAndAcknowledgedCloseAllowAnImmediateBackendChange() {
         val file = fixture(true)
@@ -235,7 +237,7 @@ class LocalGgufRuntimeAndroidTest {
         try {
             try { client.open(file, 1, 512); fail("Cancelled client opened a model") }
             catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.CANCELLED, failure.code) }
-        } finally { client.close(); file.delete() }
+        } finally { client.closeAndAwait(); file.delete() }
         val malformed = File(context.cacheDir, "translation-corrupt.gguf").apply {
             writeBytes(byteArrayOf(71, 71, 85, 70, 3, 0, 0, 0) + ByteArray(16))
         }
@@ -248,6 +250,6 @@ class LocalGgufRuntimeAndroidTest {
                 assertEquals(LocalGgufDiagnostic.Reason.MODEL_LOAD_FAILED, failure.diagnostic?.reason)
                 assertFalse(requireNotNull(failure.diagnostic).render().contains(malformed.name))
             }
-        } finally { invalid.close(); malformed.delete() }
+        } finally { invalid.closeAndAwait(); malformed.delete() }
     }
 }
