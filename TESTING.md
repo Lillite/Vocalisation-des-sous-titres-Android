@@ -2,7 +2,39 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Essais sur téléphone](docs/TESTS_TELEPHONE.md) · [Contribution](CONTRIBUTING.md)
 
-## Candidate 0.5.8-benchmark — validation à établir
+## Candidate 0.5.9-local — validation à établir
+
+Les sources préparent **0.5.9-local / code 16**, avec la même identité Android et le même certificat durable. Le [guide](docs/TRADUCTION_LOCALE_059.md) et les [notes](docs/releases/0.5.9-local.md) décrivent les corrections du format TranslateGemma, le contexte récent formé de paires complètes, le cache des tokens réellement décodés et la libération coordonnée des tâches locales.
+
+Les régressions doivent vérifier le rendu exact du template sans contexte personnel, la politique cohérente des tours contextuels, la préservation des paires entières et de chaque caractère source, les marqueurs réservés, l’identité v3 et la conservation des anciens résultats. Le cache natif doit comparer les logits avec un recalcul frais sur une fixture sensible au contexte, vérifier les continuations réutilisant des tokens de sortie et conserver les gardes d’erreur et d’annulation. La libération doit être attendue sur un worker, avec tests de retard et d’échec d’accusé ; les protections de Pause, déplacement, changement de média et réponse périmée demeurent requises.
+
+L’inventaire préparatoire contient **178 méthodes noyau, 453 méthodes JVM application et 110 méthodes Android**, soit **741 méthodes attendues**. Les effectifs et identités exacts doivent être retrouvés dans les rapports XML frais ; cet inventaire ne constitue pas un résultat d’exécution. La campagne doit construire et tester **l’APK release sous Android 17 / API 37**, avec compilation et ciblage API 36 conservés, Command-line Tools 22.0 et garde de cible AVD 37.0. Les **724 réussites historiques de la 0.5.8 ne valident pas ces modifications**.
+
+Avant fusion, les suites de la proposition exacte doivent réussir sans échec, erreur, test ignoré, manquant ou dupliqué. Après fusion à deux parents, une reconstruction doit vérifier la provenance et le même contenu applicatif hors signature, **sans rejouer les suites réussies**. La signature durable et les fichiers publiés doivent ensuite être contrôlés. Aucun essai NPU, OCR de film, fidélité linguistique générale, performances du OnePlus, autonomie ou TalkBack réel n’est annoncé à partir de ces régressions. La **0.5.2 reste la dernière stable**.
+
+### Vérifications locales de la candidate 0.5.9
+
+Les **59 tests Python hors réseau** ont réussi : **20** de publication, **23** de synchronisation de l’historique, **10** de nettoyage documentaire et **6** de provenance après fusion. Le contrôle structurel du projet a également réussi. Les **8 essais synthétiques des helpers privés 0.5.9** ont réussi, sans chargement de clé, signature, réseau ni modification Git. Leur première exécution avait comparé un littéral de version 0.5.6 du template à son adaptation 0.5.9 ; l’assertion a été normalisée pour ce seul changement de version, puis les huit essais ont réussi. Ces essais ne constituent ni une compilation Android ni une validation du modèle de production.
+
+Les **98 méthodes JVM ciblées** ont été exécutées et réussies en **5 min 8 s**, sans échec, erreur ni test ignoré : prompts **6**, protocole runtime **10**, moteur **28**, série variée **7**, tâche SRT locale **13**, restauration de traduction **3** et session de traduction **31**. Les sept classes ont produit les rapports XML frais contrôlés. Ce passage ne remplace pas la campagne complète attendue sur les sources finales.
+
+Les **trois essais natifs hôte finaux** ont réussi : sonde de modèle, traduction persistante et diagnostic OpenCL borné. La continuation de la fixture de traduction a réutilisé **39 tokens réellement décodés** — **38 d’entrée et 1 de sortie** — puis évalué **25 tokens**. L’EOS seulement échantillonné n’a pas été réutilisé. Sur la fixture sensible au contexte, l’écart maximal des logits entre cache et session fraîche est **nul** ; le changement de contexte produit un écart de **0,000209779**. Ces résultats portent sur les fixtures miniatures et le CPU hôte, pas sur la fidélité ou le débit d’un modèle de production.
+
+La première exécution de l’essai de continuation avait révélé un **défaut d’oracle dans la fixture** : son token de sortie `▁probe`, d’identifiant 259, se réencodait comme des tokens d’octets faute de pièces SentencePiece intermédiaires. Le cache exact avait correctement refusé cette fausse correspondance. L’option de génération **`--roundtrip`**, activée seulement pour les fixtures de continuation hôte et l’asset AndroidTest, ajoute quatre pièces au vocabulaire miniature pour permettre un aller-retour exact. Les assertions de gain de cache et de comparaison avec une session fraîche n’ont pas été relâchées ; aucun cache approximatif n’a été ajouté. Le comportement par défaut du générateur et le modèle miniature de diagnostic de l’application restent inchangés, sans poids de production.
+
+L’asset AndroidTest avec `--roundtrip` mesure **51 648 octets**, SHA-256 **4f020373b2ec384a1c33302503bf0250e2c57070cf83075241b543361007f67c**. Sa génération est réservée à l’APK d’instrumentation ; le modèle de diagnostic principal reste distinct. La présence exacte de ces fichiers dans les APK compilés doit être contrôlée séparément.
+
+Les tâches requises `:core:test`, `:app:lintDebug`, `:app:assembleDebug` et `:app:assembleDebugAndroidTest` sont encore en cours à ce stade. Aucun succès final de cette construction ni résultat d’instrumentation Android de la 0.5.9 n’est déduit des passages ciblés. La campagne CI exécutera aussi les inférences natives hôte avec les sources épinglées, avant la validation Android.
+
+## Préversion publiée 0.5.8-benchmark — résultats vérifiés
+
+La [PR #24](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/24) a réussi le [run 40822001535](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40822001535) : **178 tests noyau, 436 tests JVM application et 110 tests Android**, soit **724 réussites sans échec, erreur, test ignoré, manquant ou dupliqué**. Les 110 tests ont réellement porté sur l’APK release dans un émulateur **Android 17 / API 37 / x86_64**. L’essai hôte de liaison directe sans ICD a réussi avec un pilote synthétique ; il ne mesure pas le GPU du téléphone.
+
+La source fusionnée est **0f0bc4ac189c8565ee47ee12fc4986292bb57716**, arbre **46f6d7da6510b94fb4eb8b1ddddbf9ceb963c970**. Le [run après fusion 40825409538](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40825409538) a vérifié les mêmes arbre et parents que la proposition testée, puis le contenu applicatif identique de l’APK reconstruit hors signature, **sans rejouer les suites**. Le [run de publication 40826981555](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40826981555) et le téléchargement public indépendant ont confirmé l’APK signé de **53 611 505 octets**, SHA-256 **68ce0689f5f60598e938dd15e04771428689ec7742549e6185f4daec437772bd**, certificat durable **304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d**. Release **427516794**, asset APK **687547478** ; stable 0.5.2 conservée.
+
+### Préparation et preuves locales historiques de la 0.5.8
+
+Les paragraphes suivants conservent la préparation de cette version et les vérifications réalisées avant sa campagne CI. Les formulations au futur décrivent cet état historique ; les résultats effectifs figurent ci-dessus.
 
 Les sources préparent **0.5.8-benchmark / code 15**, même identité Android et certificat durable. Le [guide](docs/COMPARATIF_LOCAL_058.md) et les [notes](docs/releases/0.5.8-benchmark.md) décrivent les 32 occurrences synthétiques, l’ordre CPU/GPU sélectionnable, la réouverture facultative et le profilage natif du chargement. Le rapport reçu de la 0.5.7 établit une exécution GPU réelle sur un court texte ; il ne valide pas cette nouvelle série.
 

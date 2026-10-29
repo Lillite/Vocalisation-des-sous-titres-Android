@@ -59,9 +59,10 @@ val generateTranslationTestModel = tasks.register<Exec>("generateTranslationTest
     val generator = file("src/main/cpp/tests/make_tiny_gguf.py")
     inputs.file(generator)
     inputs.property("terminating", true)
+    inputs.property("roundtrip", true)
     outputs.file(translationTestModel)
     doFirst { translationTestModel.get().asFile.parentFile.mkdirs() }
-    commandLine("python3", generator.absolutePath, translationTestModel.get().asFile.absolutePath, "--terminating")
+    commandLine("python3", generator.absolutePath, translationTestModel.get().asFile.absolutePath, "--terminating", "--roundtrip")
 }
 android {
     namespace = "fr.soustitresvoix.player"
@@ -72,8 +73,8 @@ android {
         applicationId = "fr.soustitresvoix.player.translation"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "0.5.8-benchmark"
+        versionCode = 16
+        versionName = "0.5.9-local"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild { cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" } }

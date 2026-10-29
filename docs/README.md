@@ -4,7 +4,7 @@
 
 **Documentation 0.5.2 — Google et traduction pendant la lecture.** [Télécharger l’APK](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.2/SousTitresVoix-0.5.2-google.apk) · [Notes 0.5.2](releases/0.5.2.md) · [Guide Google](TRADUCTION_GOOGLE_052.md) · [Validation GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml). Les résultats antérieurs restent attachés à leurs versions.
 
-**Candidate 0.5.8-benchmark en préparation.** [Comparatif étendu et profilage du chargement](COMPARATIF_LOCAL_058.md) · [Notes et validation](releases/0.5.8-benchmark.md). La [0.5.7-directcl publiée](releases/0.5.7-directcl.md) a réussi 708 tests, dont 110 sous Android 17 ; son essai de téléphone a confirmé du calcul sur Adreno 840. Le nouveau comparatif doit mesurer des textes variés, les réouvertures et les observations du lecteur sans déduire une qualité linguistique automatique. La 0.5.2 reste le téléchargement stable recommandé.
+**Candidate 0.5.9-local en préparation.** [Format, contexte et cache de traduction](TRADUCTION_LOCALE_059.md) · [Notes et validation](releases/0.5.9-local.md). La [0.5.8-benchmark publiée](releases/0.5.8-benchmark.md) a réussi 724 tests, dont 110 sous Android 17 ; son [comparatif étendu](COMPARATIF_LOCAL_058.md) reste disponible. Ces preuves historiques ne valident pas les changements de la candidate. La 0.5.2 reste le téléchargement stable recommandé.
 
 ## Installer et utiliser sur téléphone
 
@@ -27,7 +27,7 @@ La série 0.5 conserve l’identité Android de l’édition Traduction 0.4.0 ; 
 
 | Besoin | Guide |
 | --- | --- |
-| Traduire avec un GGUF choisi sur le téléphone | [Parcours publié 0.5.4](TRADUCTION_GGUF_054.md) ; [optimisations publiées 0.5.5](TRADUCTION_GGUF_055.md) ; [diagnostic GPU publié 0.5.6](DIAGNOSTIC_OPENCL_056.md) ; [accès direct publié 0.5.7](OPENCL_DIRECT_057.md) ; [comparatif étendu préparé 0.5.8](COMPARATIF_LOCAL_058.md) |
+| Traduire avec un GGUF choisi sur le téléphone | [Parcours publié 0.5.4](TRADUCTION_GGUF_054.md) ; [optimisations publiées 0.5.5](TRADUCTION_GGUF_055.md) ; [diagnostic GPU publié 0.5.6](DIAGNOSTIC_OPENCL_056.md) ; [accès direct publié 0.5.7](OPENCL_DIRECT_057.md) ; [comparatif étendu publié 0.5.8](COMPARATIF_LOCAL_058.md) ; [contexte et cache préparés 0.5.9](TRADUCTION_LOCALE_059.md) |
 | Configurer Google en ligne/local et regarder pendant la traduction | [Guide Google 0.5.2](TRADUCTION_GOOGLE_052.md) |
 | Choisir une offre gratuite, comprendre Google et les limites DeepL | [Traduction gratuite et limites](TRADUCTION_GRATUITE_ET_LIMITES.md) |
 | Configurer les moteurs Google, Azure, DeepL ou LibreTranslate depuis Android | [Moteurs, comptes, options et dépannage](GUIDE_MOTEURS_TRADUCTION.md) |
@@ -36,7 +36,7 @@ La série 0.5 conserve l’identité Android de l’édition Traduction 0.4.0 ; 
 | Utiliser le moteur local intégré ou étudier d’autres modèles | [ML Kit intégré](TRADUCTION_GOOGLE_052.md#google-local--ml-kit) ; [étude antérieure des autres candidats](ETUDE_TRADUCTION_LOCALE.md) |
 | Essayer une piste synthétique anglaise | [Exemple SRT](../examples/essai-traduction-en.srt) |
 
-**ML Kit apporte une traduction locale dans les langues compatibles après téléchargement de ses modèles. La préversion publiée 0.5.4 ajoute l’exécution directe d’un GGUF local choisi explicitement ; la préversion publiée 0.5.5 apporte ses optimisations, la préversion publiée 0.5.6 précise les échecs OpenCL, la préversion publiée 0.5.7 apporte un accès direct au pilote, et la candidate 0.5.8 prépare un comparatif étendu.** Elle ne parcourt pas Hugging Face et ne télécharge pas de poids automatiquement. Aucun OCR, accès Google Cloud/Apps Script ou service de lecture durable en arrière-plan n’est intégré. Réutiliser un texte traduit conservé reste une fonction distincte d’une nouvelle traduction locale. Les comptes et quotas des services en ligne demeurent à vérifier auprès du fournisseur.
+**ML Kit apporte une traduction locale dans les langues compatibles après téléchargement de ses modèles. La préversion publiée 0.5.4 ajoute l’exécution directe d’un GGUF local choisi explicitement ; la préversion publiée 0.5.5 apporte ses optimisations, la préversion publiée 0.5.6 précise les échecs OpenCL, la préversion publiée 0.5.7 apporte un accès direct au pilote, la préversion publiée 0.5.8 apporte un comparatif étendu, et la candidate 0.5.9 corrige le contexte et le cache.** Elle ne parcourt pas Hugging Face et ne télécharge pas de poids automatiquement. Aucun OCR, accès Google Cloud/Apps Script ou service de lecture durable en arrière-plan n’est intégré. Réutiliser un texte traduit conservé reste une fonction distincte d’une nouvelle traduction locale. Les comptes et quotas des services en ligne demeurent à vérifier auprès du fournisseur.
 
 ## Développer, vérifier et contribuer
 
@@ -61,7 +61,8 @@ Les **524 tests de la 0.5.1**, référence historique, se répartissent en 178 t
 
 | Version ou document | Statut et périmètre |
 | --- | --- |
-| [0.5.8-benchmark — comparatif GGUF étendu](releases/0.5.8-benchmark.md) | Candidate en préparation ; séries variées, profilage du chargement et observations de lecture |
+| [0.5.9-local — traduction locale et cache](releases/0.5.9-local.md) | Candidate en préparation ; format TranslateGemma, paires de contexte complètes, cache exact et fermeture coordonnée |
+| [0.5.8-benchmark — comparatif GGUF étendu](releases/0.5.8-benchmark.md) | Préversion publiée ; séries variées, profilage du chargement et observations de lecture ; 724 tests réussis dont 110 sous Android 17 |
 | [0.5.7-directcl — accès OpenCL direct](releases/0.5.7-directcl.md) | Préversion publiée ; 708 tests réussis, dont 110 sous Android 17 ; calcul Adreno observé sur le OnePlus |
 | [0.5.6-opencl — diagnostic GPU](releases/0.5.6-opencl.md) | Préversion publiée ; causes bornées et durées explicites ; 706 tests réussis dont 110 sous Android 17 |
 | [0.5.5-perf — performances GGUF](releases/0.5.5-perf.md) | Préversion publiée ; CPU, GPU facultatif, cache exact, correctif Hy-MT2 ; 698 tests réussis sur ses sources |

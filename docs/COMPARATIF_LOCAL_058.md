@@ -1,8 +1,10 @@
-# Comparatif GGUF étendu — candidate 0.5.8
+# Comparatif GGUF étendu — introduit en 0.5.8
 
 [Accueil](../README.md) · [Notes de version](releases/0.5.8-benchmark.md) · [Validation](../TESTING.md) · [Accès OpenCL direct publié](OPENCL_DIRECT_057.md)
 
-La candidate **0.5.8-benchmark / code 15** prépare un comparatif CPU/GPU sur une série de sous-titres synthétiques variés. Le modèle déjà importé reste la référence ; ses poids, sa quantification et les noyaux de calcul ne sont pas changés pour améliorer les chiffres.
+La préversion publiée **0.5.8-benchmark / code 15** introduit un comparatif CPU/GPU sur une série de sous-titres synthétiques variés. Le modèle déjà importé reste la référence ; ses poids, sa quantification et les noyaux de calcul ne sont pas changés pour améliorer les chiffres.
+
+La candidate [0.5.9-local](TRADUCTION_LOCALE_059.md) conserve ce corpus et ces commandes ; ses corrections de format et de cache demandent leurs propres mesures.
 
 ## Pourquoi une série variée
 
@@ -65,4 +67,4 @@ Comparer d’abord sans lecture, puis avec la même vidéo et les mêmes réglag
 
 La publication exige la validation de l’APK de la proposition exacte avant fusion, puis une reconstruction de même contenu applicatif et provenance après fusion, sans rejouer les suites réussies. Les effectifs exacts et résultats appartiennent aux rapports du run concerné ; aucun résultat futur n’est présumé.
 
-L’étape suivante pourra comparer un moteur NPU facultatif sur une référence GPU ainsi documentée. **Aucun calcul NPU ni OCR de film n’est intégré dans cette candidate.** La traduction et le futur OCR conservent des responsabilités indépendantes. Le choix définitif du meilleur modèle reste ouvert.
+L’étape suivante pourra comparer un moteur NPU facultatif sur une référence GPU ainsi documentée. **Aucun calcul NPU ni OCR de film n’est intégré à ce comparatif.** La traduction et le futur OCR conservent des responsabilités indépendantes. Le choix définitif du meilleur modèle reste ouvert.

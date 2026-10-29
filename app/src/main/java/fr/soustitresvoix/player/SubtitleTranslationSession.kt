@@ -100,6 +100,10 @@ class SubtitleTranslationSession(
         callbacks.forEach { it(false) }
     }
     private var job: Job? = null
+    // A cancelled task loses publication rights immediately, while its native
+    // model can still be releasing on the worker. Other panels must keep seeing
+    // that owner as busy until its bounded acknowledgement barrier finishes.
+    private val localWorkers = java.util.concurrent.ConcurrentHashMap.newKeySet<Job>()
     private var preview: Preview? = null
     private var active: TranslatedTrack? = null
     private var activeGeneration = -1L
@@ -109,7 +113,7 @@ class SubtitleTranslationSession(
     var required = false; private set
     var status = "Traduction désactivée : vocalisation de la piste originale"; private set
     var performance: String? = null; private set
-    val busy: Boolean get() = job != null
+    val busy: Boolean get() = job != null || localWorkers.isNotEmpty()
     /** Result identity for reports/offline work; foreground TTS keys use voice settings and exact text. */
     val fingerprint: String get() = active?.fingerprint ?: partialFingerprint ?: if (required) "translation-required" else "original"
     val ready: Boolean get() = (active != null || partialTexts.isNotEmpty()) && activeGeneration == owner.generation && activeTrack == owner.selectedTextId() &&
@@ -185,6 +189,7 @@ class SubtitleTranslationSession(
         val current = Job(); job = current; preview = null; activePlan = value.plan; performance = null; progressive = value.progressive; bufferSeconds = value.bufferSeconds; cueOrdinals = value.cueOrdinals
         status = if (progressive) "Traduction progressive : la lecture sera disponible après $bufferSeconds secondes de tampon validé." else "Traduction en cours. La lecture française attend la piste complète."; changed()
         worker.execute {
+            var cleanupWarning: String? = null
             try {
                 if (current.cancelled.get()) return@execute
                 data class Prefix(val texts: List<String>, val fingerprint: String, val nextUs: Long)
@@ -194,7 +199,9 @@ class SubtitleTranslationSession(
                 val progressPosted = AtomicBoolean(false)
                 var hashedCount = 0
                 var prefixHash = SpeechTools.key("translation-progressive-v2", value.plan.fingerprint)
-                val translated = engine().use { service ->
+                val service = engine()
+                if (service is LocalGgufTranslationEngine) localWorkers.add(current)
+                val translated = try {
                     current.service = service
                     (service as? LocalTranslationPerformanceSource)?.setPerformanceListener { observation ->
                         val rendered = observation.render()
@@ -246,6 +253,17 @@ class SubtitleTranslationSession(
                             }
                         }
                     }
+                } finally {
+                    (service as? LocalTranslationPerformanceSource)?.setPerformanceListener(null)
+                    cleanupWarning = closeTranslationEngineOnWorker(service)
+                    current.service = null
+                    if (localWorkers.remove(current)) main.post {
+                        if (!closed) {
+                            if (!isCurrent(current, value.generation, value.track, value.ticket))
+                                cleanupWarning?.let { message(it, true) }
+                            changed()
+                        }
+                    }
                 }
                 main.post {
                     if (isCurrent(current, value.generation, value.track, value.ticket)) {
@@ -256,10 +274,11 @@ class SubtitleTranslationSession(
                         status = "Traduction française prête : ${translated.cues.size} occurrences. Seul le français sera vocalisé." +
                             if (resumeAfterBuffer || owner.machine.snapshot().wantsPlayback) "" else " Appuie sur Lire."
                         runner.cacheWarning?.let { status += "\n$it" }
+                        cleanupWarning?.let { status += "\n$it" }
                         val hints = reviewHints.size
                         if (hints > 0) status += "\n$hints occurrences à vérifier : indices linguistiques, sans preuve de contresens."
                         resumeWhenBuffered()
-                        message(status, false); changed()
+                        message(status, cleanupWarning != null); changed()
                     }
                 }
             } catch (error: Exception) { main.post {
@@ -273,6 +292,7 @@ class SubtitleTranslationSession(
                         is IllegalArgumentException -> "Traduction incomplète : activation refusée."
                         else -> "Traduction interrompue ou cache inaccessible. Aucune piste incomplète n’a été activée."
                     }
+                    cleanupWarning?.let { status += "\n$it" }
                     message(status, true); changed()
                 }
             } }

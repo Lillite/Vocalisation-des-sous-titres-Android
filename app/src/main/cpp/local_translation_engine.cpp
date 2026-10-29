@@ -105,11 +105,13 @@ struct Session::State {
     std::unique_ptr<subtitle_native::ModelLease> lease;
     std::unique_ptr<llama_model, decltype(&llama_model_free)> model{nullptr, llama_model_free};
     std::unique_ptr<llama_context, decltype(&llama_free)> context{nullptr, llama_free};
-    std::vector<llama_token> previous_prompt;
+    // Exact tokens actually evaluated in this context, including successful
+    // generated tokens. An EOS sampled but not decoded never belongs here.
+    std::vector<llama_token> decoded_tokens;
     Response info;
     bool gpu_selected = false;
     void clear_cache() {
-        previous_prompt.clear();
+        decoded_tokens.clear();
         if (context) llama_memory_clear(llama_get_memory(context.get()), true);
     }
     void clear_model() { clear_cache(); context.reset(); model.reset(); }
@@ -293,8 +295,10 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
         result.prompt_tokens = count;
         auto memory = llama_get_memory(state_->context.get());
         size_t shared = 0;
-        const auto previous_size = state_->previous_prompt.size();
-        while (shared < tokens.size() - 1 && shared < previous_size && state_->previous_prompt[shared] == tokens[shared]) ++shared;
+        const auto previous_size = state_->decoded_tokens.size();
+        // Evaluate at least one token again: cached KV entries alone do not
+        // provide the final logits for this new request.
+        while (shared < tokens.size() - 1 && shared < previous_size && state_->decoded_tokens[shared] == tokens[shared]) ++shared;
         // SWA/recurrent memories can have discarded earlier positions. Only the
         // actual contiguous [min,max] range from llama.cpp proves availability.
         if (shared > 0 && (llama_memory_seq_pos_min(memory, 0) != 0 ||
@@ -316,13 +320,14 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
         std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)> sampler(llama_sampler_init_greedy(), llama_sampler_free);
         if (!sampler) return failed("RESPONSE");
         const auto generation_start = Clock::now();
+        tokens.reserve(tokens.size() + static_cast<size_t>(output_tokens));
+        std::vector<char> piece(256);
         result.code = "OUTPUT_LIMIT"; result.stop_reason = "token_limit";
         for (int i = 0; i <= output_tokens; ++i) {
             if (cancelled_.load()) return failed("CANCELLED", "cancelled");
             const auto id = llama_sampler_sample(sampler.get(), state_->context.get(), -1);
             if (llama_vocab_is_eog(vocab, id)) { result.code = "OK"; result.stop_reason = "end_of_generation"; break; }
             if (i == output_tokens) break;
-            std::vector<char> piece(256);
             int length = llama_token_to_piece(vocab, id, piece.data(), static_cast<int>(piece.size()), 0, false);
             if (length < 0 && -length <= 65536) { piece.resize(static_cast<size_t>(-length)); length = llama_token_to_piece(vocab, id, piece.data(), static_cast<int>(piece.size()), 0, false); }
             if (length < 0 || result.output.size() + static_cast<size_t>(length) > 65536) return failed("OUTPUT_LIMIT", "byte_limit");
@@ -330,6 +335,7 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
             auto next = id;
             if (llama_decode(state_->context.get(), llama_batch_get_one(&next, 1)) != 0)
                 return failed(cancelled_.load() ? "CANCELLED" : "RESPONSE");
+            tokens.push_back(id);
         }
         llama_synchronize(state_->context.get());
         result.generation_ms = elapsed(generation_start);
@@ -343,7 +349,9 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
             result.backend = "CPU"; result.device = "CPU"; result.fallback_reason = "OPENCL_NO_COMPUTE";
             result.opencl_transport.clear();
         }
-        state_->previous_prompt = std::move(tokens);
+        // Only a completed request publishes reusable tokens. Every failure
+        // above clears both this record and the real llama.cpp memory.
+        state_->decoded_tokens = std::move(tokens);
         measure_memory(result);
         return result;
     } catch (const std::bad_alloc &) { return failed("MEMORY"); }

@@ -62,6 +62,21 @@ int main(int argc, char ** argv) {
         const auto cached = first.generate("The train leaves at seven.", 1, true);
         check_output(cached);
         assert(cached.cached_prompt_tokens == cached.prompt_tokens - 1 && cached.prompt_evaluated_tokens == 1);
+        const auto continued = first.generate("The train leaves at seven." + cached.output + "</s> Another request.", 1, true);
+        check_output(continued);
+        std::cerr << "Continuation cache: prior input=" << cached.prompt_tokens
+                  << ", prior output=" << cached.generated_tokens << ", reused="
+                  << continued.cached_prompt_tokens << ", evaluated=" << continued.prompt_evaluated_tokens << '\n';
+        // This prefix extends beyond the previous input: the real generated
+        // probe token was evaluated and is reusable without reconstructing KV.
+        // The following EOS was only sampled previously, so it must be decoded
+        // now rather than included among these reused tokens.
+        assert(continued.cached_prompt_tokens > cached.prompt_tokens);
+        assert(continued.cached_prompt_tokens == cached.prompt_tokens + cached.generated_tokens);
+        std::cout << "Evaluated-output continuation: previous input " << cached.prompt_tokens
+                  << ", previous generated " << cached.generated_tokens << ", reused "
+                  << continued.cached_prompt_tokens << ", additional reused output tokens "
+                  << continued.cached_prompt_tokens - cached.prompt_tokens << ".\n";
         check_output(first.generate("A different synthetic sentence.", 1, true));
         const auto too_long = first.generate(std::string(8192, 'a'), 32, true);
         assert(too_long.code == "INPUT_TOO_LONG" && too_long.output.empty());
@@ -109,26 +124,42 @@ int main(int argc, char ** argv) {
     }
 #ifdef SUBTITLE_NATIVE_TESTING
     if (argc == 4) {
+        const std::string original = "Prefix common context: Alpha. The train leaves.";
+        const std::string continuation = original + " probe</s> A new request.";
         const std::vector<std::string> prompts = {
-            "Prefix common context: Alpha. The train leaves.",
-            "Prefix common context: Alpha. The train leaves.",
+            original,
+            original,
+            continuation,
+            continuation + " probe Another new request.",
+            original + " probe Short.",
             "Prefix common context: Beta. The train leaves.",
             "Prefix common context: Beta.",
-            "Prefix common context: Alpha. The train leaves."
+            original
         };
         std::vector<std::vector<float>> warm_logits;
         {
             subtitle_local::Session warm;
             assert(warm.open(argv[3], 1, 512).code == "OK");
+            int previous_prompt_tokens = 0;
             for (size_t i = 0; i < prompts.size(); ++i) {
                 const auto response = warm.generate(prompts[i], 1, true);
                 check_output(response);
                 assert(i == 0 ? response.cached_prompt_tokens == 0 : response.cached_prompt_tokens > 0);
+                if (i == 2 || i == 3) {
+                    assert(response.cached_prompt_tokens > previous_prompt_tokens);
+                    assert(response.cached_prompt_tokens == previous_prompt_tokens + 1);
+                }
                 warm_logits.push_back(warm.test_logits());
+                previous_prompt_tokens = response.prompt_tokens;
             }
             assert(warm.generate(std::string(8192, 'x'), 32, true).code == "INPUT_TOO_LONG");
             const auto after_error = warm.generate(prompts[0], 1, true);
             check_output(after_error); assert(after_error.cached_prompt_tokens == 0);
+            assert(difference(warm_logits[0], warm.test_logits()) < 0.00002f);
+            const auto invalid_utf8 = warm.generate(std::string("\xc0\xaf", 2), 1, true);
+            assert(invalid_utf8.code == "INPUT_TOO_LONG" && invalid_utf8.output.empty());
+            const auto after_invalid_utf8 = warm.generate(prompts[0], 1, true);
+            check_output(after_invalid_utf8); assert(after_invalid_utf8.cached_prompt_tokens == 0);
             assert(difference(warm_logits[0], warm.test_logits()) < 0.00002f);
         }
         float max_error = 0;
@@ -141,12 +172,12 @@ int main(int argc, char ** argv) {
         assert(max_error < 0.00002f);
         // The fixture is not a constant-logit model: changing earlier context
         // while keeping the ending fixed must affect real computed logits.
-        const auto context_difference = difference(warm_logits[0], warm_logits[2]);
+        const auto context_difference = difference(warm_logits[0], warm_logits[5]);
         assert(context_difference > 0.000001f);
         std::cout << "Context-sensitive logits: cached-vs-fresh maximum error " << max_error
                   << ", changed-context delta " << context_difference << ".\n";
     }
 #endif
-    std::cout << "Persistent native session: EOS, exact prefix reuse, context isolation, failure reset, cancellation, CPU fallback, strict GPU rejection, probe exclusion and measured load-phase accounting passed.\n";
+    std::cout << "Persistent native session: EOS, exact evaluated input/output prefix reuse, context isolation, failure reset, cancellation, CPU fallback, strict GPU rejection, probe exclusion and measured load-phase accounting passed.\n";
     return 0;
 }

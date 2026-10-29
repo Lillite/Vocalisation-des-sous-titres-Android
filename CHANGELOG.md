@@ -2,9 +2,20 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
-## 0.5.8-benchmark — candidate de comparatif GGUF étendu
+## 0.5.9-local — candidate de traduction locale et cache
 
-VersionCode **15**, identité Traduction et certificat durable conservés. [Guide](docs/COMPARATIF_LOCAL_058.md) · [Notes et limites](docs/releases/0.5.8-benchmark.md). La 0.5.2 reste la dernière stable. La validation propre de cette candidate doit être établie avant distribution.
+VersionCode **16**, identité Traduction et certificat durable conservés. [Guide](docs/TRADUCTION_LOCALE_059.md) · [Notes et limites](docs/releases/0.5.9-local.md). La 0.5.2 reste la dernière stable. La validation propre de cette candidate doit être établie avant distribution.
+
+- Alignement de la séparation instruction/source TranslateGemma sur le template épinglé ; rendu cohérent du contexte personnel dans les tours historiques.
+- Conservation entière des paires source/traduction du contexte récent, sans coupe indépendante à 300 points de code. En cas de manque de place, retrait de paires historiques entières avant subdivision éventuelle de la source courante conservée intégralement.
+- Cache natif limité au préfixe strictement identique encore disponible, étendu aux tokens de sortie réellement décodés. Aucun déplacement arbitraire des états du modèle ni reconstruction approximative de sa mémoire.
+- Identité de configuration v3 pour les nouvelles tâches ; anciens résultats conservés sous leur identité d’origine.
+- Garde renforcée des marqueurs réservés et attente bornée de la libération native sur les workers des tâches locales, sans bloquer l’interface.
+- Corpus de référence, occurrences, minutages, poids, quantification, taille du contexte natif et noyaux conservés. La fidélité et les gains de vitesse demandent des mesures réelles avec cette version ; aucun NPU ni OCR de film ajouté.
+
+## 0.5.8-benchmark — comparatif GGUF étendu publié
+
+VersionCode **15**, identité Traduction et certificat durable conservés. [Guide](docs/COMPARATIF_LOCAL_058.md) · [Notes et limites](docs/releases/0.5.8-benchmark.md). La 0.5.2 reste la dernière stable. La [PR #24](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/24) a réussi **724 tests avant fusion**, dont 110 sur l’APK release sous Android 17. Reconstruction, signature et téléchargement public ont ensuite été vérifiés.
 
 - Série intégrée de 32 occurrences synthétiques, 29 textes distincts : dialogues, panneaux, nombres, noms propres, phrases longues et répétitions légitimes avec identifiants et minutages conservés.
 - Ordre CPU/GPU sélectionnable ; modèle conservé pendant chaque série, libération confirmée avant le mode suivant et réouverture facultative mesurée sur une occurrence.
