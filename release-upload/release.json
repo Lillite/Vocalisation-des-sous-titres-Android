@@ -1,0 +1,9 @@
+{
+  "tag": "v0.5.8-benchmark",
+  "source_sha": "0f0bc4ac189c8565ee47ee12fc4986292bb57716",
+  "apk_sha256": "68ce0689f5f60598e938dd15e04771428689ec7742549e6185f4daec437772bd",
+  "signer_sha256": "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d",
+  "apk_file": "release-upload/SousTitresVoix-0.5.8-benchmark.apk",
+  "notes_file": "release-upload/notes.md",
+  "title": "Sous-titres en voix 0.5.8 — Comparatif GGUF étendu (préversion)"
+}
