@@ -37,12 +37,12 @@ object TranslatedSubtitleExport {
 /** Review hints are deliberately fallible. They neither reject nor rewrite translations. */
 data class TranslationReviewHint(val cueId: String, val reasons: List<String>)
 object TranslationReview {
-    private val number = Regex("\\d+(?:[.,]\\d+)?")
     private val possibleName = Regex("(?<![\\p{L}])[\\p{Lu}][\\p{L}’'-]{2,}(?![\\p{L}])")
     private val word = Regex("[\\p{L}’'-]+")
     private val commonCapitals = setOf("the", "this", "that", "what", "where", "when", "with", "you", "your",
         "take", "there", "they", "have", "please", "bonjour", "mais", "pour", "avec", "nous", "vous", "une", "les", "des", "que")
-    fun inspect(source: List<TranslationCue>, translated: List<TranslationCue>): List<TranslationReviewHint> {
+    fun inspect(source: List<TranslationCue>, translated: List<TranslationCue>,
+        sourceLanguage: String? = null, targetLanguage: String? = null): List<TranslationReviewHint> {
         val results = translated.associateBy { it.id }
         val sourceNames = source.associate { cue -> cue.id to possibleName.findAll(cue.text)
             .map { it.value.lowercase(Locale.ROOT) }.filter { it !in commonCapitals }.toSet() }
@@ -60,9 +60,13 @@ object TranslationReview {
             if (result.text.isBlank()) reasons += "Texte vide : vérifier cette occurrence."
             if (sourceNames[original.id].orEmpty().any { it in retainedNames && it !in translatedNames[result.id].orEmpty() })
                 reasons += "Nom propre possible variable ou absent : comparer avec les autres répliques ; traduction ou adaptation légitime possible."
-            if (number.findAll(original.text).map { it.value.replace(',', '.') }.toList() !=
-                number.findAll(result.text).map { it.value.replace(',', '.') }.toList())
-                reasons += "Nombres différents : vérifier la traduction et les nombres écrits en lettres."
+            when (TranslationNumbers.compare(original.text, result.text, sourceLanguage, targetLanguage)) {
+                TranslationNumbers.Comparison.DIFFERENT ->
+                    reasons += "Nombres ou unités différents : vérifier les valeurs, leur ordre et les nombres écrits en lettres."
+                TranslationNumbers.Comparison.UNCERTAIN ->
+                    reasons += "Format numérique ambigu ou non pris en charge : comparer les nombres et leur notation."
+                TranslationNumbers.Comparison.SAME -> Unit
+            }
             if (original.text.length >= 40 && (result.text.length * 4 < original.text.length || result.text.length > original.text.length * 4))
                 reasons += "Longueur très différente : une omission ou un ajout est possible."
             if (original.text.length >= 20 && original.text.equals(result.text, ignoreCase = true))

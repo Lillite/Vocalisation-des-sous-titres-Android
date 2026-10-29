@@ -70,7 +70,7 @@ class TranslationResumeRobolectricTest {
         assertEquals("Correction personnelle", restored.cues.first().text)
         assertEquals(0, noCalls.calls)
     }
-    @Test fun optionsIdentityAndCorruptedJournalCannotCrossResume() {
+    @Test fun optionsIdentityCannotCrossResumeAndDamagedSuffixKeepsItsVerifiedPrefix() {
         val cache = temporary.newFolder(); val progress = temporary.newFolder()
         val source = plan
         try { TranslationRunner(cache, progress).run(source, Engine(2), { false }) { _, _ -> } }
@@ -78,7 +78,7 @@ class TranslationResumeRobolectricTest {
         val altered = TranslationPlan.create(source.cues, "en", "fr", "fixture-options")
         assertEquals(0 to false, TranslationRunner(cache, progress).checkpointSummary(altered))
         progress.listFiles()!!.single().appendText("corrupt")
-        assertEquals(0 to false, TranslationRunner(cache, progress).checkpointSummary(source))
+        assertEquals(20 to true, TranslationRunner(cache, progress).checkpointSummary(source))
     }
     @Test fun failedCompleteCacheWriteKeepsFullJournalReusableWithoutAnApiCall() {
         val invalidCache = temporary.newFile(); val progress = temporary.newFolder()

@@ -30,6 +30,10 @@ data class LocalTranslationPerformance(
     val tokensPerSecond: Double get() = if (generationMs > 0) generatedTokens * 1000.0 / generationMs else 0.0
 
     fun render(): String = buildString {
+        if (phase == "cache") {
+            append("Traduction réutilisée depuis le cache exact de requêtes. Aucun nouveau calcul CPU ou GPU, chargement, débit ou temps de génération n’est mesuré pour cette occurrence.")
+            return@buildString
+        }
         append("Calcul demandé : "); append(requestedMode)
         if (backend.isNotEmpty()) { append(" ; moteur sélectionné : "); append(backend) }
         if (device.isNotEmpty()) { append(" ; appareil de calcul : "); append(safe(device)) }

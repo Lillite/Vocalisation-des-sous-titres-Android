@@ -3,9 +3,14 @@ package fr.soustitresvoix.player
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.Build
+import android.os.PersistableBundle
 import android.provider.OpenableColumns
 import android.text.InputType
 import android.view.View
@@ -46,7 +51,11 @@ internal class LocalSrtTranslationControls(
     private var lastSourceName = "sous-titres.srt"
     private var modelControls: LocalGgufModelControls? = null
     private var statusView: TextView? = null
+    private var progressView: TextView? = null
+    private var sourceView: TextView? = null
+    private var performanceButton: Button? = null
     private var exampleButton: Button? = null
+    private var qualityExampleButton: Button? = null
     private var localStatus: String? = null
     private val job = jobFactory(activity.applicationContext, {
         if (!closed) { render(); onChanged() }
@@ -75,11 +84,21 @@ internal class LocalSrtTranslationControls(
     private fun message(value: String) { localStatus = value; render() }
     private fun render() {
         val state = job.state
-        statusView?.text = (localStatus ?: state.status) +
-            (state.sourceName?.let { "\nFichier source actif : $it" } ?: "") +
-            (if (state.total > 0) "\nOccurrences validées : ${state.done} / ${state.total}." else "") +
-            (state.performance?.let { "\n\nDernières mesures reçues du moteur local :\n$it" } ?: "")
+        // Only milestones and state changes belong to the live region. A new
+        // performance sample must not repeatedly announce the full diagnostic
+        // over the reader's subtitle voice or move the accessibility focus.
+        val announcement = localStatus ?: if (state.busy && state.total > 0 && state.status.startsWith("Traduction locale : ")) {
+            val milestone = ((state.done.coerceIn(0, state.total).toLong() * 10 / state.total) * 10).toInt()
+            "Traduction locale en cours. Avancement : $milestone %."
+        } else state.status
+        statusView?.let { if (it.text.toString() != announcement) it.text = announcement }
+        val progress = if (state.total > 0) "Occurrences validées : ${state.done} / ${state.total}." else ""
+        progressView?.let { if (it.text.toString() != progress) it.text = progress }
+        val source = state.sourceName?.let { "Fichier source actif : $it" }.orEmpty()
+        sourceView?.let { if (it.text.toString() != source) it.text = source }
+        performanceButton?.isEnabled = state.performance != null
         exampleButton?.isEnabled = !state.busy && !readingMetadata
+        qualityExampleButton?.isEnabled = !state.busy && !readingMetadata
     }
 
     fun show() {
@@ -92,8 +111,25 @@ internal class LocalSrtTranslationControls(
             orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8))
         }
         column.addView(text("Prépare une traduction française complète d’un fichier SRT, sans ouvrir de vidéo et sans OCR. Le fichier original est conservé. Le traitement utilise seulement le modèle GGUF choisi sur ce téléphone ; aucun texte, modèle ou média n’est envoyé à un serveur."))
-        statusView = text(job.state.status).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
+        statusView = text(job.state.status).apply {
+            tag = STATUS_TAG; accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
         column.addView(statusView)
+        progressView = text("").apply {
+            tag = PROGRESS_TAG; accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_NONE
+        }.also { column.addView(it) }
+        sourceView = text("").apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_NONE }
+            .also { column.addView(it) }
+        performanceButton = button("Consulter les dernières mesures du moteur local") {
+            val measurements = job.state.performance
+            if (measurements == null) message("Aucune mesure du moteur local n’est disponible pour cette préparation.")
+            else {
+                childDialog?.dismiss()
+                childDialog = AlertDialog.Builder(activity).setTitle("Dernières mesures du moteur local")
+                    .setView(ScrollView(activity).apply { addView(text(measurements)) })
+                    .setPositiveButton("Fermer", null).show()
+            }
+        }.also { column.addView(it) }
         column.addView(button("Choisir le fichier SRT à traduire hors ligne") {
             if (busy || readingMetadata) message("Termine ou annule le traitement en cours avant de choisir un autre SRT.")
             else {
@@ -107,6 +143,13 @@ internal class LocalSrtTranslationControls(
             else {
                 sourceSelection++; lastSourceUri = null; localStatus = null; sourceInput?.setText("en")
                 job.importExample()
+            }
+        }.also { column.addView(it) }
+        qualityExampleButton = button("Charger le SRT de contrôle de fidélité — phrases inédites") {
+            if (busy || readingMetadata) message("Termine ou annule le traitement en cours avant de charger l’exemple.")
+            else {
+                sourceSelection++; lastSourceUri = null; localStatus = null; sourceInput?.setText("en")
+                job.importQualityExample()
             }
         }.also { column.addView(it) }
         column.addView(button("Choisir l’encodage du SRT si nécessaire") {
@@ -150,7 +193,7 @@ internal class LocalSrtTranslationControls(
             val language = source.text.toString().trim()
             val config = TranslationProviderConfig(TranslationProvider.LOCAL_GGUF,
                 localModel = model, localThreads = count, localContext = context.text.toString(),
-                localExecution = models.execution, localProfile = models.profile)
+                localExecution = models.execution, localProfile = models.profile, localContextPolicy = models.contextPolicy)
             val sourceOwner = sourceSelection
             try { TranslationEngines.validateForRequest(config, language, "fr") }
             catch (failure: TranslationFailure) { message(failure.message ?: "Configuration locale invalide."); return@button }
@@ -163,7 +206,7 @@ internal class LocalSrtTranslationControls(
                         panel?.isShowing != true || busy || models.busy || readingMetadata || otherPreparationBusy()) return@setPositiveButton
                     preferences.edit().putString("language", language).putInt("local-threads", count)
                         .putString("local-context", config.localContext).apply()
-                    models.saveChoices(config.localExecution, config.localProfile)
+                    models.saveChoices(config.localExecution, config.localProfile, config.localContextPolicy)
                     localStatus = null; job.start(language, config)
                 }.setNegativeButton("Annuler", null).show()
         })
@@ -174,6 +217,28 @@ internal class LocalSrtTranslationControls(
             val content = job.completedExport(format)
             if (content == null) message("Termine d’abord la traduction complète de ce SRT.")
             else onExport(format.mimeType, job.exportFileName(format), content)
+        })
+        column.addView(button("Consulter les indices linguistiques de la traduction complète") {
+            val report = job.completedReview()
+            if (report == null) message("Termine d’abord la traduction complète de ce SRT avant de consulter ses indices linguistiques.")
+            else {
+                childDialog?.dismiss()
+                childDialog = AlertDialog.Builder(activity).setTitle("Indices linguistiques — vérification imparfaite")
+                    .setView(ScrollView(activity).apply { addView(text(report)) })
+                    .setPositiveButton("Fermer", null)
+                    .setNeutralButton("Copier les indices et extraits") { _, _ ->
+                        val copied = runCatching {
+                            val clipboard = requireNotNull(activity.getSystemService(ClipboardManager::class.java))
+                            val clip = ClipData.newPlainText("Indices linguistiques de la traduction", report)
+                            if (Build.VERSION.SDK_INT >= 33) clip.description.extras = PersistableBundle().apply {
+                                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                            }
+                            clipboard.setPrimaryClip(clip)
+                        }.isSuccess
+                        message(if (copied) "Indices et extraits copiés dans le presse-papiers du téléphone."
+                            else "La copie des indices dans le presse-papiers a échoué.")
+                    }.show()
+            }
         })
         column.addView(text("Le SRT exporté est en UTF-8 et conserve les occurrences et les temps. Il peut être utilisé avec une vidéo, ajouté à un MKV avec un outil adapté ou importé dans le lecteur pour vocalisation. Une traduction lancée continue quand ce panneau est fermé. Un import ou une préparation d’empreinte GGUF encore en cours est annulé à la fermeture du panneau. Fermer ce panneau ne lance ni ne reprend la vidéo."))
         column.addView(button("Fermer le panneau et laisser la traduction continuer") { dismissPanel() })
@@ -216,12 +281,17 @@ internal class LocalSrtTranslationControls(
         panelGeneration++; metadataGeneration++; awaitingSubtitle = false; readingMetadata = false
         childDialog?.dismiss(); childDialog = null
         modelControls?.close(); modelControls = null
-        val old = panel; panel = null; statusView = null; exampleButton = null; localStatus = null
+        val old = panel; panel = null; statusView = null; progressView = null; sourceView = null
+        performanceButton = null; exampleButton = null; qualityExampleButton = null; localStatus = null
         old?.dismiss()
     }
     override fun close() {
         if (closed) return
         closed = true; dismissPanel(); job.close(); metadataWorker.shutdownNow(); main.removeCallbacksAndMessages(null)
     }
-    companion object { internal const val SCROLL_TAG = "local-srt-translation-controls-scroll" }
+    companion object {
+        internal const val SCROLL_TAG = "local-srt-translation-controls-scroll"
+        internal const val STATUS_TAG = "local-srt-translation-status"
+        internal const val PROGRESS_TAG = "local-srt-translation-progress"
+    }
 }

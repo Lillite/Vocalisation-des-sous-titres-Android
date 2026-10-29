@@ -263,7 +263,17 @@ class LocalGgufBenchmarkControlsRobolectricTest {
                 val profile = views(panel).filterIsInstance<Spinner>()
                     .single { it.contentDescription == "Profil de traduction du modèle GGUF" }
                 assertEquals("Profil de traduction du modèle GGUF", profile.contentDescription)
-                assertEquals(2, views(panel).filterIsInstance<Spinner>().count())
+                assertEquals(3, views(panel).filterIsInstance<Spinner>().count())
+                val contextPolicy = views(panel).filterIsInstance<Spinner>()
+                    .single { it.contentDescription == "Contexte des sous-titres GGUF" }
+                assertEquals(1, views(panel).filterIsInstance<TextView>().count { it.labelFor == contextPolicy.id })
+                for (choice in views(panel).filterIsInstance<Spinner>()) {
+                    val selected = choice.selectedView as? TextView ?: error("Readable selected choice required")
+                    assertNull(selected.ellipsize); assertTrue(selected.maxLines > 1)
+                    selected.layout?.let { layout ->
+                        for (line in 0 until layout.lineCount) assertEquals(0, layout.getEllipsisCount(line))
+                    }
+                }
                 assertEquals(1, views(panel).filterIsInstance<TextView>().count { it.labelFor == order(panel).id })
                 assertEquals(LocalGgufBenchmarkControls.REOPEN_LABEL, reopening(panel).text.toString())
                 for (action in descendants(scroll).filterIsInstance<Button>()) {
@@ -277,4 +287,28 @@ class LocalGgufBenchmarkControlsRobolectricTest {
             }
         } finally { RuntimeEnvironment.setFontScale(scale); RuntimeEnvironment.setQualifiers(qualifiers) }
     }
+    @Test fun contextComparisonButtonsAreOptInGpuOnlyAndCopyEveryQualitySource() {
+        Fixture(measured = true).use { f ->
+            val panel = f.open()
+            assertEquals(0, f.engines)
+            assertTrue(button(panel, LocalGgufBenchmarkControls.CONTEXT_START_LABEL).isEnabled)
+            assertTrue(button(panel, LocalGgufBenchmarkControls.QUALITY_START_LABEL).isEnabled)
+            reopening(panel).isChecked = true
+            order(panel).setSelection(1)
+            button(panel, LocalGgufBenchmarkControls.QUALITY_START_LABEL).performClick()
+            await("All three synthetic policy sessions must finish") { !f.controls.busy }
+            assertEquals(listOf("OPENCL", "OPENCL", "OPENCL"), f.openedModes.toList())
+            assertEquals(LocalGgufQualityCorpus.cues.map { it.source }.let { it + it + it }, f.inputs.toList())
+            button(panel, "Copier le rapport CPU / GPU").performClick()
+            val report = f.activity.getSystemService(ClipboardManager::class.java).primaryClip!!.getItemAt(0).text.toString()
+            assertTrue(report.startsWith("Comparatif local GPU — stratégies de contexte"))
+            assertTrue(report.contains(LocalGgufQualityCorpus.VERSION))
+            assertEquals(LocalGgufQualityCorpus.cues.size * 3,
+                Regex("Sortie sur le texte synthétique uniquement").findAll(report).count())
+            assertFalse(report.contains("synthetic private context must not enter a benchmark"))
+            assertFalse(report.contains("Réouverture demandée"))
+            assertTrue(reopening(panel).isChecked)
+        }
+    }
+
 }

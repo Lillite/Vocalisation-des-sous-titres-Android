@@ -46,6 +46,10 @@ internal class LocalGgufModelControls(
     }.getOrDefault(LocalGgufProfile.AUTO)
         get() = profileSpinner?.selectedItemPosition?.takeIf { it in PROFILES.indices }?.let { PROFILES[it] } ?: field
         private set
+    var contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.fromPreference(preferences.getString("local-context-policy", null))
+        get() = contextPolicySpinner?.selectedItemPosition?.takeIf { it in CONTEXT_POLICIES.indices }?.let { CONTEXT_POLICIES[it] } ?: field
+        private set
+    private var contextPolicySpinner: Spinner? = null
     private var status: TextView? = null
     private var chooseButton: Button? = null
     private var existingButton: Button? = null
@@ -71,7 +75,7 @@ internal class LocalGgufModelControls(
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View = readable(super.getView(position, convertView, parent))
         override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View = readable(super.getDropDownView(position, convertView, parent))
     }
-    fun view(showExecutionChoice: Boolean = true): View = LinearLayout(activity).apply {
+    fun view(showExecutionChoice: Boolean = true, showContextChoice: Boolean = true): View = LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
         addView(label("Modèle GGUF local : choisis son fichier avec Android ou réutilise celui du diagnostic. L’import crée une copie privée et conserve l’original. Aucun téléchargement de modèle et aucun envoi de sous-titres ne sont effectués ici."))
         status = label(modelDescription()).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
@@ -116,6 +120,18 @@ internal class LocalGgufModelControls(
             addView(spinner)
         }
         addView(label("Le profil automatique reconnaît les modèles pris en charge. Si les métadonnées d’un GGUF ne permettent pas sa reconnaissance, choisis explicitement sa famille. Ce choix adapte la demande de traduction ; il ne change pas les poids du fichier."))
+        if (showContextChoice) {
+            contextPolicySpinner = Spinner(activity).apply {
+                id = View.generateViewId(); contentDescription = "Contexte des sous-titres GGUF"
+                minimumHeight = dp(64)
+                adapter = choices(CONTEXT_POLICIES.map { it.label })
+                setSelection(CONTEXT_POLICIES.indexOf(contextPolicy).coerceAtLeast(0))
+            }.also { spinner ->
+                addView(label("Contexte des sous-titres GGUF").apply { labelFor = spinner.id })
+                addView(spinner)
+            }
+            addView(label("Le contexte peut aider à interpréter une réplique ou propager une erreur. Aucun choix ne garantit une meilleure traduction. Deux échanges conserve le comportement actuel ; occurrence seule retire les échanges précédents ; les blocs conservent jusqu’à cinq échanges puis recommencent tous les six sous-titres. Si le budget du modèle est dépassé, seules des paires anciennes entières sont retirées ; le texte courant reste complet. Ce réglage ne change ni les poids ni la précision du modèle et ne déclenche aucun calcul."))
+        }
         updateButtons()
     }
 
@@ -131,11 +147,14 @@ internal class LocalGgufModelControls(
         cancelButton?.isEnabled = active && busy
         executionSpinner?.isEnabled = active && !busy
         profileSpinner?.isEnabled = active && !busy
+        contextPolicySpinner?.isEnabled = active && !busy
     }
-    fun saveChoices(selectedExecution: String = execution, selectedProfile: LocalGgufProfile = profile) {
+    fun saveChoices(selectedExecution: String = execution, selectedProfile: LocalGgufProfile = profile,
+        selectedContextPolicy: LocalGgufContextPolicy = contextPolicy) {
         require(selectedExecution in EXECUTION_MODES)
         preferences.edit().putString("local-execution", selectedExecution)
-            .putString("local-profile", selectedProfile.name).apply()
+            .putString("local-profile", selectedProfile.name)
+            .putString("local-context-policy", selectedContextPolicy.name).apply()
     }
     fun setActive(value: Boolean) {
         active = value
@@ -230,9 +249,10 @@ internal class LocalGgufModelControls(
         closed = true; waitingPicker = false; generation++; cancellation.set(true)
         worker.shutdownNow(); main.removeCallbacksAndMessages(null)
         status = null; chooseButton = null; existingButton = null; cancelButton = null
-        executionSpinner = null; profileSpinner = null
+        executionSpinner = null; profileSpinner = null; contextPolicySpinner = null
     }
     companion object {
+        private val CONTEXT_POLICIES = LocalGgufContextPolicy.entries
         private val EXECUTION_MODES = listOf("AUTO", "CPU", "OPENCL")
         private val PROFILES = listOf(LocalGgufProfile.AUTO, LocalGgufProfile.TRANSLATE_GEMMA, LocalGgufProfile.HY_MT)
     }

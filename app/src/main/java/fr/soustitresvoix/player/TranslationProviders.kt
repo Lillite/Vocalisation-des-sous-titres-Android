@@ -42,7 +42,8 @@ class TranslationProviderConfig(
     val localThreads: Int = 4,
     val localContext: String = "",
     val localProfile: LocalGgufProfile = LocalGgufProfile.AUTO,
-    val localExecution: String = "AUTO"
+    val localExecution: String = "AUTO",
+    val localContextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO
 ) {
     override fun toString(): String = "TranslationProviderConfig(provider=${provider.id}, credentials=hidden)"
 }
@@ -197,7 +198,7 @@ object TranslationEngines {
                 LocalGgufTranslationEngine(
                     context ?: throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION),
                     config.localModel ?: throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION),
-                    config.localThreads, config.localContext, config.localProfile, config.localExecution)
+                    config.localThreads, config.localContext, config.localProfile, config.localExecution, config.localContextPolicy)
             }
             else -> HttpEngine(config, transport, TranslationRequestPacing())
         }
@@ -209,7 +210,7 @@ object TranslationEngines {
     fun identity(config: TranslationProviderConfig): String {
         if (config.provider == TranslationProvider.LOCAL_GGUF) return LocalGgufTranslationEngine.identity(
             config.localModel ?: throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION),
-            config.localThreads, config.localContext, config.localProfile, config.localExecution)
+            config.localThreads, config.localContext, config.localProfile, config.localExecution, config.localContextPolicy)
         if (config.provider != TranslationProvider.LIBRE) return config.provider.id
         val endpoint = libreEndpoint(config.endpoint).toASCIIString()
         val digest = MessageDigest.getInstance("SHA-256").digest(endpoint.toByteArray(Charsets.UTF_8))

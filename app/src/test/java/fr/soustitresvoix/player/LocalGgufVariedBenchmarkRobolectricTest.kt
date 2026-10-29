@@ -235,6 +235,21 @@ class LocalGgufVariedBenchmarkRobolectricTest {
         assertTrue("Complete fixed-corpus report must fit the UI copy gate", largestReport.length < 400_000)
         assertEquals(66, Regex("Sortie sur le texte synthétique uniquement").findAll(largestReport).count())
         assertTrue(largestReport.contains("0 ms (résolution milliseconde)"))
+        val environment = LocalGgufBenchmark.Environment(Long.MAX_VALUE, 6, Int.MAX_VALUE)
+        val playback = LocalGgufBenchmark.PlaybackObservation(1_000, Long.MAX_VALUE, true, true,
+            Long.MAX_VALUE, Long.MAX_VALUE, true, true, true)
+        val contextRuns = LocalGgufContextPolicy.entries.map { policy ->
+            val gpuRun = fullRuns.single { it.requestedMode == "OPENCL" && !it.reopening }
+            gpuRun.copy(contextPolicy = policy, before = environment, after = environment,
+                samples = gpuRun.samples.map { it.copy(environment = environment, playback = playback, finishedAtMs = 2_000) },
+                playbackBefore = playback, playbackAfter = playback, startedAtMs = 2_000, finishedAtMs = 2_000)
+        }
+        val contextReport = LocalGgufBenchmark.State(modelSha256 = "a".repeat(64), runs = contextRuns,
+            options = LocalGgufBenchmark.Options(LocalGgufBenchmark.Scenario.CONTEXT_POLICIES)).report()
+        assertEquals(96, Regex("Sortie sur le texte synthétique uniquement").findAll(contextReport).count())
+        assertTrue("All 96 bounded outputs and representative maximum-sized measurements must remain copyable: ${contextReport.length}",
+            contextReport.length < 400_000)
+        assertEquals(96, Regex("x".repeat(2048)).findAll(contextReport).count())
         val events = mutableListOf<String>()
         val benchmark = LocalGgufBenchmark(context, {}, engineFactory = { config ->
             MeasuredEngine(config.localExecution, events, mutableListOf(), oversizedAt = 1)
@@ -247,4 +262,100 @@ class LocalGgufVariedBenchmarkRobolectricTest {
             assertFalse(events.any { it.startsWith("OPENCL") })
         } finally { benchmark.close() }
     }
+    @Test fun contextComparisonUsesThreeReleasedGpuSessionsAndOwnCompleteHistory() {
+        val events = mutableListOf<String>()
+        val configurations = mutableListOf<TranslationProviderConfig>()
+        val engines = mutableListOf<MeasuredEngine>()
+        val benchmark = LocalGgufBenchmark(context, {}, engineFactory = { config ->
+            if (engines.isNotEmpty()) assertTrue(events.last().endsWith(":closed"))
+            configurations += config
+            MeasuredEngine(config.localExecution, events, mutableListOf()).also { engines += it }
+        }, snapshot = probe)
+        try {
+            // CPU ordering and reopen options are irrelevant to this explicitly GPU-only comparison.
+            benchmark.start(model, 4, LocalGgufProfile.AUTO, LocalGgufBenchmark.Options(
+                LocalGgufBenchmark.Scenario.CONTEXT_POLICIES, LocalGgufBenchmark.Order.CPU_THEN_GPU, true))
+            await(benchmark)
+            assertEquals(LocalGgufContextPolicy.entries, configurations.map { it.localContextPolicy })
+            assertTrue(configurations.all { it.localExecution == "OPENCL" && it.localContext.isEmpty() })
+            assertEquals(3, benchmark.state.runs.size)
+            benchmark.state.runs.zip(engines).forEach { (run, engine) ->
+                assertTrue(run.cleanupConfirmed); assertNull(run.failure); assertFalse(run.reopening)
+                assertEquals(LocalGgufBenchmarkCorpus.cues, run.samples.map { it.cue })
+                engine.inputs.forEachIndexed { index, input ->
+                    val start = run.contextPolicy.contextStartIndex(index)
+                    assertEquals(LocalGgufBenchmarkCorpus.cues.subList(start, index).map { it.source }, input.previousSources)
+                    assertEquals(run.samples.subList(start, index).map { it.output }, input.previousOutputs)
+                }
+            }
+            val report = benchmark.state.report()
+            assertTrue(report.startsWith("Comparatif local GPU — stratégies de contexte"))
+            assertTrue(report.contains("Aucune stratégie n’est sélectionnée automatiquement comme meilleure"))
+            assertFalse(report.contains("Réouverture demandée"))
+            assertEquals(96, Regex("Sortie sur le texte synthétique uniquement").findAll(report).count())
+            assertFalse(report.contains("Les sorties CPU et GPU sont"))
+            assertTrue(benchmark.state.status.contains("Comparatif des stratégies terminé"))
+            val partialReport = benchmark.state.copy(runs = benchmark.state.runs.take(2), status = "Comparatif annulé.").report()
+            assertFalse(partialReport.contains("Les sorties CPU et GPU"))
+            assertFalse(partialReport.contains("Les trois stratégies ont produit"))
+        } finally { benchmark.close() }
+    }
+
+    @Test fun contextComparisonStopsBeforeAnotherPolicyWhenReleaseIsUnconfirmed() {
+        var engines = 0
+        val benchmark = LocalGgufBenchmark(context, {}, engineFactory = { config ->
+            engines++
+            MeasuredEngine(config.localExecution, mutableListOf(), mutableListOf())
+        }, snapshot = probe, closeEngine = { throw IllegalStateException("synthetic release failure") })
+        try {
+            benchmark.start(model, 4, LocalGgufProfile.AUTO,
+                LocalGgufBenchmark.Options(LocalGgufBenchmark.Scenario.CONTEXT_POLICIES))
+            await(benchmark)
+            assertEquals(1, engines)
+            val run = benchmark.state.runs.single()
+            assertEquals(32, run.samples.size); assertFalse(run.cleanupConfirmed); assertNotNull(run.failure)
+            assertTrue(benchmark.state.report().contains("libération du modèle n’a pas été confirmée"))
+        } finally { benchmark.close() }
+    }
+
+    @Test fun newQualityCorpusRunsEverySourceAndKeepsTheHistoricalComparisonUnchanged() {
+        val configurations = mutableListOf<TranslationProviderConfig>()
+        val benchmark = LocalGgufBenchmark(context, {}, engineFactory = { config ->
+            configurations += config
+            MeasuredEngine(config.localExecution, mutableListOf(), mutableListOf())
+        }, snapshot = probe)
+        try {
+            benchmark.start(model, 4, LocalGgufProfile.AUTO,
+                LocalGgufBenchmark.Options(LocalGgufBenchmark.Scenario.CONTEXT_POLICIES, qualityCorpus = true))
+            await(benchmark)
+            assertEquals(3, configurations.size)
+            assertTrue(benchmark.state.runs.all { run ->
+                run.samples.map { it.cue } == LocalGgufQualityCorpus.cues && run.cleanupConfirmed && run.failure == null
+            })
+            val report = benchmark.state.report()
+            assertTrue(report.contains("Corpus : " + LocalGgufQualityCorpus.VERSION))
+            assertEquals(LocalGgufQualityCorpus.cues.size * 3,
+                Regex("Sortie sur le texte synthétique uniquement").findAll(report).count())
+            for (cue in LocalGgufQualityCorpus.cues) assertTrue(report.contains(cue.source))
+            assertEquals(LocalGgufBenchmarkCorpus.cues,
+                LocalGgufBenchmark.cues(LocalGgufBenchmark.Options(LocalGgufBenchmark.Scenario.VARIED, qualityCorpus = true)))
+        } finally { benchmark.close() }
+    }
+
+    @Test fun selectedPolicyAlsoAppliesToTheExistingCpuGpuSeries() {
+        val engines = mutableListOf<MeasuredEngine>()
+        val benchmark = LocalGgufBenchmark(context, {}, engineFactory = { config ->
+            assertEquals(LocalGgufContextPolicy.ISOLATED, config.localContextPolicy)
+            MeasuredEngine(config.localExecution, mutableListOf(), mutableListOf()).also { engines += it }
+        }, snapshot = probe)
+        try {
+            benchmark.start(model, 4, LocalGgufProfile.AUTO, LocalGgufBenchmark.Options(
+                LocalGgufBenchmark.Scenario.VARIED, contextPolicy = LocalGgufContextPolicy.ISOLATED))
+            await(benchmark)
+            assertEquals(2, engines.size)
+            assertTrue(engines.flatMap { it.inputs }.all { it.previousSources.isEmpty() && it.previousOutputs.isEmpty() })
+            assertTrue(benchmark.state.report().contains(LocalGgufContextPolicy.ISOLATED.label))
+        } finally { benchmark.close() }
+    }
+
 }

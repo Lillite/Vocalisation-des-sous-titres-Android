@@ -213,4 +213,24 @@ class LocalGgufModelControlsRobolectricTest {
             } finally { controls.close() }
         }
     }
+    @Test fun contextChoiceIsExplicitPersistedAndDisabledDuringAnImport() {
+        Fixture().use { f ->
+            val choice = descendants(f.root).filterIsInstance<Spinner>().single { it.contentDescription == "Contexte des sous-titres GGUF" }
+            assertEquals(LocalGgufContextPolicy.RECENT_TWO, f.controls.contextPolicy)
+            choice.setSelection(2)
+            assertEquals(LocalGgufContextPolicy.BLOCKS_SIX, f.controls.contextPolicy)
+            f.controls.saveChoices()
+            f.controls.setActive(false)
+            assertFalse(choice.isEnabled)
+            val restored = LocalGgufModelControls(f.activity, { false }, {}, {}, {})
+            try {
+                restored.view()
+                assertEquals(LocalGgufContextPolicy.BLOCKS_SIX, restored.contextPolicy)
+                assertFalse(restored.busy)
+                assertEquals(0, f.launches)
+                assertTrue(f.directory.listFiles().orEmpty().isEmpty())
+            } finally { restored.close() }
+        }
+    }
+
 }

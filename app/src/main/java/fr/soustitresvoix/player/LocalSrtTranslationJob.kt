@@ -71,6 +71,7 @@ class LocalSrtTranslationJob(
     private var active: Task? = null
     private var completed: TranslatedTrack? = null
     private var completedExports: Map<SubtitleExportFormat, String> = emptyMap()
+    private var completedReviewReport: String? = null
     @Volatile var state: State = State()
         private set
 
@@ -116,6 +117,11 @@ class LocalSrtTranslationJob(
     /** An accessible, wholly synthetic source, independent of any video or OCR. */
     fun importExample() = importContent("exemple-traduction-en.srt", "UTF-8") { EXAMPLE_SRT.toByteArray(Charsets.UTF_8) }
 
+    /** Independent held-out sentences for reviewing fidelity, not automatic scoring. */
+    fun importQualityExample() = importContent("qualite-traduction-en.srt", "UTF-8") {
+        LocalGgufQualityCorpus.SOURCE_SRT.toByteArray(Charsets.UTF_8)
+    }
+
     private fun importContent(displayName: String, charset: String?, readBytes: (Task) -> ByteArray) {
         if (closed || state.busy) return
         val previous = state
@@ -139,7 +145,7 @@ class LocalSrtTranslationJob(
                     // point cannot truthfully be reported as an undone import.
                     main.post {
                         if (isCurrent(current, ticket)) {
-                            active = null; source = imported; completed = null; completedExports = emptyMap()
+                            active = null; source = imported; completed = null; completedExports = emptyMap(); completedReviewReport = null
                             update(State("Fichier importé (${decoded.charset}). Choisis le modèle puis lance la traduction.",
                                 busy = false, sourceName = imported.name))
                         }
@@ -169,12 +175,13 @@ class LocalSrtTranslationJob(
         }
         val current = Task(); active = current
         val ticket = ++sequence
-        completed = null; completedExports = emptyMap()
+        completed = null; completedExports = emptyMap(); completedReviewReport = null
         update(State("Indexation complète du fichier de sous-titres…", busy = true, sourceName = selected.name))
         worker.execute {
             synchronized(WORK_LOCK) {
                 var terminal: State? = null
                 var translated: TranslatedTrack? = null
+                var reviewPlan: TranslationPlan? = null
                 var exports: Map<SubtitleExportFormat, String> = emptyMap()
                 var cleanupWarning: String? = null
                 try {
@@ -207,6 +214,7 @@ class LocalSrtTranslationJob(
                     }
                     if (expectedOccurrences != null) SrtSourceIntegrity.checkCount(expectedOccurrences, cues.size)
                     val plan = TranslationPlan.create(cues, sourceLanguage, "fr", identity)
+                    reviewPlan = plan
                     ensureActive(current)
                     val engine = engineFactory(config); current.engine = engine
                     (engine as? LocalTranslationPerformanceSource)?.setPerformanceListener { performance ->
@@ -261,6 +269,13 @@ class LocalSrtTranslationJob(
                 // longer pending. Publish availability after its bounded ACK,
                 // including a visible warning when it could not be established.
                 val finished = terminal ?: return@execute
+                // Review is fallible and optional. Release model resources first;
+                // a failed review must never discard a completed durable result.
+                val review = if (finished.complete && !current.cancelled.get() && !closed) {
+                    publish(current, ticket, state.copy(status = "Vérification des indices linguistiques…"))
+                    runCatching { LocalTranslationReviewReport.render(requireNotNull(reviewPlan), requireNotNull(translated)) }
+                        .getOrDefault(LocalTranslationReviewReport.UNAVAILABLE)
+                } else null
                 main.post {
                     if (isCurrent(current, ticket)) {
                         active = null
@@ -270,6 +285,7 @@ class LocalSrtTranslationJob(
                         if (result.complete) {
                             completed = translated
                             completedExports = exports
+                            completedReviewReport = review
                         }
                         cleanupWarning?.let { result = result.copy(status = result.status + "\n$it") }
                         update(result)
@@ -291,6 +307,8 @@ class LocalSrtTranslationJob(
     /** Text comes only from the completed validated track, never a partial prefix. */
     fun completedExport(format: SubtitleExportFormat = SubtitleExportFormat.SRT): String? =
         if (completed != null && state.complete && !state.busy) completedExports[format] else null
+
+    fun completedReview(): String? = if (completed != null && state.complete && !state.busy) completedReviewReport else null
 
     fun exportFileName(format: SubtitleExportFormat = SubtitleExportFormat.SRT): String {
         val name = source?.name?.substringBeforeLast('.')?.replace(Regex("[\\p{Cntrl}/\\\\]"), "_")

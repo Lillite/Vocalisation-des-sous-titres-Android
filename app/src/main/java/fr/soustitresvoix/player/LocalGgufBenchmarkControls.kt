@@ -37,6 +37,8 @@ internal class LocalGgufBenchmarkControls(
     private var localStatus: String? = null
     private var startButton: Button? = null
     private var variedButton: Button? = null
+    private var contextButton: Button? = null
+    private var qualityButton: Button? = null
     private var cancelButton: Button? = null
     private var threadsInput: EditText? = null
     private var orderChoice: Spinner? = null
@@ -82,6 +84,8 @@ internal class LocalGgufBenchmarkControls(
         modelControls?.setActive(!state.busy)
         startButton?.isEnabled = !state.busy
         variedButton?.isEnabled = !state.busy
+        contextButton?.isEnabled = !state.busy
+        qualityButton?.isEnabled = !state.busy
         threadsInput?.isEnabled = !state.busy
         orderChoice?.isEnabled = !state.busy
         reopeningChoice?.isEnabled = !state.busy
@@ -101,7 +105,7 @@ internal class LocalGgufBenchmarkControls(
         }
         preferences.edit().putInt("local-threads", count).putString("local-profile", models.profile.name).apply()
         localStatus = null
-        benchmark.start(model, count, models.profile, options)
+        benchmark.start(model, count, models.profile, options.copy(contextPolicy = models.contextPolicy))
     }
     fun show() {
         if (closed || activity.isDestroyed || activity.isFinishing) return
@@ -109,7 +113,7 @@ internal class LocalGgufBenchmarkControls(
         val column = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8))
         }
-        column.addView(text("Deux essais locaux sont disponibles avec le modèle déjà importé : un essai court qui répète le même texte, et une série étendue de 32 occurrences de sous-titres anglais intégrés. La série comprend des dialogues, panneaux, nombres, phrases longues et répétitions légitimes avec leurs propres identifiants et minutages. Aucun texte de sous-titre personnel, contexte personnel ou contenu vidéo n’est analysé. Aucun envoi ni téléchargement."))
+        column.addView(text("Plusieurs essais locaux sont disponibles avec le modèle déjà importé : un essai court qui répète le même texte, et une série étendue de 32 occurrences de sous-titres anglais intégrés et un comparatif de trois stratégies de contexte sur GPU. La série comprend des dialogues, panneaux, nombres, phrases longues et répétitions légitimes avec leurs propres identifiants et minutages. Aucun texte de sous-titre personnel, contexte personnel ou contenu vidéo n’est analysé. Aucun envoi ni téléchargement."))
         column.addView(text("La durée est inconnue et peut atteindre plusieurs minutes selon le modèle. Annuler reste disponible. Garde l’application ouverte ; tu peux fermer ce panneau et utiliser le lecteur. Le modèle reste chargé dans chaque série ; CPU et GPU sont exécutés successivement avec les mêmes poids, profil et limites. Les relevés du chargement distinguent des étapes globales, sans isoler tous les transferts ou compilations. L’ordre, le cache système et la chauffe peuvent influencer les mesures."))
         statusView = text(benchmark.state.status).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         column.addView(statusView)
@@ -148,6 +152,14 @@ internal class LocalGgufBenchmarkControls(
                 else LocalGgufBenchmark.Order.CPU_THEN_GPU
             reopenForLoad = reopeningChoice?.isChecked == true
             start(models, threads, LocalGgufBenchmark.Options(LocalGgufBenchmark.Scenario.VARIED, selectedOrder, reopenForLoad))
+        }.also { column.addView(it) }
+        column.addView(text("Comparatif de contexte : les trois stratégies traduisent successivement les mêmes 32 occurrences sur GPU OpenCL strict. Chaque stratégie possède sa session et son historique. Les ressources sont libérées avant la suivante. Ce comparatif ne change pas ton choix de contexte, n’attribue aucun score de qualité et n’utilise pas les options d’ordre CPU/GPU ou de réouverture ci-dessus. Les sorties doivent être comparées aux sources ; aucune stratégie n’est présumée meilleure."))
+        contextButton = action(CONTEXT_START_LABEL) {
+            start(models, threads, LocalGgufBenchmark.Options(LocalGgufBenchmark.Scenario.CONTEXT_POLICIES))
+        }.also { column.addView(it) }
+        column.addView(text("Un corpus complémentaire contient des phrases synthétiques distinctes du comparatif historique. Il sert à comparer nombres, négations, pronoms, conditions et panneaux sans adapter les réponses aux exemples précédents. Ses sources et toutes les traductions figurent dans le rapport ; aucun score automatique de fidélité n’est attribué."))
+        qualityButton = action(QUALITY_START_LABEL) {
+            start(models, threads, LocalGgufBenchmark.Options(LocalGgufBenchmark.Scenario.CONTEXT_POLICIES, qualityCorpus = true))
         }.also { column.addView(it) }
         cancelButton = action("Annuler l’essai comparatif CPU / GPU") { localStatus = null; benchmark.cancel() }
             .also { column.addView(it) }
@@ -190,7 +202,7 @@ internal class LocalGgufBenchmarkControls(
             selectedOrder = if (it == 1) LocalGgufBenchmark.Order.GPU_THEN_CPU else LocalGgufBenchmark.Order.CPU_THEN_GPU
         }
         reopeningChoice?.let { reopenForLoad = it.isChecked }
-        panel = null; statusView = null; reportView = null; startButton = null; variedButton = null
+        panel = null; statusView = null; reportView = null; startButton = null; variedButton = null; contextButton = null; qualityButton = null
         cancelButton = null; threadsInput = null; orderChoice = null; reopeningChoice = null; localStatus = null
         old?.dismiss()
     }
@@ -202,6 +214,8 @@ internal class LocalGgufBenchmarkControls(
         internal const val SCROLL_TAG = "local-gguf-benchmark-controls-scroll"
         internal const val ORDER_LABEL = "Ordre du comparatif étendu"
         internal const val REOPEN_LABEL = "Recharger le modèle après chaque série pour mesurer une réouverture"
+        internal const val QUALITY_START_LABEL = "Comparer les stratégies sur des phrases inédites — GPU"
+        internal const val CONTEXT_START_LABEL = "Comparer les trois stratégies de contexte sur GPU — 32 sous-titres"
         internal const val VARIED_START_LABEL = "Comparer CPU et GPU sur 32 sous-titres intégrés"
         private const val MAX_CLIPBOARD_CHARACTERS = 400_000
     }

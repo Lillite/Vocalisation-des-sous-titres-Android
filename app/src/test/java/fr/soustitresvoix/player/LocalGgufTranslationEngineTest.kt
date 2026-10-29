@@ -225,7 +225,7 @@ class LocalGgufTranslationEngineTest {
         assertNotEquals(base, LocalGgufTranslationEngine.identity(fixture.model, threads = 2))
         assertNotEquals(base, LocalGgufTranslationEngine.identity(fixture.model, context = "A synthetic scene."))
         assertFalse(LocalGgufTranslationEngine.identity(fixture.model, context = "A synthetic scene.").contains("synthetic"))
-        assertTrue(base.matches(Regex("local-gguf-v3-[0-9a-f]{64}")))
+        assertTrue(base.matches(Regex("local-gguf-v4-[0-9a-f]{64}")))
         // A completed v2 journal remains its own saved result. New work must
         // not silently reuse translations made with the previous prompt rules.
         val oldInput = "local-gguf-text-v2\n${fixture.model.sha256}\n${LocalModelProbe.REVISION}\n4\n2048\n512\nauto\nAUTO\n"
@@ -526,4 +526,85 @@ class LocalGgufTranslationEngineTest {
             } finally { engine.close() }
         }
     }
+    @Test fun explicitContextPoliciesPreserveWholePairsAndCurrentSource() {
+        val source = " \nThe original letter belongs to Maya. 😀\n "
+        val previousSources = (1..5).map { "Earlier source $it " + "s".repeat(350) }
+        val previousOutputs = (1..5).map { "Traduction précédente $it " + "t".repeat(350) }
+        for (policy in LocalGgufContextPolicy.entries) {
+            val fixture = fixture(); val backend = Backend()
+            val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { backend }, contextPolicy = policy)
+            try {
+                engine.translateWithContext(listOf(source), "en", "fr", previousSources, previousOutputs) { false }
+                val prompt = backend.prompts.single()
+                assertTrue(prompt.endsWith(":\n\n\n$source<end_of_turn>\n<start_of_turn>model\n"))
+                val expected = previousSources.zip(previousOutputs).takeLast(policy.maximumPreviousPairs)
+                for ((original, translated) in expected) { assertTrue(prompt.contains(original)); assertTrue(prompt.contains(translated)) }
+                for (original in previousSources.dropLast(policy.maximumPreviousPairs)) assertFalse(prompt.contains(original))
+                assertEquals(policy.contextStartIndex(7), engine.contextStartIndex(7))
+            } finally { engine.close() }
+        }
+    }
+
+    @Test fun contextPolicyChangesTheResultIdentityAndCacheHitNeverLoadsOrClaimsGpuWork() {
+        val fixture = fixture(); var factories = 0
+        val identities = LocalGgufContextPolicy.entries.map { policy ->
+            LocalGgufTranslationEngine.identity(fixture.model, contextPolicy = policy)
+        }
+        assertEquals(3, identities.distinct().size)
+        val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { factories++; Backend() }, executionMode = "OPENCL")
+        val frames = mutableListOf<LocalTranslationPerformance>()
+        engine.setPerformanceListener { frames += it }
+        assertTrue(engine.supportsExactRequestCache)
+        engine.onExactRequestCacheHit()
+        val frame = frames.single()
+        assertEquals("cache", frame.phase); assertEquals("OPENCL", frame.requestedMode)
+        assertEquals("", frame.backend); assertFalse(frame.gpuObserved)
+        assertEquals(0, frame.generatedTokens); assertEquals(0L, frame.loadMs)
+        assertEquals(0L, frame.generationMs); assertEquals(0, factories)
+        engine.close()
+    }
+
+    @Test fun oversizedBlockDropsCompleteOldPairsWithoutClippingTheCurrentSource() {
+        val fixture = fixture(); val backend = Backend()
+        val source = "Keep every word of this new source. " + "x".repeat(500)
+        val older = "Oldest source " + "a".repeat(500)
+        backend.generate = { prompt, _ ->
+            if (older in prompt) throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.INPUT_TOO_LONG)
+            LocalGgufBackend.Generation("Traduction complète synthétique.")
+        }
+        val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { backend }, contextPolicy = LocalGgufContextPolicy.BLOCKS_SIX)
+        try {
+            engine.translateWithContext(listOf(source), "en", "fr", listOf(older, "Most recent source."),
+                listOf("Ancienne traduction entière.", "Traduction récente entière.")) { false }
+            assertEquals(2, backend.prompts.size)
+            assertTrue(backend.prompts.first().contains(older))
+            assertFalse(backend.prompts.last().contains(older))
+            assertFalse(backend.prompts.last().contains("Ancienne traduction entière."))
+            assertTrue(backend.prompts.all { source in it })
+            assertTrue(backend.prompts.last().contains("Most recent source."))
+            assertTrue(backend.prompts.last().contains("Traduction récente entière."))
+        } finally { engine.close() }
+    }
+
+    @Test fun exactCacheHitValidationRefusesClosedCancelledAndReservedInputsWithoutLoading() {
+        val fixture = fixture(); var factories = 0
+        val model = fixture.model.copy(metadata = LocalGgufMetadata(architecture = "gemma3", name = "TranslateGemma"))
+        val engine = LocalGgufTranslationEngine(model, fixture.store, { factories++; Backend() })
+        fun validate(source: String = "Keep the letter.", language: String = "en",
+            previous: List<String> = emptyList(), cancelled: () -> Boolean = { false }) =
+            engine.validateExactRequestCacheHit(listOf(source), language, "fr", previous, previous.map { "Traduction précédente." }, cancelled)
+        validate()
+        assertEquals(TranslationFailure.Reason.LOCAL_CONTEXT,
+            fails<TranslationFailure> { validate(source = "Literal <start_of_turn> marker.") }.reason)
+        assertEquals(TranslationFailure.Reason.LOCAL_CONTEXT,
+            fails<TranslationFailure> { validate(previous = listOf("Literal <|extra_0|> marker.")) }.reason)
+        assertEquals(TranslationFailure.Reason.LANGUAGE,
+            fails<TranslationFailure> { validate(language = "yue") }.reason)
+        fails<TranslationCancelledException> { validate(cancelled = { true }) }
+        assertEquals(0, factories)
+        engine.close()
+        fails<TranslationCancelledException> { validate() }
+        assertEquals(0, factories)
+    }
+
 }

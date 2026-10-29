@@ -11,27 +11,35 @@ internal object LocalGgufBenchmarkReport {
         value != null && value.observedAtMs > 0 && readAtMs >= value.observedAtMs && readAtMs - value.observedAtMs <= 2_000
 
     fun render(state: LocalGgufBenchmark.State): String = buildString {
-        val varied = state.options.scenario == LocalGgufBenchmark.Scenario.VARIED
-        append(if (varied) "Comparatif local CPU / GPU — série synthétique de sous-titres\n"
-            else "Comparatif local CPU / GPU — texte synthétique intégré\n")
+        val varied = state.options.scenario != LocalGgufBenchmark.Scenario.SHORT
+        val contextComparison = state.options.scenario == LocalGgufBenchmark.Scenario.CONTEXT_POLICIES
+        append(when {
+            contextComparison -> "Comparatif local GPU — stratégies de contexte\n"
+            varied -> "Comparatif local CPU / GPU — série synthétique de sous-titres\n"
+            else -> "Comparatif local CPU / GPU — texte synthétique intégré\n"
+        })
         append(state.status)
         if (state.modelSha256.isEmpty()) { append("\nAucun modèle n’a été exécuté."); return@buildString }
         state.platform?.let { append('\n'); append(it.render()) }
         append("\nModèle : "); append(state.modelBytes); append(" octets ; SHA-256 "); append(state.modelSha256)
         append("\nProfil demandé : "); append(state.profile.label); append(" ; threads CPU demandés : "); append(state.threads)
         if (varied) {
-            val cues = LocalGgufBenchmarkCorpus.cues
-            append("\nCorpus : "); append(LocalGgufBenchmarkCorpus.VERSION)
+            val cues = LocalGgufBenchmark.cues(state.options)
+            append("\nCorpus : "); append(if (contextComparison && state.options.qualityCorpus) LocalGgufQualityCorpus.VERSION
+                else LocalGgufBenchmarkCorpus.VERSION)
             append(" ; "); append(cues.size); append(" occurrences ; "); append(cues.map { it.source }.distinct().size)
             append(" textes distincts. Identifiants et minutages synthétiques conservés, répétitions et chevauchements inclus.")
-            append("\nLe contexte comporte au plus deux paires source/traduction terminées du même mode. Des sorties différentes modifient aussi les contextes suivants ; les entrées en tokens ne sont donc pas supposées identiques.")
+            if (contextComparison) append("\nTrois stratégies explicites sont comparées : deux échanges précédents, occurrence seule, puis blocs de six occurrences. Chaque stratégie recommence avec une session distincte et uniquement ses propres traductions terminées. Aucune stratégie n’est sélectionnée automatiquement comme meilleure.")
+            else { append("\nStratégie de contexte demandée : "); append(state.options.contextPolicy.label) }
+            append("\nLe contexte est reconstruit uniquement à partir de paires source/traduction complètes de la même session. Des sorties différentes modifient aussi les contextes suivants ; les entrées en tokens ne sont donc pas supposées identiques. Les limites natives peuvent retirer les paires anciennes entières sans tronquer la source courante.")
         } else { append("\nSource anglaise fixe : "); append(LocalGgufBenchmark.SOURCE) }
-        append("\nCible : français ; contexte personnel vide ; mêmes poids, profil et limites de génération pour les deux modes.")
-        append(if (state.options.order == LocalGgufBenchmark.Order.CPU_THEN_GPU)
+        append("\nCible : français ; contexte personnel vide ; mêmes poids, profil et limites de génération pour tous les passages.")
+        if (contextComparison) append("\nOrdre fixe des stratégies : deux échanges précédents, occurrence seule, blocs de six. GPU OpenCL strict pour chacune ; aucun passage CPU ni réouverture supplémentaire. Cet ordre, le cache système et la chauffe peuvent influencer la comparaison.")
+        else append(if (state.options.order == LocalGgufBenchmark.Order.CPU_THEN_GPU)
             "\nOrdre fixe : CPU puis GPU OpenCL strict." else "\nOrdre fixe : GPU OpenCL strict puis CPU.")
         append(if (varied) " Une session et un chargement par série ; chaque occurrence est traitée dans son ordre."
             else " Deux passages identiques par mode : premier passage puis réutilisation éventuelle du préfixe.")
-        if (state.options.reopenForLoad) append("\nRéouverture demandée : après chaque série libérée, une nouvelle session traduit seulement la première occurrence. Les caches ne sont pas effacés ; ceci n’est pas une mesure garantie à cache froid.")
+        if (state.options.reopenForLoad && !contextComparison) append("\nRéouverture demandée : après chaque série libérée, une nouvelle session traduit seulement la première occurrence. Les caches ne sont pas effacés ; ceci n’est pas une mesure garantie à cache froid.")
         append("\nLes durées d’appel et de mode comprennent déjà le chargement éventuel ; sa mesure séparée détaille le total.")
         append("\nLes modèles ne sont jamais chargés simultanément. L’ordre, le cache système, la chauffe et les autres applications peuvent influencer ces mesures. Ces mesures ne prouvent pas la qualité sur un film.")
         append("\nLes réponses validées le sont structurellement : une réponse reçue et terminée par occurrence. La conservation des identifiants et minutages ne prouve pas la fidélité sémantique ; relire les sources et sorties.")
@@ -41,6 +49,7 @@ internal object LocalGgufBenchmarkReport {
         state.runs.forEach { run ->
             append("\n\nMode demandé : "); append(run.requestedMode)
             append(if (run.reopening) " — session de réouverture, une occurrence" else " — session principale")
+            if (varied) { append("\nStratégie de contexte : "); append(run.contextPolicy.label) }
             append("\nAvant : "); append(run.before.render())
             append("\nChargement du modèle : "); append(when {
                 run.loadMs > 0 -> "${run.loadMs} ms"
@@ -91,10 +100,16 @@ internal object LocalGgufBenchmarkReport {
                 else "\nRésultat : ${run.samples.size} réponses terminées, sans classement automatique de fidélité.")
         }
         val mainRuns = state.runs.filterNot { it.reopening }
-        if (mainRuns.size == 2 && mainRuns.all { it.failure == null && it.samples.size == it.plannedSamples }) {
+        if (!contextComparison && mainRuns.size == 2 && mainRuns.all { it.failure == null && it.samples.size == it.plannedSamples }) {
             val same = mainRuns[0].samples.map { it.output } == mainRuns[1].samples.map { it.output }
             append(if (same) "\n\nLes sorties CPU et GPU sont identiques sur ces passages ; cela ne prouve pas leur fidélité linguistique."
                 else "\n\nLes sorties CPU et GPU diffèrent : examine les textes avant d’interpréter les durées. Aucun classement de qualité automatique.")
+        }
+        if (contextComparison && mainRuns.size == LocalGgufContextPolicy.entries.size &&
+            mainRuns.all { it.failure == null && it.samples.size == it.plannedSamples }) {
+            val same = mainRuns.map { it.samples.map { sample -> sample.output } }.distinct().size == 1
+            append(if (same) "\n\nLes trois stratégies ont produit les mêmes textes sur ce corpus ; cela ne prouve pas leur fidélité linguistique."
+                else "\n\nLes stratégies produisent des textes différents : comparer chaque source et traduction. Aucun score de fidélité ni choix automatique n’est établi.")
         }
         if (varied) append("\nLes relevés du lecteur sont ponctuels et ne prouvent ni continuité, ni fluidité, ni vocalisation complète. Ils n’actionnent jamais Lire, Pause ou la voix. Aucune identité, URI ou phrase du média ouvert ne figure dans ce rapport.")
         append("\nLa mémoire résidente et son pic concernent tout le processus de calcul, sans comptabilité complète des allocations GPU. Les relevés RAM et thermiques sont ponctuels. Aucun test NPU ni classement automatique de fidélité linguistique.")
