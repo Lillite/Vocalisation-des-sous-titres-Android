@@ -52,6 +52,12 @@ class LocalGgufRuntimeAndroidTest {
             assertTrue(info.modelBytes > 0 && info.modelParameters > 0)
             assertEquals(512, info.contextTokens)
             assertEquals("", info.openClTransport)
+            // These measurements must survive the real native/service IPC boundary.
+            val load = requireNotNull(info.loadProfile)
+            assertEquals(1, load.loadAttempts)
+            assertEquals(0L, load.openClPrepareMs)
+            assertTrue(load.modelLoadMs + load.contextInitMs <= info.loadMs)
+            assertTrue(load.openTotalMs >= info.loadMs)
             assertTrue(info.processId > 0)
             assertNotEquals(Process.myPid(), info.processId)
             for (prompt in listOf("The train leaves at seven.", "An independent synthetic request with é and 🚆.")) {

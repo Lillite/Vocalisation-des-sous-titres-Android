@@ -1,10 +1,16 @@
-# Accès OpenCL direct — candidate 0.5.7
+# Accès OpenCL direct — préversion publiée 0.5.7
 
 [Accueil](../README.md) · [Notes de version](releases/0.5.7-directcl.md) · [Validation](../TESTING.md) · [Diagnostic publié 0.5.6](DIAGNOSTIC_OPENCL_056.md)
 
-La candidate **0.5.7-directcl / code 14** prépare un accès direct facultatif au pilote OpenCL déjà fourni par le téléphone. Elle conserve le modèle importé, ses poids, sa quantification et les consignes de traduction. Le CPU reste indépendant du pilote graphique.
+La préversion publiée **0.5.7-directcl / code 14** apporte un accès direct facultatif au pilote OpenCL déjà fourni par le téléphone. Elle conserve le modèle importé, ses poids, sa quantification et les consignes de traduction. Le CPU reste indépendant du pilote graphique.
 
-## Ce que le rapport du téléphone établit
+## Résultat publié et essai reçu
+
+La [0.5.7 publiée](releases/0.5.7-directcl.md) a réussi 708 tests, puis la reconstruction, la signature et le téléchargement public vérifiés. Son rapport reçu du OnePlus le 29 octobre 2026 confirme le parcours direct et du calcul sur **Adreno 840** : 14 898 puis 14 832 nœuds GPU, générations à **20,09 et 20,18 tokens/s**, contre **9,49 et 9,30** sur CPU. Le chargement GPU reste plus long : **34,254 s**, contre **10,264 s**. Le court essai répète le même texte et ne prédit pas un film entier.
+
+Le [comparatif étendu préparé en 0.5.8](COMPARATIF_LOCAL_058.md) doit ensuite distinguer les phases du chargement et traiter des occurrences variées. Les sections suivantes conservent le diagnostic initial qui a motivé la liaison directe ; elles ne demandent pas de répéter une validation déjà terminée.
+
+## Ce que le rapport initial de la 0.5.6 établissait
 
 Le rapport de la **0.5.6-opencl**, exécutée sur **OnePlus CPH2747, Android 17 / API 37, arm64-v8a**, a confirmé deux réponses CPU complètes avec quatre threads. Le modèle de 2 489 909 760 octets et le texte synthétique étaient identiques aux essais précédents. Le mode CPU a pris **17,943 s**, avec **12,41 puis 11,84 tokens par seconde** pour la génération, et **92 tokens d’entrée sur 93 réutilisés** au deuxième passage.
 

@@ -60,7 +60,8 @@ class LocalGgufBenchmarkRobolectricTest {
                 backend = config.localExecution, loadMs = 10))
             val actualGpu = config.localExecution == "OPENCL" && gpuObserved
             listener?.invoke(LocalTranslationPerformance(requestedMode = config.localExecution,
-                backend = if (actualGpu) "OpenCL" else "CPU", gpuObserved = actualGpu,
+                backend = if (actualGpu) "OPENCL" else "CPU", gpuObserved = actualGpu,
+                openClTransport = if (actualGpu) "DIRECT" else "",
                 gpuGraphNodes = if (actualGpu) 8 else 0, device = "synthetic test device",
                 promptMs = if (calls == 1) 12 else 1, generationMs = 20, endToEndMs = 40,
                 promptTokens = 15, generatedTokens = 5, cachedPromptTokens = if (calls == 1) 0 else 14,
