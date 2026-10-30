@@ -1,0 +1,9 @@
+{
+  "tag": "v0.5.12-runtime",
+  "source_sha": "9f19792656b6a274297a3e23c2d142ddfdb33acc",
+  "apk_sha256": "7c545a143950acf7d893a2ec65df2c1587cf7e588801d462f7391e5cd9c97e56",
+  "signer_sha256": "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d",
+  "apk_file": "release-upload/SousTitresVoix-0.5.12-runtime.apk",
+  "notes_file": "release-upload/notes.md",
+  "title": "Sous-titres en voix 0.5.12 — Calcul local, Qwen3.5 et diagnostic de chargement (préversion)"
+}
