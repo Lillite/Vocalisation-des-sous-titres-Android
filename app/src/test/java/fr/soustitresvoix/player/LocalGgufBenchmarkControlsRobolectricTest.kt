@@ -87,10 +87,10 @@ class LocalGgufBenchmarkControlsRobolectricTest {
                                 if (releaseGeneration.await(10, TimeUnit.MILLISECONDS)) break
                             }
                             if (cancelled()) throw TranslationCancelledException()
-                            val gpu = config.localExecution == "OPENCL"
+                            val gpu = config.localExecution in setOf("OPENCL", "VULKAN")
                             if (calls++ == 0) listener?.invoke(LocalTranslationPerformance(phase = "load",
                                 requestedMode = config.localExecution, backend = config.localExecution, loadMs = 1,
-                                openClTransport = if (gpu) "DIRECT" else ""))
+                                openClTransport = if (config.localExecution == "OPENCL") "DIRECT" else ""))
                             val frame = LocalTranslationPerformance(requestedMode = config.localExecution,
                                 backend = config.localExecution, device = if (largeReport) "d".repeat(300) else "synthetic measured backend",
                                 gpuObserved = gpu, gpuGraphNodes = if (gpu) { if (largeReport) Long.MAX_VALUE else 1 } else 0,
@@ -101,7 +101,7 @@ class LocalGgufBenchmarkControlsRobolectricTest {
                                 availableRamBytes = if (largeReport) Long.MAX_VALUE else 0,
                                 fallbackReason = if (largeReport) "f".repeat(300) else "",
                                 promptTokens = 4, promptEvaluatedTokens = 4, generatedTokens = 2,
-                                openClTransport = if (gpu) "DIRECT" else "")
+                                openClTransport = if (config.localExecution == "OPENCL") "DIRECT" else "")
                             repeat(if (largeReport) 2 else 1) { listener?.invoke(frame) }
                             return listOf(if (largeReport) "x".repeat(2048) else "Traduction synthétique complète.")
                         } finally { generationExited.countDown() }
@@ -132,9 +132,12 @@ class LocalGgufBenchmarkControlsRobolectricTest {
         private fun views(dialog: AlertDialog) = descendants(requireNotNull(dialog.window).decorView)
         private fun button(dialog: AlertDialog, label: String) = views(dialog).filterIsInstance<Button>().single { it.text.toString() == label }
         private fun text(dialog: AlertDialog) = views(dialog).filterIsInstance<TextView>().joinToString("\n") { it.text.toString() }
+        private fun gpu(dialog: AlertDialog) = views(dialog).filterIsInstance<Spinner>()
+            .single { it.contentDescription == LocalGgufBenchmarkControls.GPU_LABEL }
         private fun order(dialog: AlertDialog) = views(dialog).filterIsInstance<Spinner>()
             .single { it.contentDescription == LocalGgufBenchmarkControls.ORDER_LABEL }
-        private fun reopening(dialog: AlertDialog) = views(dialog).filterIsInstance<CheckBox>().single()
+        private fun reopening(dialog: AlertDialog) = views(dialog).filterIsInstance<CheckBox>()
+            .single { it.text.toString() == LocalGgufBenchmarkControls.REOPEN_LABEL }
         private fun await(message: String, condition: () -> Boolean) {
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
             while (!condition() && System.nanoTime() < deadline) {
@@ -229,7 +232,7 @@ class LocalGgufBenchmarkControlsRobolectricTest {
             staleStart.performClick()
             await("Synthetic backend must have entered its first call") { f.generationEntered.count == 0L }
             assertTrue(f.controls.busy)
-            assertFalse(views(panel).filterIsInstance<EditText>().single().isEnabled)
+            assertTrue(views(panel).filterIsInstance<EditText>().all { !it.isEnabled })
             assertTrue(views(panel).filterIsInstance<Spinner>().all { !it.isEnabled })
             assertFalse(reopening(panel).isEnabled)
             assertFalse(button(panel, "Comparer CPU puis GPU sur le texte intégré").isEnabled)
@@ -270,13 +273,15 @@ class LocalGgufBenchmarkControlsRobolectricTest {
                     View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)); decor.layout(0, 0, width, height)
                 val scroll = views(panel).filterIsInstance<ScrollView>().single { it.tag == LocalGgufBenchmarkControls.SCROLL_TAG }
                 assertTrue(scroll.getChildAt(0).height > scroll.height)
-                val input = views(panel).filterIsInstance<EditText>().single()
+                val input = views(panel).filterIsInstance<EditText>().single { it.tag == LocalGgufBenchmarkControls.THREADS_TAG }
                 assertEquals("4", input.text.toString())
                 assertEquals(1, views(panel).filterIsInstance<TextView>().count { it.labelFor == input.id })
                 val profile = views(panel).filterIsInstance<Spinner>()
                     .single { it.contentDescription == "Profil de traduction du modèle GGUF" }
                 assertEquals("Profil de traduction du modèle GGUF", profile.contentDescription)
-                assertEquals(3, views(panel).filterIsInstance<Spinner>().count())
+                assertEquals(4, views(panel).filterIsInstance<Spinner>().count { it.contentDescription in listOf(
+                    "Profil de traduction du modèle GGUF", "Contexte des sous-titres GGUF",
+                    LocalGgufBenchmarkControls.GPU_LABEL, LocalGgufBenchmarkControls.ORDER_LABEL) })
                 val contextPolicy = views(panel).filterIsInstance<Spinner>()
                     .single { it.contentDescription == "Contexte des sous-titres GGUF" }
                 assertEquals(1, views(panel).filterIsInstance<TextView>().count { it.labelFor == contextPolicy.id })
@@ -287,6 +292,7 @@ class LocalGgufBenchmarkControlsRobolectricTest {
                         for (line in 0 until layout.lineCount) assertEquals(0, layout.getEllipsisCount(line))
                     }
                 }
+                assertEquals(1, views(panel).filterIsInstance<TextView>().count { it.labelFor == gpu(panel).id })
                 assertEquals(1, views(panel).filterIsInstance<TextView>().count { it.labelFor == order(panel).id })
                 assertEquals(LocalGgufBenchmarkControls.REOPEN_LABEL, reopening(panel).text.toString())
                 for (action in descendants(scroll).filterIsInstance<Button>()) {
@@ -321,6 +327,32 @@ class LocalGgufBenchmarkControlsRobolectricTest {
             assertFalse(report.contains("synthetic private context must not enter a benchmark"))
             assertFalse(report.contains("Réouverture demandée"))
             assertTrue(reopening(panel).isChecked)
+        }
+    }
+
+
+    @Test fun vulkanSelectionIsPassivePersistsAcrossPanelsAndAppliesToEveryContextSession() {
+        Fixture(measured = true).use { f ->
+            var panel = f.open()
+            val preferences = f.activity.getSharedPreferences("translation-choices-v1", Context.MODE_PRIVATE)
+            val originalPreferences = preferences.all.toMap()
+            assertEquals(0, gpu(panel).selectedItemPosition)
+            gpu(panel).setSelection(1)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(0, f.engines)
+            assertEquals(originalPreferences, preferences.all)
+            panel.dismiss(); panel = f.open()
+            assertEquals(1, gpu(panel).selectedItemPosition)
+            assertEquals(0, f.engines)
+            button(panel, LocalGgufBenchmarkControls.QUALITY_START_LABEL).performClick()
+            await("All selected Vulkan policy sessions must finish") { !f.controls.busy }
+            assertEquals(listOf("VULKAN", "VULKAN", "VULKAN"), f.openedModes.toList())
+            assertEquals(LocalGgufQualityCorpus.cues.map { it.source }.let { it + it + it }, f.inputs.toList())
+            button(panel, "Copier le rapport CPU / GPU").performClick()
+            val report = f.activity.getSystemService(ClipboardManager::class.java).primaryClip!!.getItemAt(0).text.toString()
+            assertTrue(report.contains("GPU Vulkan strict pour chacune"))
+            assertFalse(report.contains("GPU OpenCL strict"))
+            assertTrue(gpu(panel).isEnabled)
         }
     }
 

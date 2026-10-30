@@ -193,7 +193,8 @@ internal class LocalSrtTranslationControls(
             val language = source.text.toString().trim()
             val config = TranslationProviderConfig(TranslationProvider.LOCAL_GGUF,
                 localModel = model, localThreads = count, localContext = context.text.toString(),
-                localExecution = models.execution, localProfile = models.profile, localContextPolicy = models.contextPolicy)
+                localExecution = models.execution, localProfile = models.profile, localContextPolicy = models.contextPolicy,
+                localLoadSettings = models.loadSettings)
             val sourceOwner = sourceSelection
             try { TranslationEngines.validateForRequest(config, language, "fr") }
             catch (failure: TranslationFailure) { message(failure.message ?: "Configuration locale invalide."); return@button }
@@ -206,7 +207,7 @@ internal class LocalSrtTranslationControls(
                         panel?.isShowing != true || busy || models.busy || readingMetadata || otherPreparationBusy()) return@setPositiveButton
                     preferences.edit().putString("language", language).putInt("local-threads", count)
                         .putString("local-context", config.localContext).apply()
-                    models.saveChoices(config.localExecution, config.localProfile, config.localContextPolicy)
+                    models.saveChoices(config.localExecution, config.localProfile, config.localContextPolicy, config.localLoadSettings)
                     localStatus = null; job.start(language, config)
                 }.setNegativeButton("Annuler", null).show()
         })

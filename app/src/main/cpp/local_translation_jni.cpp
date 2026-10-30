@@ -46,7 +46,8 @@ Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeDestroy(JNIEnv *, jobject, 
 }
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeOpen(JNIEnv * env, jobject, jlong id, jbyteArray path,
-        jint threads, jint context, jstring execution, jint gpu_layers, jbyteArray cache_path) {
+        jint threads, jint context, jstring execution, jint gpu_layers, jbyteArray cache_path,
+        jint batch_tokens, jint micro_batch_tokens, jboolean compact_swa, jobject progress) {
     try {
         const auto session = find(id); std::string filename, cache;
         if (!session || !read(env, path, filename, 32768) || !execution || !cache_path) return nullptr;
@@ -55,7 +56,30 @@ Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeOpen(JNIEnv * env, jobject,
         if (!mode_chars) return nullptr;
         const std::string mode(mode_chars);
         env->ReleaseStringUTFChars(execution, mode_chars);
-        return bytes(env, session->open(filename, threads, context, mode, gpu_layers, cache).json());
+        jmethodID on_progress = nullptr;
+        if (progress) {
+            jclass type = env->GetObjectClass(progress);
+            if (type) {
+                on_progress = env->GetMethodID(type, "onProgress", "(Ljava/lang/String;I)V");
+                env->DeleteLocalRef(type);
+            }
+            // Optional telemetry must not prevent the actual model attempt.
+            if (env->ExceptionCheck()) { env->ExceptionClear(); on_progress = nullptr; }
+        }
+        const auto report = [env, progress, on_progress](const char * stage, int percent) {
+            if (!on_progress) return;
+            // Pinned llama.cpp invokes its loading progress callback on the
+            // nativeOpen calling thread. This JNI env and argument stay valid
+            // for the synchronous duration of Session::open.
+            jstring text = env->NewStringUTF(stage);
+            if (text) {
+                env->CallVoidMethod(progress, on_progress, text, static_cast<jint>(percent));
+                env->DeleteLocalRef(text);
+            }
+            if (env->ExceptionCheck()) env->ExceptionClear();
+        };
+        return bytes(env, session->open(filename, threads, context, mode, gpu_layers, cache,
+            batch_tokens, micro_batch_tokens, compact_swa == JNI_TRUE, report).json());
     } catch (...) { return nullptr; }
 }
 extern "C" JNIEXPORT jbyteArray JNICALL

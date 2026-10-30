@@ -127,4 +127,91 @@ class LocalGgufProfilesTest {
         }
     }
 
+    @Test fun verifiedQwen35QuantizationIdentitySelectsNonThinkingWithoutAnInformativeName() {
+        assertEquals("91898433cf5ce0a8f45516a4cc3e9343b6e01d052d01f684309098c66a326c59",
+            LocalGgufProfiles.VERIFIED_QWEN35_9B_Q6)
+        assertEquals(LocalGgufPrompts.Family.QWEN35_INSTRUCT,
+            LocalGgufProfiles.select(LocalGgufProfile.AUTO, "qwen35", "9b", LocalGgufProfiles.VERIFIED_QWEN35_9B_Q6))
+        rejects {
+            LocalGgufProfiles.select(LocalGgufProfile.AUTO, "llama", "9b", LocalGgufProfiles.VERIFIED_QWEN35_9B_Q6)
+        }
+        assertEquals(LocalGgufPrompts.Family.QWEN35_INSTRUCT,
+            LocalGgufProfiles.select(LocalGgufProfile.QWEN35_INSTRUCT, "qwen35", "A custom display name", "0".repeat(64)))
+        rejects {
+            LocalGgufProfiles.select(LocalGgufProfile.QWEN35_INSTRUCT, "gemma3", "Qwen3.5-9B", "0".repeat(64))
+        }
+    }
+
+    @Test fun namedPostTrainedQwen35ModelsUseTheirOwnRawFramingWithoutNativeTemplateCapability() {
+        for (name in listOf("Qwen3.5-0.8B", "Qwen3.5 2B", "Qwen3.5-4B-Instruct", "Qwen3.5-9B", "Qwen3.5-27B-IT"))
+            assertEquals(name, LocalGgufPrompts.Family.QWEN35_INSTRUCT,
+                LocalGgufProfiles.select(LocalGgufProfile.AUTO, "qwen35", name, "0".repeat(64)))
+        assertEquals(LocalGgufPrompts.Family.QWEN35_INSTRUCT,
+            LocalGgufProfiles.select(LocalGgufProfile.AUTO, "qwen35", "Checkpoint", "0".repeat(64),
+                LocalGgufMetadata(basename = "Qwen3.5", finetune = "Instruct")))
+    }
+
+    @Test fun baseCustomAndUnidentifiedQwen35ModelsDoNotAcquireAnInstructProfileFromArchitectureAlone() {
+        for ((name, hints) in listOf(
+            "9b" to LocalGgufMetadata(),
+            "Qwen3.5-9B-Base" to LocalGgufMetadata(),
+            "Qwen3.5-9B-Custom" to LocalGgufMetadata(),
+            "Qwen3.5-9B" to LocalGgufMetadata(finetune = "Custom"),
+            "Qwen3.5-9B" to LocalGgufMetadata(basename = "Qwen3.5", finetune = "Base")))
+            assertEquals(name, LocalGgufPrompts.Family.MODEL_TEMPLATE,
+                LocalGgufProfiles.select(LocalGgufProfile.AUTO, "qwen35", name, "0".repeat(64), hints,
+                    chatTemplateAvailable = true))
+    }
+
+    @Test fun indexIdentityAndNamesRetainPriorityOverGeneralQwen35Hints() {
+        val hints = LocalGgufMetadata(architecture = "qwen35", basename = "Qwen3.5-9B", finetune = "Instruct")
+        assertEquals(LocalGgufPrompts.Family.INDEX_TRANSLATE,
+            LocalGgufProfiles.select(LocalGgufProfile.AUTO, "qwen35", "9b", LocalGgufProfiles.OFFICIAL_INDEX_Q6, hints))
+        assertEquals(LocalGgufPrompts.Family.INDEX_TRANSLATE,
+            LocalGgufProfiles.select(LocalGgufProfile.AUTO, "qwen35", "Index-Translate-9B", "0".repeat(64), hints))
+    }
+
+    @Test fun qwen35PreflightAndCacheIdentityRecognizeTheChangedAutomaticFramingOnly() {
+        fun model(digest: String, metadata: LocalGgufMetadata) =
+            LocalGgufModel(java.io.File("synthetic-no-weights.gguf"), digest, 24, 0, metadata)
+        val named = model("0".repeat(64), LocalGgufMetadata(architecture = "qwen35", name = "Qwen3.5-9B"))
+        val verified = model(LocalGgufProfiles.VERIFIED_QWEN35_9B_Q6, LocalGgufMetadata(architecture = "qwen35", name = "9b"))
+        val unknown = model("0".repeat(64), LocalGgufMetadata(architecture = "qwen35", name = "9b"))
+        val index = model(LocalGgufProfiles.OFFICIAL_INDEX_Q6, LocalGgufMetadata(architecture = "qwen35", name = "9b"))
+        for (candidate in listOf(named, verified)) {
+            assertEquals(LocalGgufPrompts.Family.QWEN35_INSTRUCT, LocalGgufProfiles.preflight(candidate, LocalGgufProfile.AUTO))
+            assertTrue(LocalGgufProfiles.usesQwen35PromptIdentity(candidate))
+            assertTrue(LocalGgufTranslationEngine.identity(candidate).startsWith("local-gguf-v5-"))
+        }
+        assertFalse(LocalGgufProfiles.usesQwen35PromptIdentity(unknown))
+        assertFalse(LocalGgufProfiles.usesQwen35PromptIdentity(index))
+        assertTrue(LocalGgufTranslationEngine.identity(index).startsWith("local-gguf-v4-"))
+        assertTrue(LocalGgufTranslationEngine.identity(unknown, profile = LocalGgufProfile.QWEN35_INSTRUCT)
+            .startsWith("local-gguf-v5-"))
+        assertTrue(LocalGgufTranslationEngine.identity(named, profile = LocalGgufProfile.MODEL_TEMPLATE)
+            .startsWith("local-gguf-v4-"))
+    }
+
+    @Test fun unknownAutomaticMetadataCannotReuseVersionFourBeforeRuntimeQwenDiscovery() {
+        val digest = "0".repeat(64)
+        fun model(metadata: LocalGgufMetadata, sha: String = digest) =
+            LocalGgufModel(java.io.File("synthetic-no-weights.gguf"), sha, 24, 0, metadata)
+        val oldInput = "local-gguf-text-v4\n$digest\n${LocalModelProbe.REVISION}\n4\n2048\n512\nauto\nAUTO\nrecent-two\n"
+        val oldDigest = java.security.MessageDigest.getInstance("SHA-256").digest(oldInput.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(java.util.Locale.ROOT, it.toInt() and 255) }
+        for (metadata in listOf(LocalGgufMetadata(), LocalGgufMetadata(name = "Qwen3.5-9B"),
+            LocalGgufMetadata(architecture = "qwen35", name = "9b"),
+            LocalGgufMetadata(architecture = "qwen35", name = "Checkpoint", chatTemplateAvailable = true))) {
+            val identity = LocalGgufTranslationEngine.identity(model(metadata))
+            assertTrue(identity.startsWith("local-gguf-v5-"))
+            assertNotEquals("local-gguf-v4-$oldDigest", identity)
+        }
+        // Complete non-Qwen architecture keeps the old key even when its
+        // conversation template can only be inspected by the native runtime.
+        assertEquals("local-gguf-v4-$oldDigest",
+            LocalGgufTranslationEngine.identity(model(LocalGgufMetadata(architecture = "llama"))))
+        for (known in listOf(LocalGgufProfiles.OFFICIAL_HY_MT2_Q8, LocalGgufProfiles.OFFICIAL_INDEX_Q6))
+            assertTrue(LocalGgufTranslationEngine.identity(model(LocalGgufMetadata(), known)).startsWith("local-gguf-v4-"))
+    }
+
 }

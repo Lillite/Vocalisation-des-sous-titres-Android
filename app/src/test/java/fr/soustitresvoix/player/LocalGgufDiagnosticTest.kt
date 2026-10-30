@@ -41,6 +41,16 @@ class LocalGgufDiagnosticTest {
         }
     }
 
+    @Test fun vulkanFailuresUseFixedStagesAndDoNotMisidentifyTheOpenClDriver() {
+        val value = sample().put("stage", "VULKAN_DRIVER").put("reason", "DRIVER_NOT_ACCESSIBLE")
+            .put("openClStatus", JSONObject.NULL).put("directPlatforms", -1).put("icdPlatforms", -1)
+        val diagnostic = requireNotNull(LocalGgufDiagnostic.parse(value))
+        assertEquals(LocalGgufDiagnostic.Stage.VULKAN_DRIVER, diagnostic.stage)
+        assertTrue(diagnostic.render().contains("Vulkan"))
+        assertFalse(diagnostic.render().contains("pilote OpenCL"))
+        assertEquals(diagnostic.render(), requireNotNull(LocalGgufDiagnostic.parse(diagnostic.toJson())).render())
+    }
+
     @Test fun malformedOptionalDetailsAreDiscardedWhileTheFailureCodeRemainsVisible() {
         val invalid = listOf(
             sample().put("stage", "/private/synthetic-secret"),

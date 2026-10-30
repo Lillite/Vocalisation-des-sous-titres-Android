@@ -171,6 +171,12 @@ class LocalSrtTranslationControlsRobolectricTest {
             val context = "Jean et Zoé sont frère et sœur. Conserver leurs noms."
             field(panel, "GGUF local : contexte de l’œuvre").setText(context)
             field(panel, "GGUF local : threads de calcul").setText("3")
+            field(panel, "Couches GPU").setText("8")
+            field(panel, "Lot logique").setText("128")
+            field(panel, "Micro-lot").setText("32")
+            views(panel).filterIsInstance<android.widget.CheckBox>().single {
+                it.text.toString().startsWith("Cache d’attention locale compact")
+            }.isChecked = true
             views(panel).filterIsInstance<Spinner>().single { it.contentDescription == "Exécution du modèle GGUF" }.setSelection(1)
             views(panel).filterIsInstance<Spinner>().single { it.contentDescription == "Profil de traduction du modèle GGUF" }.setSelection(2)
             views(panel).filterIsInstance<Spinner>().single { it.contentDescription == "Contexte des sous-titres GGUF" }.setSelection(2)
@@ -189,6 +195,7 @@ class LocalSrtTranslationControlsRobolectricTest {
             assertEquals("CPU", used.localExecution)
             assertEquals(LocalGgufProfile.HY_MT, used.localProfile)
             assertEquals(LocalGgufContextPolicy.BLOCKS_SIX, used.localContextPolicy)
+            assertEquals(LocalGgufLoadSettings(8, 128, 32, true), used.localLoadSettings)
             assertEquals(model.sha256, used.localModel?.sha256)
             assertTrue(text(panel).contains("Occurrences validées : 8 / 8"))
             assertEquals(context, f.activity.getSharedPreferences("translation-choices-v1", Context.MODE_PRIVATE).getString("local-context", null))
@@ -216,7 +223,14 @@ class LocalSrtTranslationControlsRobolectricTest {
                 localThreads = field(reopened, "GGUF local : threads de calcul").text.toString().toInt(),
                 localContext = field(reopened, "GGUF local : contexte de l’œuvre").text.toString(),
                 localExecution = "CPU", localProfile = LocalGgufProfile.HY_MT,
-                localContextPolicy = LocalGgufContextPolicy.BLOCKS_SIX)
+                localContextPolicy = LocalGgufContextPolicy.BLOCKS_SIX,
+                localLoadSettings = LocalGgufLoadSettings(
+                    field(reopened, "Couches GPU").text.toString().toInt(),
+                    field(reopened, "Lot logique").text.toString().toInt(),
+                    field(reopened, "Micro-lot").text.toString().toInt(),
+                    views(reopened).filterIsInstance<android.widget.CheckBox>().single {
+                        it.text.toString().startsWith("Cache d’attention locale compact")
+                    }.isChecked))
             assertEquals(1, views(reopened).filterIsInstance<Spinner>().single { it.contentDescription == "Exécution du modèle GGUF" }.selectedItemPosition)
             assertEquals(2, views(reopened).filterIsInstance<Spinner>().single { it.contentDescription == "Profil de traduction du modèle GGUF" }.selectedItemPosition)
             assertEquals(2, views(reopened).filterIsInstance<Spinner>().single { it.contentDescription == "Contexte des sous-titres GGUF" }.selectedItemPosition)
@@ -230,6 +244,12 @@ class LocalSrtTranslationControlsRobolectricTest {
                 val reader = requireNotNull(ShadowAlertDialog.getLatestAlertDialog())
                 assertEquals(context, field(reader, "GGUF local : contexte de l’œuvre").text.toString())
                 assertEquals("3", field(reader, "GGUF local : threads de calcul").text.toString())
+                assertEquals("8", field(reader, "Couches GPU").text.toString())
+                assertEquals("128", field(reader, "Lot logique").text.toString())
+                assertEquals("32", field(reader, "Micro-lot").text.toString())
+                assertTrue(views(reader).filterIsInstance<android.widget.CheckBox>().single {
+                    it.text.toString().startsWith("Cache d’attention locale compact")
+                }.isChecked)
                 assertEquals(1, views(reader).filterIsInstance<Spinner>().single { it.contentDescription == "Exécution du modèle GGUF" }.selectedItemPosition)
                 assertEquals(2, views(reader).filterIsInstance<Spinner>().single { it.contentDescription == "Profil de traduction du modèle GGUF" }.selectedItemPosition)
                 assertEquals(2, views(reader).filterIsInstance<Spinner>().single { it.contentDescription == "Contexte des sous-titres GGUF" }.selectedItemPosition)
@@ -293,7 +313,15 @@ class LocalSrtTranslationControlsRobolectricTest {
                 val input = field(panel, "Langue originale des sous-titres")
                 input.requestFocus()
                 val measures = button(panel, "Consulter les dernières mesures du moteur local")
-                assertFalse(measures.isEnabled)
+                assertTrue("The attempt report must be available before the first successful measurement", measures.isEnabled)
+                measures.performClick()
+                val initialDetails = requireNotNull(ShadowAlertDialog.getLatestAlertDialog())
+                assertTrue(text(initialDetails).contains("Préparation locale commencée"))
+                assertTrue(text(initialDetails).contains("Aucun chargement ou calcul réussi"))
+                assertFalse(text(initialDetails).contains("GPU réellement observé : oui"))
+                initialDetails.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+                shadowOf(Looper.getMainLooper()).idle()
+                input.requestFocus()
                 for (tokens in 1..3) {
                     requireNotNull(observations.get()).invoke(LocalTranslationPerformance(backend = "OPENCL",
                         device = "Adreno synthétique", gpuObserved = true, generationMs = 10, generatedTokens = tokens))
@@ -335,7 +363,7 @@ class LocalSrtTranslationControlsRobolectricTest {
                 val scroll = views(panel).filterIsInstance<ScrollView>().single { it.tag == LocalSrtTranslationControls.SCROLL_TAG }
                 assertTrue(scroll.getChildAt(0).height > scroll.height)
                 val inputs = views(panel).filterIsInstance<EditText>().toList()
-                assertEquals(3, inputs.size)
+                assertEquals(6, inputs.size)
                 for (input in inputs) {
                     assertEquals(1, views(panel).filterIsInstance<TextView>().count { it.labelFor == input.id })
                     assertEquals(View.IMPORTANT_FOR_AUTOFILL_NO, input.importantForAutofill)
@@ -343,7 +371,7 @@ class LocalSrtTranslationControlsRobolectricTest {
                     assertTrue(input.textSize >= 18 * density)
                 }
                 val actions = descendants(scroll).filterIsInstance<Button>().toList()
-                assertEquals(14, actions.size)
+                assertEquals(17, actions.size)
                 for (action in actions) {
                     assertNull(action.ellipsize)
                     assertTrue(action.maxLines > 1)

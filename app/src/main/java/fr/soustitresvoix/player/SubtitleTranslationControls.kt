@@ -164,7 +164,8 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
             localContext = if (selected() == TranslationProvider.LOCAL_GGUF) localContext.text.toString() else "",
             localExecution = if (selected() == TranslationProvider.LOCAL_GGUF) localModels.execution else "AUTO",
             localProfile = if (selected() == TranslationProvider.LOCAL_GGUF) localModels.profile else LocalGgufProfile.AUTO,
-            localContextPolicy = if (selected() == TranslationProvider.LOCAL_GGUF) localModels.contextPolicy else LocalGgufContextPolicy.RECENT_TWO)
+            localContextPolicy = if (selected() == TranslationProvider.LOCAL_GGUF) localModels.contextPolicy else LocalGgufContextPolicy.RECENT_TWO,
+            localLoadSettings = if (selected() == TranslationProvider.LOCAL_GGUF) localModels.loadSettings else LocalGgufLoadSettings())
         fun credentialScope(): String? = if (selected() != TranslationProvider.LIBRE) selected().id else
             try { providerIdentity(TranslationProviderConfig(TranslationProvider.LIBRE, endpoint = endpoint.text.toString().trim())) }
             catch (_: Exception) { null }
@@ -278,7 +279,8 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
                         pendingPreview = false; clearLocalStatus()
                         if (provider == TranslationProvider.LOCAL_GGUF)
                             storage.edit().putString("local-context", config.localContext).putInt("local-threads", config.localThreads).apply()
-                        if (provider == TranslationProvider.LOCAL_GGUF) localModels.saveChoices(config.localExecution, config.localProfile, config.localContextPolicy)
+                        if (provider == TranslationProvider.LOCAL_GGUF) localModels.saveChoices(config.localExecution, config.localProfile,
+                            config.localContextPolicy, config.localLoadSettings)
                         if (saveKey && config.apiKey.isNotBlank()) {
                             try { credentials.save(credentialIdentity, config.apiKey) }
                             catch (_: Exception) { showLocalStatus("La clé n’a pas pu être mémorisée. Elle sera utilisée uniquement pour cette demande.") }

@@ -19,17 +19,19 @@ class LocalGgufDiagnostic private constructor(
         OPENCL_DRIVER("accès au pilote OpenCL"),
         OPENCL_DIRECT("interrogation directe du pilote"),
         OPENCL_ICD("interrogation par le chargeur ICD"),
-        OPENCL_DEVICE("détection du périphérique de calcul"),
+        OPENCL_DEVICE("détection du périphérique OpenCL"),
+        VULKAN_DRIVER("accès au pilote Vulkan"),
+        VULKAN_DEVICE("détection du périphérique Vulkan"),
         MODEL_LOAD("chargement des poids du modèle"),
         CONTEXT_INIT("création du contexte de calcul"),
         GENERATION("calcul du texte")
     }
 
     enum class Reason(val label: String) {
-        BACKEND_NOT_COMPILED("Le backend OpenCL n’est pas compilé pour cette architecture de l’application."),
+        BACKEND_NOT_COMPILED("Le moteur GPU demandé n’est pas compilé pour cette architecture de l’application."),
         CPU_BACKEND_MISSING("Le backend CPU requis n’a pas été trouvé."),
-        DRIVER_NOT_ACCESSIBLE("La bibliothèque du pilote OpenCL n’est pas accessible à l’application."),
-        ENTRY_POINTS_MISSING("Les fonctions requises du pilote OpenCL sont absentes."),
+        DRIVER_NOT_ACCESSIBLE("La bibliothèque du pilote demandé n’est pas accessible à l’application."),
+        ENTRY_POINTS_MISSING("Les fonctions requises du pilote demandé sont absentes."),
         DIRECT_SYMBOLS_MISSING("Une ou plusieurs fonctions OpenCL nécessaires au calcul direct sont absentes du pilote."),
         DIRECT_QUERY_FAILED("L’interrogation directe des plateformes du pilote a échoué."),
         DIRECT_NO_PLATFORM("L’interrogation directe du pilote n’a trouvé aucune plateforme OpenCL."),
@@ -37,8 +39,8 @@ class LocalGgufDiagnostic private constructor(
         ICD_CONFIGURATION_FAILED("La configuration locale du chargeur ICD a échoué."),
         ICD_QUERY_FAILED("Le chargeur ICD n’a pas pu interroger les plateformes OpenCL."),
         ICD_NO_PLATFORM("Le chargeur ICD n’a trouvé aucune plateforme OpenCL utilisable."),
-        REGISTRATION_FAILED("L’enregistrement du backend OpenCL a échoué."),
-        NO_SUPPORTED_GPU("Aucun GPU pris en charge n’a été exposé par le backend OpenCL."),
+        REGISTRATION_FAILED("L’enregistrement du moteur GPU demandé a échoué."),
+        NO_SUPPORTED_GPU("Aucun GPU pris en charge n’a été exposé par le moteur demandé."),
         DEVICE_NOT_REGISTERED("Le périphérique OpenCL n’a pas été retrouvé dans le registre des moteurs."),
         MODEL_LOAD_FAILED("Le chargement des poids avec le moteur sélectionné a échoué ; la cause précise n’est pas établie."),
         CONTEXT_INIT_FAILED("La création du contexte avec le moteur sélectionné a échoué ; la cause précise n’est pas établie."),
@@ -55,7 +57,10 @@ class LocalGgufDiagnostic private constructor(
             append("Fonction OpenCL requise absente : "); append(it); append(".\n")
         }
         append("Temps natif observé avant ce diagnostic : "); append(elapsedMs); append(" ms.")
-        openClStatus?.let { append("\nCode OpenCL observé : "); append(it); append('.') }
+        openClStatus?.let {
+            append(if (stage == Stage.VULKAN_DRIVER || stage == Stage.VULKAN_DEVICE) "\nCode du pilote observé : " else "\nCode OpenCL observé : ")
+            append(it); append('.')
+        }
         if (directPlatforms >= 0) { append("\nPlateformes du pilote, accès direct : "); append(directPlatforms); append('.') }
         if (icdPlatforms >= 0) { append("\nPlateformes exposées par le chargeur ICD : "); append(icdPlatforms); append('.') }
         if (gpuDevices >= 0) { append("\nPériphériques GPU pris en charge observés : "); append(gpuDevices); append('.') }

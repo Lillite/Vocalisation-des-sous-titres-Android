@@ -2,9 +2,21 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
-## 0.5.11-models — candidate de compatibilité des modèles GGUF
+## 0.5.12-runtime — candidate de calcul local et de diagnostic du chargement
 
-VersionCode **18**, identité Traduction et certificat durable conservés. [Guide](docs/COMPATIBILITE_GGUF_0511.md) · [Notes et limites](docs/releases/0.5.11-models.md). La 0.5.2 reste la dernière stable. Les preuves propres à cette candidate doivent être établies avant distribution.
+VersionCode **19**, identité Traduction et certificat durable conservés. [Guide](docs/TRADUCTION_RUNTIME_0512.md) · [Notes et limites](docs/releases/0.5.12-runtime.md). La 0.5.2 reste la dernière stable. Les preuves de cette candidate doivent être établies avant distribution.
+
+- Profil Qwen3.5 instruct avec encadrement explicite de réponse sans raisonnement ; priorité des familles spécialisées et refus des marqueurs réservés conservés.
+- Moteur Vulkan facultatif sur ARM64 et choix explicite du GPU dans le comparatif ; OpenCL reste disponible et le CPU doit rester indépendant de l’initialisation des pilotes GPU.
+- Réglages de lots, micro-lots, couches GPU et cache compact d’attention locale pour étudier les allocations sans remplacer les poids ni raccourcir le texte source.
+- Rapport disponible dès le début du chargement ; dernières étapes et diagnostic conservés lors d’un échec avant la première occurrence ; distinction entre délai dépassé et disparition du processus.
+- Motif Android rapproché du processus de calcul lorsque disponible ; cause indéterminée conservée si le système ne permet pas de conclure.
+- Poids, quantification, précision F16 du cache, contexte natif de 2 048 tokens, borne d’une génération de 512 tokens, reprise, occurrences et minutages conservés. Aucun classement de qualité ni chargement de TranslateGemma 12B sur le téléphone n’est déduit de ces changements.
+- Aucun poids téléchargé automatiquement, nouveau service réseau, OCR de film ou calcul NPU ajouté.
+
+## 0.5.11-models — compatibilité des modèles GGUF publiée
+
+VersionCode **18**, identité Traduction et certificat durable conservés. [Guide](docs/COMPATIBILITE_GGUF_0511.md) · [Notes et limites](docs/releases/0.5.11-models.md). La 0.5.2 reste la dernière stable. La [PR #27](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/27) a réussi **823 tests avant fusion**, dont 112 sur l’APK release sous Android 17. Reconstruction, signature et téléchargement public ont ensuite été vérifiés.
 
 - Ajout du profil **Index-Translate**, distinct de TranslateGemma et Hy-MT ; l’architecture native seule ne détermine pas les consignes de traduction.
 - En mode automatique, conservation des familles spécialisées reconnues puis prise en charge du gabarit de conversation intégré des autres GGUF instruct nativement compatibles.

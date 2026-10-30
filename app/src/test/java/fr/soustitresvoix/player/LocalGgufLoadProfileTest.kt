@@ -39,6 +39,20 @@ class LocalGgufLoadProfileTest {
         }
     }
 
+    @Test fun optionalVulkanPreparationRemainsDistinctAndMustFitTheMeasuredTotal() {
+        val measured = profile().put("openClPrepareMs", 0).put("vulkanPrepareMs", 5)
+        val parsed = requireNotNull(LocalGgufLoadProfile.fromResponse(JSONObject().put("loadProfile", measured)))
+        assertEquals(5L, parsed.vulkanPrepareMs)
+        assertTrue(parsed.render().contains("Préparation de l’accès Vulkan : 5 ms"))
+        assertEquals(0L, requireNotNull(LocalGgufLoadProfile.fromResponse(JSONObject().put("loadProfile", profile()))).vulkanPrepareMs)
+        for (bad in listOf<Any>(JSONObject.NULL, "5", 5.0, true, -1, 9, Long.MAX_VALUE)) {
+            try {
+                LocalGgufLoadProfile.fromResponse(JSONObject().put("loadProfile", profile().put("vulkanPrepareMs", bad)))
+                fail("An invalid Vulkan preparation duration was accepted")
+            } catch (_: Exception) { }
+        }
+    }
+
     @Test fun renderingKeepsLoadPhasesDistinctFromGenerationAndDoesNotSumNestedTotals() {
         val profile = LocalGgufLoadProfile(2, 3, 30, 20, 60, 2)
         val loaded = LocalTranslationPerformance(phase = "load", loadMs = 52, loadProfile = profile).render()

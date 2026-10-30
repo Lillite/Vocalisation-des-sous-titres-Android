@@ -296,18 +296,36 @@
       },
       "id": 428124298,
       "source_commit": "911888461e046418fe029b74d09b22fc62af687f"
+    },
+    {
+      "tag": "v0.5.11-models",
+      "title": "Sous-titres en voix 0.5.11 — Modèles GGUF et profils de traduction (préversion)",
+      "prerelease": true,
+      "latest": false,
+      "notes": "docs/releases/0.5.11-models.md",
+      "asset": {
+        "name": "SousTitresVoix-0.5.11-models.apk",
+        "version_name": "0.5.11-models",
+        "version_code": 18,
+        "application_id": "fr.soustitresvoix.player.translation",
+        "id": 689965351,
+        "size": 53742577,
+        "sha256": "4fc2e6900b6a4d19dc1ac57fedba9f840543cd5a827aff487617c0d9e67ae3f3"
+      },
+      "id": 428415208,
+      "source_commit": "5b7071d717308d8f97a7daaae909ec20bf633c70"
     }
   ],
   "next_release": {
-    "tag": "v0.5.11-models",
-    "title": "Sous-titres en voix 0.5.11 — Modèles GGUF et profils de traduction (préversion)",
+    "tag": "v0.5.12-runtime",
+    "title": "Sous-titres en voix 0.5.12 — Calcul local, Qwen3.5 et diagnostic de chargement (préversion)",
     "prerelease": true,
     "latest": false,
-    "notes": "docs/releases/0.5.11-models.md",
+    "notes": "docs/releases/0.5.12-runtime.md",
     "asset": {
-      "name": "SousTitresVoix-0.5.11-models.apk",
-      "version_name": "0.5.11-models",
-      "version_code": 18,
+      "name": "SousTitresVoix-0.5.12-runtime.apk",
+      "version_name": "0.5.12-runtime",
+      "version_code": 19,
       "application_id": "fr.soustitresvoix.player.translation"
     }
   }

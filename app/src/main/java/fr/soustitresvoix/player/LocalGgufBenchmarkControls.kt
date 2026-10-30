@@ -49,6 +49,8 @@ internal class LocalGgufBenchmarkControls(
     private var qualityButton: Button? = null
     private var cancelButton: Button? = null
     private var threadsInput: EditText? = null
+    private var gpuChoice: Spinner? = null
+    private var selectedGpuMode = "OPENCL"
     private var orderChoice: Spinner? = null
     private var reopeningChoice: CheckBox? = null
     private var selectedOrder = LocalGgufBenchmark.Order.CPU_THEN_GPU
@@ -69,8 +71,8 @@ internal class LocalGgufBenchmarkControls(
         }
     }
     private fun message(value: String) { localStatus = value; render() }
-    private fun orderChoices() = object : ArrayAdapter<String>(activity,
-        android.R.layout.simple_spinner_dropdown_item, listOf("CPU puis GPU OpenCL", "GPU OpenCL puis CPU")) {
+    private fun readableChoices(values: List<String>) = object : ArrayAdapter<String>(activity,
+        android.R.layout.simple_spinner_dropdown_item, values) {
         private fun readable(view: View): View = view.apply {
             (this as? TextView)?.apply {
                 textSize = 18f; isSingleLine = false; maxLines = Int.MAX_VALUE; ellipsize = null
@@ -84,7 +86,10 @@ internal class LocalGgufBenchmarkControls(
     }
     private fun render() {
         val state = benchmark.state
-        statusView?.text = localStatus ?: state.status
+        statusView?.let { view ->
+            val status = localStatus ?: state.status
+            if (view.text.toString() != status) view.text = status
+        }
         reportView?.let { view ->
             val report = state.report()
             if (view.text.toString() != report) view.text = report
@@ -95,6 +100,7 @@ internal class LocalGgufBenchmarkControls(
         contextButton?.isEnabled = !state.busy
         qualityButton?.isEnabled = !state.busy
         threadsInput?.isEnabled = !state.busy
+        gpuChoice?.isEnabled = !state.busy
         orderChoice?.isEnabled = !state.busy
         reopeningChoice?.isEnabled = !state.busy
         cancelButton?.isEnabled = state.busy
@@ -139,9 +145,13 @@ internal class LocalGgufBenchmarkControls(
         if (count == null || count !in 1..8) {
             message("Nombre de threads invalide : indique un entier de 1 à 8."); return
         }
+        val loadSettings = try { models.loadSettings.also { it.validate() } }
+        catch (_: TranslationFailure) { message("Réglages de chargement invalides ; vérifie les valeurs avant le comparatif."); return }
         preferences.edit().putInt("local-threads", count).putString("local-profile", models.profile.name).apply()
         localStatus = null
-        benchmark.start(model, count, models.profile, options.copy(contextPolicy = models.contextPolicy))
+        selectedGpuMode = if (gpuChoice?.selectedItemPosition == 1) "VULKAN" else "OPENCL"
+        benchmark.start(model, count, models.profile,
+            options.copy(contextPolicy = models.contextPolicy, gpuMode = selectedGpuMode, loadSettings = loadSettings))
     }
     fun show() {
         if (closed || activity.isDestroyed || activity.isFinishing) return
@@ -156,15 +166,24 @@ internal class LocalGgufBenchmarkControls(
         val models = LocalGgufModelControls(activity, { busy || otherPreparationBusy() }, launchModelPicker,
             onChanged = { localStatus = null; render() }, onMessage = ::message)
         modelControls = models
-        column.addView(models.view(showExecutionChoice = false))
+        column.addView(models.view(showExecutionChoice = false, showLoadChoices = true))
         val threads = EditText(activity).apply {
-            id = View.generateViewId(); setText(preferences.getInt("local-threads", 4).toString())
+            id = View.generateViewId(); tag = THREADS_TAG; setText(preferences.getInt("local-threads", 4).toString())
             textSize = 18f; isSingleLine = true; inputType = InputType.TYPE_CLASS_NUMBER
             importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
         }
         threadsInput = threads
         column.addView(text("Threads CPU pour les deux modes — 1 à 8, défaut 4").apply { labelFor = threads.id })
         column.addView(threads)
+        gpuChoice = Spinner(activity).apply {
+            id = View.generateViewId(); contentDescription = GPU_LABEL; minimumHeight = dp(64)
+            adapter = readableChoices(listOf("GPU OpenCL strict", "GPU Vulkan strict"))
+            setSelection(if (selectedGpuMode == "VULKAN") 1 else 0)
+        }.also { choice ->
+            column.addView(text(GPU_LABEL).apply { labelFor = choice.id })
+            column.addView(choice)
+        }
+        column.addView(text("Le moteur choisi s’applique à tous les essais GPU ci-dessous. OpenCL et Vulkan sont comparés séparément au CPU ; un repli vers le CPU interrompt le passage GPU. Leur disponibilité et leur calcul effectif restent à vérifier sur l’appareil."))
         column.addView(text("Texte anglais intégré :\n${LocalGgufBenchmark.SOURCE}\nCible : français. Le profil et les limites de traduction sont identiques dans les deux modes ; seul le moteur de calcul demandé change."))
         startButton = action("Comparer CPU puis GPU sur le texte intégré") {
             start(models, threads, LocalGgufBenchmark.Options())
@@ -172,7 +191,7 @@ internal class LocalGgufBenchmarkControls(
         column.addView(text("Comparatif étendu : les mêmes 32 occurrences sont traduites dans chaque mode. Chaque occurrence conserve son identité, même lorsqu’un texte est répété. Choisir l’ordre inverse lors d’un autre essai aide à observer l’effet de l’ordre ; cela ne supprime pas les effets de cache ou de chauffe."))
         orderChoice = Spinner(activity).apply {
             id = View.generateViewId(); contentDescription = ORDER_LABEL; minimumHeight = dp(64)
-            adapter = orderChoices()
+            adapter = readableChoices(listOf("CPU puis GPU", "GPU puis CPU"))
             setSelection(if (selectedOrder == LocalGgufBenchmark.Order.CPU_THEN_GPU) 0 else 1)
         }.also { choice ->
             column.addView(text(ORDER_LABEL).apply { labelFor = choice.id })
@@ -189,7 +208,7 @@ internal class LocalGgufBenchmarkControls(
             reopenForLoad = reopeningChoice?.isChecked == true
             start(models, threads, LocalGgufBenchmark.Options(LocalGgufBenchmark.Scenario.VARIED, selectedOrder, reopenForLoad))
         }.also { column.addView(it) }
-        column.addView(text("Comparatif de contexte : les trois stratégies traduisent successivement les mêmes 32 occurrences sur GPU OpenCL strict. Chaque stratégie possède sa session et son historique. Les ressources sont libérées avant la suivante. Ce comparatif ne change pas ton choix de contexte, n’attribue aucun score de qualité et n’utilise pas les options d’ordre CPU/GPU ou de réouverture ci-dessus. Les sorties doivent être comparées aux sources ; aucune stratégie n’est présumée meilleure."))
+        column.addView(text("Comparatif de contexte : les trois stratégies traduisent successivement les mêmes 32 occurrences sur le moteur GPU strict choisi ci-dessus. Chaque stratégie possède sa session et son historique. Les ressources sont libérées avant la suivante. Ce comparatif ne change pas ton choix de contexte, n’attribue aucun score de qualité et n’utilise pas les options d’ordre CPU/GPU ou de réouverture ci-dessus. Les sorties doivent être comparées aux sources ; aucune stratégie n’est présumée meilleure."))
         contextButton = action(CONTEXT_START_LABEL) {
             start(models, threads, LocalGgufBenchmark.Options(LocalGgufBenchmark.Scenario.CONTEXT_POLICIES))
         }.also { column.addView(it) }
@@ -218,7 +237,7 @@ internal class LocalGgufBenchmarkControls(
         column.addView(text("L’export TXT conserve le rapport entier, y compris un rapport trop volumineux pour le presse-papiers. Il devient disponible après la fin ou l’arrêt du comparatif. Choisis son emplacement avec Android ; les textes du rapport ne sont pas placés dans la demande d’ouverture du sélecteur."))
         reportView = text(benchmark.state.report()).apply { setTextIsSelectable(true) }
         column.addView(reportView)
-        column.addView(text("Une sélection GPU n’est pas une preuve d’accélération. Le rapport exige un calcul GPU réellement observé pour valider le passage OpenCL. Les sorties sont présentées pour comparaison humaine ; leur identité ne prouve pas une traduction fidèle. Aucun test NPU n’est exécuté."))
+        column.addView(text("Une sélection GPU n’est pas une preuve d’accélération. Le rapport exige un calcul GPU réellement observé pour valider chaque passage OpenCL ou Vulkan. Les sorties sont présentées pour comparaison humaine ; leur identité ne prouve pas une traduction fidèle. Aucun test NPU n’est exécuté."))
         column.addView(text("Si une vidéo est ouverte, le rapport peut ajouter des observations ponctuelles de l’état du lecteur. Elles ne prouvent pas la fluidité continue, la vocalisation de toutes les occurrences, l’autonomie ou le fonctionnement de TalkBack. Le comparatif ne commande ni lecture, ni pause, ni déplacement dans la vidéo."))
         column.addView(action("Fermer le panneau et laisser l’essai continuer") { dismissPanel() })
         val owner = generation
@@ -236,12 +255,13 @@ internal class LocalGgufBenchmarkControls(
         generation++
         modelControls?.close(); modelControls = null
         val old = panel
+        gpuChoice?.selectedItemPosition?.let { selectedGpuMode = if (it == 1) "VULKAN" else "OPENCL" }
         orderChoice?.selectedItemPosition?.let {
             selectedOrder = if (it == 1) LocalGgufBenchmark.Order.GPU_THEN_CPU else LocalGgufBenchmark.Order.CPU_THEN_GPU
         }
         reopeningChoice?.let { reopenForLoad = it.isChecked }
         panel = null; statusView = null; reportView = null; startButton = null; variedButton = null; contextButton = null; qualityButton = null
-        cancelButton = null; threadsInput = null; orderChoice = null; reopeningChoice = null; localStatus = null
+        cancelButton = null; threadsInput = null; gpuChoice = null; orderChoice = null; reopeningChoice = null; localStatus = null
         exportButton = null; exportPreparing = false
         old?.dismiss()
     }
@@ -254,6 +274,8 @@ internal class LocalGgufBenchmarkControls(
         internal const val EXPORT_LABEL = "Exporter le rapport complet en TXT"
         internal fun canCopyReport(report: String): Boolean = report.length <= MAX_CLIPBOARD_CHARACTERS
         internal const val SCROLL_TAG = "local-gguf-benchmark-controls-scroll"
+        internal const val GPU_LABEL = "Moteur GPU du comparatif"
+        internal const val THREADS_TAG = "local-gguf-benchmark-threads"
         internal const val ORDER_LABEL = "Ordre du comparatif étendu"
         internal const val REOPEN_LABEL = "Recharger le modèle après chaque série pour mesurer une réouverture"
         internal const val QUALITY_START_LABEL = "Comparer les stratégies sur des phrases inédites — GPU"

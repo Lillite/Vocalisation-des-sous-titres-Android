@@ -20,6 +20,23 @@ def chat_evidence(fixtures=14, families=3, literal=3, generations=55, rejected=1
 
 
 class NativeTranslationResultsTest(unittest.TestCase):
+    def test_compact_swa_requires_wrap_recompute_short_reuse_and_bounded_finite_errors(self):
+        valid = ('Compact SWA: requests=6, safe_recompute=1, short_reuse=1, '
+                 'cached-vs-fresh maximum error 0, compact-vs-full maximum error 2.69338e-05, '
+                 'compact-vs-full relative error 1.1e-06.\n')
+        result = runner.parse_swa_comparison(valid)
+        self.assertTrue(result['safeRecompute'] and result['shortPrefixReuse'])
+        self.assertEqual(2.69338e-05, result['compactVsFullMaxLogitError'])
+        for invalid in ['', valid + valid, valid.replace('requests=6', 'requests=5'),
+                        valid.replace('safe_recompute=1', 'safe_recompute=0'),
+                        valid.replace('short_reuse=1', 'short_reuse=0'),
+                        valid.replace('error 0,', 'error 0.00002,'),
+                        valid.replace('2.69338e-05', '0.0001'),
+                        valid.replace('1.1e-06', '0.00001'),
+                        valid.replace('1.1e-06', 'NaN'), valid.replace('2.69338e-05', '1e999')]:
+            with self.subTest(invalid=invalid), self.assertRaises(RuntimeError):
+                runner.parse_swa_comparison(invalid)
+
     def test_actual_sentence_punctuation_is_not_part_of_the_number(self):
         text = 'Other native measurements.\n' + evidence('0', '0.000209779') + 'All assertions passed.\n'
         self.assertEqual((0.0, 0.000209779), runner.parse_logit_comparison(text))

@@ -9,10 +9,11 @@ data class LocalGgufLoadProfile(
     val modelLoadMs: Long,
     val contextInitMs: Long,
     val openTotalMs: Long,
-    val loadAttempts: Int
+    val loadAttempts: Int,
+    val vulkanPrepareMs: Long = 0
 ) {
     init {
-        val phases = listOf(backendInitMs, openClPrepareMs, modelLoadMs, contextInitMs)
+        val phases = listOf(backendInitMs, openClPrepareMs, vulkanPrepareMs, modelLoadMs, contextInitMs)
         require(phases.all { it in 0..MAX_MS } && openTotalMs in 0..MAX_MS && loadAttempts in 1..2)
         require(phases.sum() <= openTotalMs)
     }
@@ -21,6 +22,7 @@ data class LocalGgufLoadProfile(
         append("Profil natif d’ouverture — total : "); append(openTotalMs); append(" ms")
         append("\nInitialisation du moteur : "); append(backendInitMs); append(" ms")
         append("\nPréparation de l’accès OpenCL : "); append(openClPrepareMs); append(" ms")
+        append("\nPréparation de l’accès Vulkan : "); append(vulkanPrepareMs); append(" ms")
         append("\nAppels de chargement du modèle cumulés : "); append(modelLoadMs); append(" ms")
         append("\nCréations du contexte cumulées : "); append(contextInitMs); append(" ms")
         append("\nTentatives de chargement : "); append(loadAttempts)
@@ -36,7 +38,8 @@ data class LocalGgufLoadProfile(
         internal fun fromResponse(response: JSONObject): LocalGgufLoadProfile? {
             if (!response.has("loadProfile")) return null
             val value = response.get("loadProfile") as? JSONObject ?: error("Invalid load profile")
-            require(value.keys().asSequence().toSet() == FIELDS)
+            val keys = value.keys().asSequence().toSet()
+            require(keys == FIELDS || keys == FIELDS + "vulkanPrepareMs")
             fun integral(name: String): Long = when (val number = value.get(name)) {
                 is Int -> number.toLong()
                 is Long -> number
@@ -45,7 +48,8 @@ data class LocalGgufLoadProfile(
             val attempts = integral("loadAttempts")
             require(attempts in 1..2)
             return LocalGgufLoadProfile(integral("backendInitMs"), integral("openClPrepareMs"),
-                integral("modelLoadMs"), integral("contextInitMs"), integral("openTotalMs"), attempts.toInt())
+                integral("modelLoadMs"), integral("contextInitMs"), integral("openTotalMs"), attempts.toInt(),
+                if (value.has("vulkanPrepareMs")) integral("vulkanPrepareMs") else 0)
         }
     }
 }

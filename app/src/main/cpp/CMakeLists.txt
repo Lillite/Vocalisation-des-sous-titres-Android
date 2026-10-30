@@ -72,9 +72,70 @@ function(subtitle_add_direct_opencl)
     set(Python3_EXECUTABLE "${Python3_EXECUTABLE}" PARENT_SCOPE)
 endfunction()
 
+function(subtitle_add_optional_vulkan)
+    # Headers are compile-time dependencies only. The phone's Vulkan loader is
+    # resolved through a small hidden shim after an explicit Vulkan request.
+    FetchContent_Declare(subtitle_vulkan_headers
+        URL https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/refs/tags/v1.4.341
+        URL_HASH SHA256=8876aad926b2e72bdefddc34885472d5332e2d20aa3ed57313466f0bc982cf3f
+    )
+    FetchContent_Declare(subtitle_spirv_headers
+        URL https://codeload.github.com/KhronosGroup/SPIRV-Headers/tar.gz/refs/tags/vulkan-sdk-1.4.341.0
+        URL_HASH SHA256=cab0a654c4917e16367483296b44cdb1d614e3120c721beafcd37e3a8580486c
+    )
+    foreach(dependency subtitle_vulkan_headers subtitle_spirv_headers)
+        FetchContent_GetProperties(${dependency})
+        if(NOT ${dependency}_POPULATED)
+            FetchContent_Populate(${dependency})
+        endif()
+    endforeach()
+    set(shader_compiler "${CMAKE_ANDROID_NDK}/shader-tools/${ANDROID_HOST_TAG}/glslc")
+    if(CMAKE_HOST_WIN32)
+        string(APPEND shader_compiler ".exe")
+    endif()
+    if(NOT EXISTS "${shader_compiler}")
+        message(FATAL_ERROR "The pinned Android NDK's host glslc is required for Vulkan")
+    endif()
+    set(Vulkan_GLSLC_EXECUTABLE "${shader_compiler}" CACHE FILEPATH "Pinned NDK host shader compiler" FORCE)
+    find_program(SUBTITLE_VULKAN_HOST_CC NAMES cc gcc clang NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+    find_program(SUBTITLE_VULKAN_HOST_CXX NAMES c++ g++ clang++ NO_CMAKE_FIND_ROOT_PATH REQUIRED)
+    set(shader_host_toolchain "${CMAKE_CURRENT_BINARY_DIR}/vulkan-host-toolchain.cmake")
+    file(WRITE "${shader_host_toolchain}"
+        "set(CMAKE_BUILD_TYPE Release)\n"
+        "set(CMAKE_C_COMPILER \"${SUBTITLE_VULKAN_HOST_CC}\")\n"
+        "set(CMAKE_CXX_COMPILER \"${SUBTITLE_VULKAN_HOST_CXX}\")\n"
+        "set(CMAKE_MAKE_PROGRAM \"${CMAKE_MAKE_PROGRAM}\" CACHE FILEPATH \"Host shader build tool\" FORCE)\n"
+        "set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)\n"
+        "set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY NEVER)\n"
+        "set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE NEVER)\n")
+    set(GGML_VULKAN_SHADERS_GEN_TOOLCHAIN "${shader_host_toolchain}" CACHE FILEPATH "Host shader generator toolchain" FORCE)
+    set(Vulkan_INCLUDE_DIR "${subtitle_vulkan_headers_SOURCE_DIR}/include" CACHE PATH "Pinned Vulkan headers" FORCE)
+    add_library(subtitle_vulkan_dispatch STATIC optional_vulkan_dispatch.cpp)
+    set_target_properties(subtitle_vulkan_dispatch PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden)
+    target_compile_features(subtitle_vulkan_dispatch PRIVATE cxx_std_17)
+    target_include_directories(subtitle_vulkan_dispatch PUBLIC "${Vulkan_INCLUDE_DIR}" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(subtitle_vulkan_dispatch PRIVATE ${CMAKE_DL_LIBS})
+    add_library(Vulkan::Vulkan ALIAS subtitle_vulkan_dispatch)
+    # FindVulkan still validates its two inputs; its imported target is already
+    # supplied by the optional dispatch shim rather than a mandatory .so.
+    set(Vulkan_LIBRARY subtitle_vulkan_dispatch CACHE STRING "Optional Vulkan loader dispatch target" FORCE)
+    set(spirv_config "${CMAKE_CURRENT_BINARY_DIR}/vulkan-dependencies")
+    file(MAKE_DIRECTORY "${spirv_config}")
+    file(WRITE "${spirv_config}/SPIRV-HeadersConfig.cmake"
+        "if(NOT TARGET SPIRV-Headers::SPIRV-Headers)\n"
+        "  add_library(SPIRV-Headers::SPIRV-Headers INTERFACE IMPORTED)\n"
+        "  set_target_properties(SPIRV-Headers::SPIRV-Headers PROPERTIES INTERFACE_INCLUDE_DIRECTORIES \"${subtitle_spirv_headers_SOURCE_DIR}/include\")\n"
+        "endif()\n")
+    set(SPIRV-Headers_DIR "${spirv_config}" CACHE PATH "Pinned SPIR-V header package" FORCE)
+    set(subtitle_vulkan_headers_SOURCE_DIR "${subtitle_vulkan_headers_SOURCE_DIR}" PARENT_SCOPE)
+    set(subtitle_spirv_headers_SOURCE_DIR "${subtitle_spirv_headers_SOURCE_DIR}" PARENT_SCOPE)
+endfunction()
+
 set(SUBTITLE_HAS_OPENCL OFF)
+set(SUBTITLE_HAS_VULKAN OFF)
 if(ANDROID AND ANDROID_ABI STREQUAL "arm64-v8a")
     option(SUBTITLE_ENABLE_OPENCL "Build optional Android Adreno OpenCL backend" ON)
+    option(SUBTITLE_ENABLE_VULKAN "Build optional Android Vulkan backend" ON)
     set(GGML_CPU_KLEIDIAI ON CACHE BOOL "" FORCE)
     FetchContent_Declare(kleidiai
         URL https://github.com/ARM-software/kleidiai/releases/download/v1.32.0/kleidiai-v1.32.0-src.tar.gz
@@ -88,11 +149,15 @@ if(ANDROID AND ANDROID_ABI STREQUAL "arm64-v8a")
         set(GGML_OPENCL_EMBED_KERNELS ON CACHE BOOL "" FORCE)
         set(GGML_OPENCL_USE_ADRENO_BIN_KERNELS OFF CACHE BOOL "" FORCE)
     endif()
+    if(SUBTITLE_ENABLE_VULKAN)
+        set(SUBTITLE_HAS_VULKAN ON)
+        subtitle_add_optional_vulkan()
+    endif()
 else()
     set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
 endif()
 set(GGML_OPENCL ${SUBTITLE_HAS_OPENCL} CACHE BOOL "" FORCE)
-set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
+set(GGML_VULKAN ${SUBTITLE_HAS_VULKAN} CACHE BOOL "" FORCE)
 set(GGML_CUDA OFF CACHE BOOL "" FORCE)
 set(GGML_BLAS OFF CACHE BOOL "" FORCE)
 set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
@@ -138,7 +203,49 @@ if(SUBTITLE_HAS_OPENCL)
     target_include_directories(ggml-opencl PRIVATE "${probe_llama_SOURCE_DIR}/ggml/src/ggml-opencl")
 endif()
 
-add_library(model_probe_engine STATIC model_probe_engine.cpp local_model_backend.cpp local_translation_engine.cpp optional_opencl_loader.cpp)
+if(SUBTITLE_HAS_VULKAN)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    # Upstream's ExternalProject inherits Ninja but does not forward its path.
+    # Configure the exact host project once with that path; the regular upstream
+    # configure/build then reuses this valid cache even when Ninja is not on PATH.
+    ExternalProject_Get_Property(vulkan-shaders-gen SOURCE_DIR BINARY_DIR CMAKE_ARGS)
+    string(REPLACE "$<CONFIG>" "${CMAKE_BUILD_TYPE}" shader_host_args "${CMAKE_ARGS}")
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -S "${SOURCE_DIR}" -B "${BINARY_DIR}"
+            -G "${CMAKE_GENERATOR}" "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}" ${shader_host_args}
+        RESULT_VARIABLE shader_host_status
+    )
+    if(NOT shader_host_status EQUAL 0)
+        message(FATAL_ERROR "Pinned Vulkan host shader generator could not be configured")
+    endif()
+    foreach(property COMPILE_DEFINITIONS INTERFACE_COMPILE_DEFINITIONS)
+        get_target_property(definitions ggml ${property})
+        if(definitions)
+            list(REMOVE_ITEM definitions GGML_USE_VULKAN)
+            set_property(TARGET ggml PROPERTY ${property} "${definitions}")
+        endif()
+    endforeach()
+    set(instrumented_vulkan "${CMAKE_CURRENT_BINARY_DIR}/optional-vulkan/ggml-vulkan-instrumented.cpp")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/optional_vulkan_patch.py")
+    execute_process(
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/optional_vulkan_patch.py"
+            "${probe_llama_SOURCE_DIR}/ggml/src/ggml-vulkan/ggml-vulkan.cpp" "${instrumented_vulkan}"
+        RESULT_VARIABLE instrumented_status
+    )
+    if(NOT instrumented_status EQUAL 0)
+        message(FATAL_ERROR "Pinned Vulkan instrumentation could not be generated")
+    endif()
+    get_target_property(vulkan_sources ggml-vulkan SOURCES)
+    list(REMOVE_ITEM vulkan_sources ggml-vulkan.cpp)
+    list(APPEND vulkan_sources "${instrumented_vulkan}")
+    set_property(TARGET ggml-vulkan PROPERTY SOURCES "${vulkan_sources}")
+    target_include_directories(ggml-vulkan PRIVATE
+        "${probe_llama_SOURCE_DIR}/ggml/src/ggml-vulkan"
+        "${subtitle_spirv_headers_SOURCE_DIR}/include")
+endif()
+
+add_library(model_probe_engine STATIC model_probe_engine.cpp local_model_backend.cpp local_translation_engine.cpp optional_opencl_loader.cpp optional_vulkan_backend.cpp)
 target_compile_features(model_probe_engine PUBLIC cxx_std_17)
 target_include_directories(model_probe_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(model_probe_engine PUBLIC llama)
@@ -146,6 +253,10 @@ if(SUBTITLE_HAS_OPENCL)
     target_compile_definitions(model_probe_engine PRIVATE SUBTITLE_HAS_OPENCL=1 CL_TARGET_OPENCL_VERSION=300)
     target_include_directories(model_probe_engine PRIVATE "${subtitle_opencl_headers_SOURCE_DIR}")
     target_link_libraries(model_probe_engine PRIVATE OpenCL ggml-opencl ${CMAKE_DL_LIBS})
+endif()
+if(SUBTITLE_HAS_VULKAN)
+    target_compile_definitions(model_probe_engine PRIVATE SUBTITLE_HAS_VULKAN=1)
+    target_link_libraries(model_probe_engine PRIVATE subtitle_vulkan_dispatch ggml-vulkan ${CMAKE_DL_LIBS})
 endif()
 
 if(ANDROID)

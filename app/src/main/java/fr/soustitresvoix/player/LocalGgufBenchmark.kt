@@ -15,7 +15,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Fixed synthetic content only. CPU and strict OpenCL runs own one model sequentially. */
+/** Fixed synthetic content only. CPU and the selected strict GPU backend own one model sequentially. */
 internal class LocalGgufBenchmark(
     context: Context,
     private val onChanged: (State) -> Unit,
@@ -35,7 +35,8 @@ internal class LocalGgufBenchmark(
     data class Options(val scenario: Scenario = Scenario.SHORT,
         val order: Order = Order.CPU_THEN_GPU, val reopenForLoad: Boolean = false,
         val contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO,
-        val qualityCorpus: Boolean = false)
+        val qualityCorpus: Boolean = false, val gpuMode: String = "OPENCL",
+        val loadSettings: LocalGgufLoadSettings = LocalGgufLoadSettings())
     /** Immutable, read-only observations supplied by the player's application thread. */
     data class PlaybackObservation(val observedAtMs: Long = 0, val mediaGeneration: Long = 0,
         val mediaOpened: Boolean = false, val playing: Boolean = false, val positionMs: Long = 0,
@@ -137,6 +138,13 @@ internal class LocalGgufBenchmark(
         if (threads !in 1..8) {
             publish(state.copy(status = "Nombre de threads invalide : indique un entier de 1 à 8.")); return
         }
+        if (options.gpuMode !in setOf("OPENCL", "VULKAN")) {
+            publish(state.copy(status = "Moteur GPU invalide : choisis OpenCL ou Vulkan.")); return
+        }
+        try { options.loadSettings.validate() }
+        catch (_: TranslationFailure) {
+            publish(state.copy(status = "Réglages de chargement invalides ; aucun essai lancé.")); return
+        }
         val owner = ++sequence
         val token = AtomicBoolean(false).also { cancelled = it }
         publish(State("Comparatif demandé. Sa durée dépend du modèle ; tu peux l’annuler.", true,
@@ -146,12 +154,12 @@ internal class LocalGgufBenchmark(
             var fatal = false
             try {
                 LocalGgufModelStore(app).acquire(model).use {
-                    val modes = if (options.order == Order.CPU_THEN_GPU) listOf("CPU", "OPENCL") else listOf("OPENCL", "CPU")
+                    val modes = if (options.order == Order.CPU_THEN_GPU) listOf("CPU", options.gpuMode) else listOf(options.gpuMode, "CPU")
                     val contextComparison = options.scenario == Scenario.CONTEXT_POLICIES
-                    val executions = if (contextComparison) LocalGgufContextPolicy.entries.map { "OPENCL" to it }
+                    val executions = if (contextComparison) LocalGgufContextPolicy.entries.map { options.gpuMode to it }
                         else modes.map { it to options.contextPolicy }
                     sessions@ for ((mode, policy) in executions) {
-                        val runLabel = if (contextComparison) "GPU — ${policy.label}" else "Mode $mode"
+                        val runLabel = if (contextComparison) "GPU $mode — ${policy.label}" else "Mode $mode"
                         for (reopening in if (options.reopenForLoad && !contextComparison) listOf(false, true) else listOf(false)) {
                             if (token.get() || closed) break@sessions
                             val planned = if (reopening) cues(options).take(1) else cues(options)
@@ -170,7 +178,8 @@ internal class LocalGgufBenchmark(
                             try {
                                 val config = TranslationProviderConfig(TranslationProvider.LOCAL_GGUF,
                                     localModel = model, localThreads = threads, localContext = "",
-                                    localExecution = mode, localProfile = profile, localContextPolicy = policy)
+                                    localExecution = mode, localProfile = profile, localContextPolicy = policy,
+                                    localLoadSettings = options.loadSettings)
                                 val activeEngine = engineFactory(config).also { engine = it }
                                 (activeEngine as? LocalTranslationPerformanceSource)?.setPerformanceListener { performance ->
                                     latest = performance
@@ -181,8 +190,11 @@ internal class LocalGgufBenchmark(
                                         if (frames.size < MAX_PERFORMANCE_FRAMES) frames += performance else tooManyFrames = true
                                     }
                                     post(owner) {
-                                        it.copy(status = "$runLabel : " + if (performance.phase == "load")
-                                            "modèle chargé ; calcul du texte intégré…" else "passage calculé…",
+                                        it.copy(status = "$runLabel : " + when (performance.phase) {
+                                            "load" -> "modèle chargé ; calcul du texte intégré…"
+                                            "generation" -> "passage calculé…"
+                                            else -> "préparation du moteur en cours…"
+                                        },
                                             currentPerformance = performance)
                                     }
                                 }
@@ -289,6 +301,8 @@ internal class LocalGgufBenchmark(
         if (mode == "CPU" && (value.backend != "CPU" || value.gpuObserved || value.gpuGraphNodes > 0 || value.openClTransport.isNotEmpty()))
             throw BenchmarkFailure("Le passage CPU n’a pas confirmé une exécution CPU seule ; ce passage n’est pas validé.")
         if (mode == "OPENCL" && (value.backend != "OPENCL" || value.openClTransport != "DIRECT" || !value.gpuObserved || value.gpuGraphNodes <= 0))
+            throw TranslationFailure(TranslationFailure.Reason.LOCAL_BACKEND)
+        if (mode == "VULKAN" && (value.backend != "VULKAN" || value.openClTransport.isNotEmpty() || !value.gpuObserved || value.gpuGraphNodes <= 0))
             throw TranslationFailure(TranslationFailure.Reason.LOCAL_BACKEND)
     }
     fun cancel() {

@@ -16,6 +16,13 @@ internal interface LocalGgufBackend : AutoCloseable {
     data class Generation(val output: String, val stopReason: String = "end_of_generation",
         val performance: LocalTranslationPerformance = LocalTranslationPerformance(backend = "CPU"))
     fun open(file: File, threads: Int, contextTokens: Int, cancelled: () -> Boolean, executionMode: String): Info
+    fun openConfigured(file: File, threads: Int, contextTokens: Int, cancelled: () -> Boolean,
+        executionMode: String, settings: LocalGgufLoadSettings): Info {
+        // An old injectable adapter must not silently ignore non-default allocations.
+        if (!settings.isDefault) throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.CONTEXT)
+        return open(file, threads, contextTokens, cancelled, executionMode)
+    }
+    fun setProgressListener(listener: ((LocalGgufProgress) -> Unit)?) = Unit
     fun generate(prompt: String, maxOutputTokens: Int, cancelled: () -> Boolean): Generation
     fun generateChat(userContent: String, maxOutputTokens: Int, cancelled: () -> Boolean): Generation =
         throw TranslationFailure(TranslationFailure.Reason.LOCAL_TEMPLATE)
@@ -25,13 +32,21 @@ internal interface LocalGgufBackend : AutoCloseable {
 
 private class NativeTranslationBackend(context: Context) : LocalGgufBackend {
     private val client = LocalGgufRuntime.Client(context)
+    override fun setProgressListener(listener: ((LocalGgufProgress) -> Unit)?) = client.setProgressListener(listener)
     override fun open(file: File, threads: Int, contextTokens: Int, cancelled: () -> Boolean, executionMode: String): LocalGgufBackend.Info =
-        client.open(file, threads, contextTokens, cancelled, executionMode = executionMode).let {
+        openConfigured(file, threads, contextTokens, cancelled, executionMode, LocalGgufLoadSettings())
+    override fun openConfigured(file: File, threads: Int, contextTokens: Int, cancelled: () -> Boolean,
+        executionMode: String, settings: LocalGgufLoadSettings): LocalGgufBackend.Info =
+        client.open(file, threads, contextTokens, cancelled, executionMode = executionMode,
+            gpuLayers = settings.gpuLayers, batchTokens = settings.batchTokens,
+            microBatchTokens = settings.microBatchTokens, compactSwa = settings.compactSwa).let {
             LocalGgufBackend.Info(it.name, it.architecture, LocalTranslationPerformance(phase = "load",
                 requestedMode = it.requestedMode, backend = it.backend, device = it.device,
                 gpuObserved = false, loadMs = it.loadMs, peakRssBytes = it.peakRssBytes,
                 currentRssBytes = it.residentBytes, availableRamBytes = it.availableRamBytes, fallbackReason = it.fallbackReason,
-                diagnostic = it.diagnostic, openClTransport = it.openClTransport, loadProfile = it.loadProfile),
+                diagnostic = it.diagnostic, openClTransport = it.openClTransport, loadProfile = it.loadProfile,
+                batchTokens = it.batchTokens, microBatchTokens = it.microBatchTokens, compactSwa = it.compactSwa,
+                requestedGpuLayers = it.requestedGpuLayers, actualGpuLayers = it.actualGpuLayers),
                 chatTemplateAvailable = it.chatTemplateAvailable)
         }
     override fun generate(prompt: String, maxOutputTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Generation =
@@ -46,7 +61,8 @@ private class NativeTranslationBackend(context: Context) : LocalGgufBackend {
             promptEvaluatedTokens = promptEvaluatedTokens, peakRssBytes = peakRssBytes,
             currentRssBytes = residentBytes, availableRamBytes = availableRamBytes,
             gpuGraphNodes = gpuGraphNodes, fallbackReason = fallbackReason, diagnostic = diagnostic,
-            openClTransport = openClTransport))
+            openClTransport = openClTransport, batchTokens = batchTokens, microBatchTokens = microBatchTokens,
+            compactSwa = compactSwa, requestedGpuLayers = requestedGpuLayers, actualGpuLayers = actualGpuLayers))
     }
     override fun cancel() = client.cancel()
     override fun close() = client.close()
@@ -66,14 +82,17 @@ class LocalGgufTranslationEngine internal constructor(
     private val context: String = "",
     private val profile: LocalGgufProfile = LocalGgufProfile.AUTO,
     private val executionMode: String = "AUTO",
-    private val contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO
+    private val contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO,
+    private val loadSettings: LocalGgufLoadSettings = LocalGgufLoadSettings()
 ) : ContextualTranslationEngine, LocalTranslationPerformanceSource {
     constructor(appContext: Context, model: LocalGgufModel, threads: Int = 4, context: String = "",
         profile: LocalGgufProfile = LocalGgufProfile.AUTO, executionMode: String = "AUTO",
-        contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO) :
-        this(model, LocalGgufModelStore(appContext), { NativeTranslationBackend(appContext) }, threads, context, profile, executionMode, contextPolicy)
+        contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO,
+        loadSettings: LocalGgufLoadSettings = LocalGgufLoadSettings()) :
+        this(model, LocalGgufModelStore(appContext), { NativeTranslationBackend(appContext) }, threads, context, profile,
+            executionMode, contextPolicy, loadSettings)
 
-    override val id: String = identity(model, threads, context, profile, executionMode, contextPolicy)
+    override val id: String = identity(model, threads, context, profile, executionMode, contextPolicy, loadSettings)
     override val maxBatchItems: Int = 1
     override val maxBatchCharacters: Int = TranslationPlan.MAX_CUE_CHARACTERS
     override val requiresDurableResult: Boolean = true
@@ -122,6 +141,7 @@ class LocalGgufTranslationEngine internal constructor(
         if (texts.size != 1 || previousSources.size != previousTranslations.size)
             throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
         validateSettings(threads, context, executionMode)
+        loadSettings.validate()
         validateLanguages(sourceLanguage, targetLanguage)
         // Header hints can validate family-specific languages without loading weights.
         // Unknown hints are not a reason to invent a family for a previously completed exact key.
@@ -219,9 +239,10 @@ class LocalGgufTranslationEngine internal constructor(
                 LocalGgufRuntime.Code.MEMORY -> TranslationFailure.Reason.LOCAL_MEMORY
                 LocalGgufRuntime.Code.CONTEXT, LocalGgufRuntime.Code.INPUT_TOO_LONG -> TranslationFailure.Reason.LOCAL_CONTEXT
                 LocalGgufRuntime.Code.OUTPUT_LIMIT -> TranslationFailure.Reason.LOCAL_TRUNCATED
-                LocalGgufRuntime.Code.DIED, LocalGgufRuntime.Code.TIMEOUT -> TranslationFailure.Reason.LOCAL_PROCESS
+                LocalGgufRuntime.Code.DIED -> TranslationFailure.Reason.LOCAL_PROCESS_DIED
+                LocalGgufRuntime.Code.TIMEOUT -> TranslationFailure.Reason.LOCAL_TIMEOUT
                 else -> TranslationFailure.Reason.RESPONSE
-            }, failure.diagnostic)
+            }, failure.diagnostic, failure.attemptReport)
         } catch (failure: TranslationCancelledException) { throw failure }
           catch (_: IOException) { throw TranslationFailure(TranslationFailure.Reason.LOCAL_MODEL) }
           catch (_: Exception) { throw TranslationFailure(TranslationFailure.Reason.LOCAL_TRANSLATION) }
@@ -251,7 +272,13 @@ class LocalGgufTranslationEngine internal constructor(
             backend = created
         }
         try {
-            val metadata = created.open(model.file, threads, CONTEXT_TOKENS, { closed.get() || cancelled() }, runningMode)
+            created.setProgressListener { progress ->
+                if (!closed.get() && !cancelled() && synchronized(state) { backend === created })
+                    measured(LocalTranslationPerformance(phase = "loading", requestedMode = executionMode,
+                        attemptReport = progress.render()))
+            }
+            val metadata = created.openConfigured(model.file, threads, CONTEXT_TOKENS,
+                { closed.get() || cancelled() }, runningMode, loadSettings)
             checkCancelled(cancelled)
             family = LocalGgufProfiles.select(profile, metadata.architecture, metadata.name, model.sha256, model.metadata,
                 chatTemplateAvailable = metadata.chatTemplateAvailable)
@@ -344,7 +371,7 @@ class LocalGgufTranslationEngine internal constructor(
 
         fun validateSettings(threads: Int, context: String, executionMode: String = "AUTO") {
             if (threads !in 1..8 || context.length > MAX_LOCAL_CONTEXT_CHARACTERS || !validText(context) ||
-                LocalGgufPrompts.hasControlTokens(context) || executionMode !in setOf("AUTO", "CPU", "OPENCL"))
+                LocalGgufPrompts.hasControlTokens(context) || executionMode !in setOf("AUTO", "CPU", "OPENCL", "VULKAN"))
                 throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
         }
         fun validateLanguages(source: String, target: String = "fr") {
@@ -352,12 +379,32 @@ class LocalGgufTranslationEngine internal constructor(
             LocalGgufPrompts.language(target)
         }
         fun identity(model: LocalGgufModel, threads: Int = 4, context: String = "", profile: LocalGgufProfile = LocalGgufProfile.AUTO,
-            executionMode: String = "AUTO", contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO): String {
+            executionMode: String = "AUTO", contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO,
+            loadSettings: LocalGgufLoadSettings = LocalGgufLoadSettings()): String {
             validateSettings(threads, context, executionMode)
-            val input = "local-gguf-text-v4\n${model.sha256}\n${LocalModelProbe.REVISION}\n$threads\n$CONTEXT_TOKENS\n$OUTPUT_TOKENS\n${profile.id}\n$executionMode\n${contextPolicy.id}\n$context"
+            loadSettings.validate()
+            // AUTO can discover Qwen3.5 only after opening when the bounded
+            // header has no useful hints. Invalidate that uncertain old AUTO
+            // identity before any exact-cache lookup, not after native loading.
+            // Positively identified unchanged families and other complete
+            // architectures retain their published version-four identities.
+            val automaticFamily = if (profile == LocalGgufProfile.AUTO)
+                LocalGgufProfiles.preflight(model, profile) else null
+            val verifiedUnchanged = model.sha256 in setOf(LocalGgufProfiles.OFFICIAL_HY_MT2_Q8,
+                LocalGgufProfiles.OFFICIAL_HY_MT2_Q6, LocalGgufProfiles.OFFICIAL_HY_MT2_Q4,
+                LocalGgufProfiles.OFFICIAL_INDEX_Q4, LocalGgufProfiles.OFFICIAL_INDEX_Q5,
+                LocalGgufProfiles.OFFICIAL_INDEX_Q6, LocalGgufProfiles.OFFICIAL_INDEX_Q8)
+            val unchangedFamily = automaticFamily in setOf(LocalGgufPrompts.Family.TRANSLATE_GEMMA,
+                LocalGgufPrompts.Family.HY_MT, LocalGgufPrompts.Family.INDEX_TRANSLATE)
+            val uncertainAutomaticFamily = profile == LocalGgufProfile.AUTO && !verifiedUnchanged && !unchangedFamily &&
+                (model.metadata.architecture.isEmpty() || model.metadata.architecture == "qwen35")
+            val version = if (profile == LocalGgufProfile.QWEN35_INSTRUCT || uncertainAutomaticFamily ||
+                automaticFamily == LocalGgufPrompts.Family.QWEN35_INSTRUCT) 5 else 4
+            val input = "local-gguf-text-v$version\n${model.sha256}\n${LocalModelProbe.REVISION}\n$threads\n$CONTEXT_TOKENS\n$OUTPUT_TOKENS\n${profile.id}\n$executionMode\n${contextPolicy.id}\n$context" +
+                if (loadSettings.isDefault) "" else "\nload-settings-v1\n${loadSettings.cacheIdentity()}"
             val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
                 .joinToString("") { "%02x".format(Locale.ROOT, it.toInt() and 255) }
-            return "local-gguf-v4-$digest"
+            return "local-gguf-v$version-$digest"
         }
         internal fun validText(text: String): Boolean {
             var index = 0
@@ -405,7 +452,7 @@ class LocalGgufTranslationEngine internal constructor(
  */
 internal object LocalGgufPrompts {
     enum class Family(val usesChatTemplate: Boolean = false) {
-        TRANSLATE_GEMMA, HY_MT, INDEX_TRANSLATE, MODEL_TEMPLATE(true)
+        TRANSLATE_GEMMA, HY_MT, INDEX_TRANSLATE, QWEN35_INSTRUCT, MODEL_TEMPLATE(true)
     }
     data class PairContext(val source: String, val translated: String)
     data class Language(val code: String, val name: String)
@@ -472,6 +519,7 @@ internal object LocalGgufPrompts {
         validateLanguage(family, source); validateLanguage(family, target)
         return when (family) {
             Family.INDEX_TRANSLATE -> LocalGgufExtendedPrompts.index(text, source, target, previous, context)
+            Family.QWEN35_INSTRUCT -> LocalGgufExtendedPrompts.qwen35(text, from, to, previous, context)
             Family.MODEL_TEMPLATE -> LocalGgufExtendedPrompts.generic(text, from, to, previous, context)
             Family.TRANSLATE_GEMMA -> buildString {
                 append("<bos>")
