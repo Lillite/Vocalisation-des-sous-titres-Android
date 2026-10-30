@@ -95,7 +95,7 @@ class SubtitleTranslationControlsRobolectricTest {
         Fixture().use { fixture ->
             val panel = fixture.open()
             val fields = views(panel).filterIsInstance<EditText>()
-            assertEquals(14, fields.size)
+            assertEquals(17, fields.size)
             for (input in fields) {
                 val labels = views(panel).filterIsInstance<TextView>().filter { it.labelFor == input.id }
                 assertEquals("Each editor needs its own accessible label", 1, labels.size)

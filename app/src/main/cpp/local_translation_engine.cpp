@@ -1,6 +1,7 @@
 #include "local_translation_engine.h"
 #include "local_model_backend.h"
 #include "optional_opencl_loader.h"
+#include "optional_vulkan_backend.h"
 #include "llama.h"
 #include "ggml-backend.h"
 #include <algorithm>
@@ -16,6 +17,7 @@
 #include <new>
 #include <cstring>
 #include <stdexcept>
+#include <cmath>
 
 namespace subtitle_local {
 namespace {
@@ -66,7 +68,28 @@ std::string quote(const std::string & value) {
     return out + '"';
 }
 bool abort(void * value) { return static_cast<std::atomic<bool> *>(value)->load(); }
-bool progress(float, void * value) { return !abort(value); }
+struct OpenProgress {
+    std::atomic<bool> & cancelled;
+    const std::function<void(const char *, int)> & listener;
+    int last_percent = -1;
+    void notify(const char * stage, int percent = -1) const noexcept {
+        // Telemetry is optional. A listener cannot change native ownership,
+        // suppress an allocation error, or prevent cancellation and cleanup.
+        if (listener) { try { listener(stage, percent); } catch (...) { } }
+    }
+};
+bool progress(float completed, void * value) {
+    auto & report = *static_cast<OpenProgress *>(value);
+    if (report.cancelled.load()) return false;
+    if (std::isfinite(completed)) {
+        const int percent = static_cast<int>(std::max(0.0f, std::min(1.0f, completed)) * 100);
+        if (percent > report.last_percent) {
+            report.last_percent = percent;
+            report.notify("MODEL_LOAD", percent);
+        }
+    }
+    return !report.cancelled.load();
+}
 using Sampler = std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)>;
 Sampler greedy_sampler() {
     auto parameters = llama_sampler_chain_default_params();
@@ -232,7 +255,9 @@ std::string Response::json() const {
         << ",\"modelBytes\":" << model_bytes << ",\"modelParameters\":" << model_parameters
         << ",\"peakRssBytes\":" << peak_rss_bytes << ",\"loadMs\":" << load_ms
         << ",\"promptMs\":" << prompt_ms << ",\"generationMs\":" << generation_ms
-        << ",\"processId\":" << process_id << ",\"contextTokens\":" << context_tokens << ",\"promptTokens\":" << prompt_tokens
+        << ",\"processId\":" << process_id << ",\"contextTokens\":" << context_tokens
+        << ",\"batchTokens\":" << batch_tokens << ",\"microBatchTokens\":" << micro_batch_tokens
+        << ",\"compactSwa\":" << (compact_swa ? "true" : "false") << ",\"promptTokens\":" << prompt_tokens
         << ",\"generatedTokens\":" << generated_tokens << ",\"backend\":" << quote(backend) << ",\"device\":" << quote(device)
         << ",\"openClTransport\":" << quote(opencl_transport)
         << ",\"requestedMode\":" << quote(requested_mode) << ",\"fallbackReason\":" << quote(fallback_reason)
@@ -245,6 +270,7 @@ std::string Response::json() const {
     if (load_profile.present) {
         out << ",\"loadProfile\":{\"backendInitMs\":" << load_profile.backend_init_ms
             << ",\"openClPrepareMs\":" << load_profile.opencl_prepare_ms
+            << ",\"vulkanPrepareMs\":" << load_profile.vulkan_prepare_ms
             << ",\"modelLoadMs\":" << load_profile.model_load_ms
             << ",\"contextInitMs\":" << load_profile.context_init_ms
             << ",\"openTotalMs\":" << load_profile.open_total_ms
@@ -262,22 +288,29 @@ std::string Response::json() const {
     return out.str();
 }
 Response Session::open(const std::string & path, int threads, int context_tokens, const std::string & execution,
-        int gpu_layers, const std::string & cache_path) {
+        int gpu_layers, const std::string & cache_path, int batch_tokens, int micro_batch_tokens,
+        bool compact_swa, const std::function<void(const char *, int)> & on_progress) {
     std::lock_guard<std::mutex> lock(operation_);
     const auto open_start = Clock::now();
     Response result;
     result.process_id = static_cast<int>(getpid());
     result.requested_mode = execution;
     result.requested_gpu_layers = execution == "CPU" ? 0 : gpu_layers;
+    result.compact_swa = compact_swa;
+    OpenProgress report{cancelled_, on_progress};
     if (cancelled_.load()) { result.code = "CANCELLED"; return result; }
     if (state_->model || context_tokens < 128 || context_tokens > 2048 || threads < 1 || threads > 8 || path.empty() ||
-        path.find('\0') != std::string::npos || (execution != "CPU" && execution != "AUTO" && execution != "OPENCL") ||
-        gpu_layers < -1 || gpu_layers > 1024 || (execution != "CPU" && gpu_layers == 0)) { result.code = "CONTEXT"; return result; }
+        path.find('\0') != std::string::npos ||
+        (execution != "CPU" && execution != "AUTO" && execution != "OPENCL" && execution != "VULKAN") ||
+        gpu_layers < -1 || gpu_layers > 1024 || (execution != "CPU" && gpu_layers == 0) ||
+        batch_tokens < 16 || batch_tokens > 512 || micro_batch_tokens < 16 || micro_batch_tokens > 128 ||
+        micro_batch_tokens > batch_tokens) { result.code = "CONTEXT"; return result; }
     state_->lease = std::make_unique<subtitle_native::ModelLease>();
     if (!*state_->lease) { state_->lease.reset(); result.code = "BUSY"; return result; }
     auto release_on_error = [&]() { state_->clear_model(); state_->lease.reset(); };
     const char * phase = "BACKEND";
     try {
+        report.notify(phase);
         const auto backend_start = Clock::now();
         subtitle_native::initialize_backend();
         result.load_profile.backend_init_ms = profile_elapsed(backend_start);
@@ -298,8 +331,22 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         const bool budget_short = budget_known && bytes > std::max(0LL, available - (1LL << 30));
         if (execution == "AUTO" && gpu_layers == -1 && (!budget_known || budget_short)) {
             result.fallback_reason = budget_known ? "OPENCL_RAM_BUDGET" : "OPENCL_RAM_UNKNOWN";
+        } else if (execution == "VULKAN") {
+            phase = "VULKAN";
+            report.notify(phase);
+            const auto vulkan_start = Clock::now();
+            const bool prepared = subtitle_native::prepare_vulkan(&result.diagnostic);
+            if (prepared) gpu = subtitle_native::vulkan_device();
+            result.load_profile.vulkan_prepare_ms = profile_elapsed(vulkan_start);
+            if (!gpu) {
+                if (prepared) diagnose(result, "VULKAN", "DEVICE_NOT_REGISTERED", open_start);
+                else result.diagnostic.elapsed_ms = profile_elapsed(open_start);
+                result.code = "BACKEND"; release_on_error(); return result;
+            }
         } else if (execution != "CPU") {
             const auto opencl_start = Clock::now();
+            phase = "OPENCL";
+            report.notify(phase);
             if (!cache_path.empty() && cache_path.find('\0') == std::string::npos)
                 setenv("GGML_OPENCL_KERNEL_CACHE_DIR", cache_path.c_str(), 1);
             const bool prepared = subtitle_native::prepare_opencl(&result.diagnostic);
@@ -317,10 +364,12 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         for (int attempt = 0; attempt < 2; ++attempt) {
             state_->clear_model();
             phase = "MODEL_LOAD";
+            report.last_percent = -1;
+            report.notify(phase, 0);
             auto p = llama_model_default_params();
             ggml_backend_dev_t devices[] = {use_gpu ? gpu : cpu, nullptr};
             p.devices = devices; p.n_gpu_layers = use_gpu ? gpu_layers : 0; p.load_mode = LLAMA_LOAD_MODE_MMAP;
-            p.progress_callback = progress; p.progress_callback_user_data = &cancelled_; p.check_tensors = true;
+            p.progress_callback = progress; p.progress_callback_user_data = &report; p.check_tensors = true;
             subtitle_native::reset_offload_observation();
             ++result.load_profile.load_attempts;
             const auto model_start = Clock::now();
@@ -333,10 +382,12 @@ Response Session::open(const std::string & path, int threads, int context_tokens
                 result.code = use_gpu ? "BACKEND" : "MODEL"; release_on_error(); return result;
             }
             auto cp = llama_context_default_params();
-            cp.n_ctx = context_tokens; cp.n_batch = std::min(context_tokens, 512); cp.n_ubatch = 128;
+            cp.n_ctx = context_tokens; cp.n_batch = std::min(context_tokens, batch_tokens); cp.n_ubatch = micro_batch_tokens;
+            cp.swa_full = !compact_swa;
             cp.n_threads = threads; cp.n_threads_batch = threads; cp.offload_kqv = use_gpu; cp.op_offload = use_gpu;
             cp.abort_callback = abort; cp.abort_callback_data = &cancelled_;
             phase = "CONTEXT_INIT";
+            report.notify(phase);
             const auto context_start = Clock::now();
             state_->context.reset(llama_init_from_model(state_->model.get(), cp));
             result.load_profile.context_init_ms += profile_elapsed(context_start);
@@ -354,8 +405,8 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         }
         state_->gpu_selected = use_gpu;
         result.load_ms = elapsed(load_start);
-        result.backend = use_gpu ? "OPENCL" : "CPU";
-        result.opencl_transport = use_gpu ? "DIRECT" : "";
+        result.backend = use_gpu ? (execution == "VULKAN" ? "VULKAN" : "OPENCL") : "CPU";
+        result.opencl_transport = result.backend == "OPENCL" ? "DIRECT" : "";
         result.device = use_gpu ? ggml_backend_dev_description(gpu) : cpu_description;
         result.actual_gpu_layers = use_gpu ? subtitle_native::observed_offload_layers() : 0;
         result.name = metadata(state_->model.get(), "general.name");
@@ -364,6 +415,10 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         result.model_bytes = static_cast<long long>(llama_model_size(state_->model.get()));
         result.model_parameters = static_cast<long long>(llama_model_n_params(state_->model.get()));
         result.context_tokens = llama_n_ctx(state_->context.get());
+        result.batch_tokens = llama_n_batch(state_->context.get());
+        result.micro_batch_tokens = llama_n_ubatch(state_->context.get());
+        phase = "CHAT_TEMPLATE";
+        report.notify(phase);
         state_->prepare_chat(cancelled_);
         if (cancelled_.load()) { result.code = "CANCELLED"; release_on_error(); return result; }
         result.chat_template_available = !state_->chat_template.empty();
@@ -372,6 +427,7 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         result.load_profile.open_total_ms = profile_elapsed(open_start);
         result.load_profile.present = true;
         state_->info = result;
+        report.notify("READY", 100);
         return result;
     } catch (const std::bad_alloc &) {
         diagnose(result, phase, "ALLOCATION_FAILED", open_start);
@@ -476,7 +532,8 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
         result.gpu_observed = state_->gpu_selected && result.gpu_graph_nodes > 0;
         if (state_->gpu_selected && !result.gpu_observed) {
             diagnose(result, "GENERATION", "NO_GPU_EXECUTION", generate_start);
-            if (result.requested_mode == "OPENCL") return failed("BACKEND", "no_gpu_execution");
+            if (result.requested_mode == "OPENCL" || result.requested_mode == "VULKAN")
+                return failed("BACKEND", "no_gpu_execution");
             result.backend = "CPU"; result.device = "CPU"; result.fallback_reason = "OPENCL_NO_COMPUTE";
             result.opencl_transport.clear();
         }

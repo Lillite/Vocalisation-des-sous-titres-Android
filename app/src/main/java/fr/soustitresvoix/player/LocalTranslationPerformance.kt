@@ -24,7 +24,13 @@ data class LocalTranslationPerformance(
     val fallbackReason: String = "",
     val diagnostic: LocalGgufDiagnostic? = null,
     val openClTransport: String = "",
-    val loadProfile: LocalGgufLoadProfile? = null
+    val loadProfile: LocalGgufLoadProfile? = null,
+    val batchTokens: Int = 0,
+    val microBatchTokens: Int = 0,
+    val compactSwa: Boolean? = null,
+    val requestedGpuLayers: Int? = null,
+    val actualGpuLayers: Int? = null,
+    val attemptReport: String = ""
 ) {
     /** Throughput of the last native call, not an aggregate of split/retried fragments. */
     val tokensPerSecond: Double get() = if (generationMs > 0) generatedTokens * 1000.0 / generationMs else 0.0
@@ -44,6 +50,15 @@ data class LocalTranslationPerformance(
         if (phase == "load") {
             append(".\nChargement : "); append(loadMs); append(" ms")
             loadProfile?.let { append('\n'); append(it.render()) }
+        }
+        if (phase == "load") {
+            if (batchTokens > 0 && microBatchTokens > 0) {
+                append("\nBlocs de calcul observés : lot "); append(batchTokens)
+                append(" ; micro-lot "); append(microBatchTokens); append(" tokens.")
+            }
+            compactSwa?.let { append("\nAllocation compacte du cache d’attention locale demandée : "); append(if (it) "oui" else "non") }
+            requestedGpuLayers?.let { append("\nCouches GPU demandées : "); append(if (it == -1) "toutes" else it.toString()) }
+            actualGpuLayers?.let { append(" ; couches GPU chargées observées : "); append(if (it < 0) "non établies" else it.toString()); append('.') }
         }
         if (phase == "generation") {
             append(".\nMesures du dernier appel natif ; une occurrence peut nécessiter plusieurs appels.")
@@ -67,6 +82,7 @@ data class LocalTranslationPerformance(
         }
         if (fallbackReason.isNotEmpty()) { append(".\nRepli de calcul : "); append(fallbackDescription()) }
         diagnostic?.let { append('\n'); append(it.render()) }
+        if (attemptReport.isNotEmpty()) { append('\n'); append(attemptReport) }
     }
 
     private fun fallbackDescription(): String = when (fallbackReason) {

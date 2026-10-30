@@ -2,7 +2,62 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Essais sur téléphone](docs/TESTS_TELEPHONE.md) · [Contribution](CONTRIBUTING.md)
 
-## Candidate 0.5.11-models — validation à établir
+## Candidate 0.5.12-runtime — validation à établir
+
+Les sources préparent **0.5.12-runtime / code 19**, avec la même identité Android et le même certificat durable. Le [guide](docs/TRADUCTION_RUNTIME_0512.md) et les [notes](docs/releases/0.5.12-runtime.md) décrivent Qwen3.5 sans raisonnement, Vulkan facultatif, les réglages mémoire et le diagnostic disponible après un échec de chargement. Les vérifications ciblées réellement exécutées figurent ci-dessous ; elles ne remplacent pas la campagne complète sur la proposition finale.
+
+Les régressions doivent vérifier le rendu exact du profil Qwen3.5, sa sélection automatique après priorité d’Index, le refus des marqueurs réservés et la séparation des identités de cache. Les formats TranslateGemma, Hy-MT et Index existants doivent rester conservés. Le format générique ne doit pas être présenté comme une désactivation universelle du raisonnement.
+
+Le chargement doit être testé avec les paramètres par défaut et les réglages mémoire explicites, sans couper la source ni réduire les limites de contexte ou de génération. Le cache compact doit être exercé après dépassement de la fenêtre locale et changement du préfixe, avec comparaison à un calcul frais ; une fixture sans attention locale ne suffit pas à démontrer ce scénario. Les essais doivent préserver annulation, libération confirmée, reprise et conservation de chaque occurrence.
+
+Les modes GPU explicites doivent refuser un backend CPU présenté comme leur réussite. Le moteur, l’appareil et les nœuds de calcul réellement observés doivent être contrôlés ; compiler Vulkan ou découvrir un périphérique ne suffit pas. Le CPU ne doit pas initialiser les pilotes GPU. Les essais sur émulateur sans GPU Qualcomm ne prouvent pas la compatibilité de Vulkan ou le chargement d’un grand modèle sur le OnePlus.
+
+Les diagnostics doivent être disponibles pour une tentative qui échoue avant toute mesure native réussie. Le délai dépassé, la disparition du processus, l’erreur d’allocation et le diagnostic natif doivent rester distincts. La corrélation des motifs Android doit refuser les anciens processus ou tentatives ; les relevés absents, ambigus et les signaux seuls ne doivent pas devenir une affirmation de manque de mémoire. Les rapports ne doivent contenir ni texte de sous-titres, ni chemin personnel, ni secret.
+
+L’inventaire source final attendu contient **196 méthodes noyau, 544 méthodes JVM application et 113 méthodes Android**, soit **853 méthodes**. Il doit être rapproché des XML frais du commit testé : aucun test manquant, ignoré, inattendu ou dupliqué. Cet inventaire est une attente de couverture, pas un résultat de la campagne complète. La campagne doit construire et tester l’APK release sous **Android 17 / API 37**, compilation et ciblage API 36 conservés, avant une fusion à deux parents. La reconstruction après fusion doit vérifier les mêmes arbre et parents et le contenu applicatif identique hors signature, **sans rejouer les suites réussies**. Signature durable et téléchargement public doivent ensuite être vérifiés.
+
+Les preuves de la 0.5.11 restent historiques. Aucun gain de qualité, vitesse, mémoire ou autonomie, aucun chargement de TranslateGemma 12B Q6_K et aucun essai TalkBack réel n’est attribué à cette nouvelle version avant exécution correspondante. La **0.5.2 reste la dernière stable**.
+
+### Première campagne CI 0.5.12 et correction d’un attendu Android
+
+Le [run 40980573505](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40980573505), job **123819310549**, a exécuté les **196 méthodes noyau, 544 méthodes JVM application et 113 méthodes Android**, soit **853 méthodes**, sur le head **724a0c576e58ece8b47b5b62915c5f426d09af1e**, arbre **f8ed26cbab4ea0bb34a8d54559c0bb62832bbd17**. Il s’est terminé avec **un échec Android unique** : `SubtitleTranslationAndroidTest.actualTranslationPanelKeepsLabelsDescriptionsAndScrollableHelpAtDoubleFontScale`. Les **112 autres méthodes Android ont réussi**. Le nouveau contrôle JNI de progression et d’attention locale a notamment réussi en **0,03 s** ; cela ne valide ni un GPU physique ni le chargement d’un modèle de production.
+
+L’assertion en échec attendait encore **14 champs**, alors que les **trois nouveaux réglages mémoire** portent le panneau à **17 champs**. La correction est limitée aux attendus du test, avec **113 méthodes Android conservées** ; elle ne modifie pas le panneau de production. La réussite d’une nouvelle campagne sur cette correction reste à établir. L’artefact original collecté est conservé : **8 364 125 octets**, SHA-256 **a165fb3d3713f87b249c35512d76402c56cdbf991cdff0037989d24cdb1ff0ac**. Ce premier passage ne permet ni fusion ni distribution de la candidate.
+
+### Vérifications JVM et accessibilité ciblées
+
+Les **144 méthodes JVM ciblées** ont été réellement exécutées et réussies, sans échec, erreur ni test ignoré. Les identités des méthodes dans les XML correspondent exactement à celles des sources, sans méthode manquante, inattendue ou dupliquée. Elles couvrent les profils et prompts, le moteur, le protocole runtime, les diagnostics, les réglages mémoire, les contrôles de modèles, le comparatif et la préparation SRT.
+
+Un premier passage avait trouvé un échec d’accessibilité dans le comparatif à une taille de police doublée : la nouvelle case à cocher ne présentait pas correctement son texte. Le contrôle de production a été corrigé pour permettre plusieurs lignes et une hauteur adaptée ; un nouveau passage des 144 méthodes a ensuite réussi. Ce résultat JVM ne constitue ni une exécution Android instrumentée ni un essai TalkBack sur téléphone.
+
+### Vérifications natives ciblées de l’attention locale et de Vulkan
+
+La vérification locale élargie couvre **161 méthodes JVM** dont les identités correspondent aux sources. Les résultats des classes inchangées ont été conservés ; la classe des contrôles SRT a été rejouée après adaptation d’une ancienne attente qui exigeait encore un bouton de mesures désactivé avant le chargement. Elle vérifie désormais que le rapport initial est consultable, sans annoncer un calcul réussi, puis que les mesures ne déplacent pas le focus. Les paramètres mémoire sont également suivis entre les deux panneaux, avec leur identité de cache. Les anciennes tentatives restent conservées dans les preuves locales.
+
+Les tâches locales requises noyau, lint, APK debug et APK d’instrumentation ont réussi. Le noyau inchangé était `UP-TO-DATE` et n’est donc pas déclaré réexécuté ici. Lint rapporte **0 erreur, 99 avertissements et 1 conseil**. Le manifeste compilé confirme version 0.5.12-runtime/code19 et identité conservée ; les APK passent l’alignement ZIP/ELF de 16 Kio. Les deux ABI de notre bibliothèque native n’exportent ni ne laissent non résolues les fonctions OpenCL/Vulkan et n’exigent aucun de leurs chargeurs dans les dépendances ELF obligatoires. Ces vérifications ne remplacent pas l’instrumentation release Android 17 de la proposition finale.
+
+La campagne native hôte complète a également réussi : construction fraîche, trois exécutables réels, **14 fixtures, 3 formats, 55 générations complètes, 18 refus attendus et 5 bornes**, avec les six requêtes SWA décrites ci-dessous. Les 35 entrées natives sont restées identiques pendant l’exécution. Le résumé porte le SHA-256 **a3450f52e66b25f93992d3e35075f427b1ac988be77d51a62320b5c3c5305360**. Aucun de ces contrôles n’exécute le GPU physique du téléphone ou un modèle de production.
+
+Une fixture miniature de type Gemma avec attention locale a réellement exécuté **six requêtes** sur l’hôte, en comparant le préfixe réutilisé à un contexte frais après dépassement de la fenêtre locale et changement de préfixe. L’écart maximal entre logits avec cache et recalcul frais est **nul**. Entre allocation compacte et complète, l’écart maximal observé est **2,69338 × 10⁻⁵ en valeur absolue** et **1,68453 × 10⁻⁶ en valeur relative** ; les tokens produits sont identiques sur ces essais. Le cache compact reste **expérimental et activé sur choix explicite**. Ces résultats sur une petite fixture ne valident ni les logits d’un modèle de production ni sa fidélité linguistique sur un film.
+
+Le contrôle natif hôte Vulkan final a réussi **10 groupes de vérifications**, notamment transmission des appels, fonctions obligatoires absentes, bibliothèque absente, échec d’enregistrement et initialisation concurrente, durée de vie du chargeur, isolation des symboles et refus d’une modification des points d’ancrage du patch. Les observations GPU portent sur les opérations effectivement soumises et les groupes fusionnés, après synchronisation ; ces vérifications utilisent des bibliothèques synthétiques et ne constituent pas un calcul sur le GPU du OnePlus.
+
+Une compilation isolée ARM64 du backend et de ses kernels standards a réussi avant le dernier ajustement du compteur d’observation ; la construction complète locale des APK a ensuite compilé les sources intégrées. Le compilateur de shaders **glslc 2022.3 du NDK 27.2** ne reconnaît pas **sept extensions optionnelles récentes** ; leurs variantes restent désactivées. Aucun gain de vitesse ou de mémoire sur téléphone n’est déduit de la disponibilité des kernels standards.
+
+### Contrôles documentaires et de publication hors réseau
+
+Les **53 tests Python hors réseau** concernés par la préparation de cette version ont réussi : **20** de publication, **23** de synchronisation de l’historique et **10** de nettoyage documentaire. Le contrôle structurel du projet a également réussi. Les liens locaux des documents modifiés, la conservation des anciennes entrées d’historique, la stable recommandée 0.5.2 et la déclaration de la 0.5.12 sans identifiants ni SHA-256 inconnus ont été vérifiés. Ces contrôles ne constituent ni compilation Android, ni instrumentation, ni exécution GPU.
+
+## Préversion publiée 0.5.11-models — résultats vérifiés
+
+La [PR #27](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/27) corrigée au head `56f8b4965f307a84324ed8c1c676b249298bd5fa` a réussi le [run 40951282254](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40951282254) : **196 tests noyau, 515 tests JVM application et 112 tests Android**, soit **823 réussites**, sans échec, erreur, test ignoré, manquant, inattendu ou dupliqué. Les 112 tests ont réellement porté sur l’APK release dans un émulateur **Android 17 / API 37 / x86_64**.
+
+La source fusionnée est **5b7071d717308d8f97a7daaae909ec20bf633c70**, arbre **9ccf390c1a54d858cdf87436b6e7fb046c2cc73a**. Le [run après fusion 40956078138](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40956078138) a vérifié les mêmes arbre et parents que la proposition testée, puis le contenu applicatif identique de l’APK reconstruit hors signature, **sans rejouer les suites**. Le [run de publication 40958104647](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40958104647) et le téléchargement public indépendant ont confirmé l’APK signé de **53 742 577 octets**, SHA-256 **4fc2e6900b6a4d19dc1ac57fedba9f840543cd5a827aff487617c0d9e67ae3f3**, certificat durable **304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d**. Release **428415208**, asset APK **689965351** ; stable 0.5.2 conservée.
+
+### Historique de la préparation de la 0.5.11
+
+Les paragraphes suivants conservent les étapes précédant cette réussite ; leurs formulations au futur ne demandent pas de rejouer les suites terminées. Les notes historiques ont été rapprochées de la copie publique vérifiée : **6 386 octets**, SHA-256 **ce06e4246512efcde561415eccb1ce14c5d8c43e31332c08d25df61fe82586f2**.
+
 
 Les sources préparent **0.5.11-models / code 18**, avec la même identité Android et le même certificat durable. Le [guide](docs/COMPATIBILITE_GGUF_0511.md) et les [notes](docs/releases/0.5.11-models.md) décrivent le profil Index-Translate et le rendu local du gabarit intégré de modèles GGUF instruct compatibles. La reconnaissance du profil, le chargement natif, l’exécution GPU et la fidélité linguistique sont des validations distinctes.
 

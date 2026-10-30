@@ -57,6 +57,7 @@ class LocalSrtTranslationJob(
         @Volatile var indexer: SubtitleIndexer? = null
         @Volatile var engine: TranslationEngine? = null
         @Volatile var performance: String? = null
+        var reportHeader: String = ""
     }
     private class ReplacedModelSelection : IOException()
     private val application = context.applicationContext
@@ -174,9 +175,12 @@ class LocalSrtTranslationJob(
             update(state.copy(status = "Choisis le moteur GGUF local pour cette préparation hors ligne.")); return
         }
         val current = Task(); active = current
+        current.reportHeader = LocalGgufAttemptReport.initial(config)
+        current.performance = current.reportHeader
         val ticket = ++sequence
         completed = null; completedExports = emptyMap(); completedReviewReport = null
-        update(State("Indexation complète du fichier de sous-titres…", busy = true, sourceName = selected.name))
+        update(State("Indexation complète du fichier de sous-titres…", busy = true, sourceName = selected.name,
+            performance = current.performance))
         worker.execute {
             synchronized(WORK_LOCK) {
                 var terminal: State? = null
@@ -218,7 +222,7 @@ class LocalSrtTranslationJob(
                     ensureActive(current)
                     val engine = engineFactory(config); current.engine = engine
                     (engine as? LocalTranslationPerformanceSource)?.setPerformanceListener { performance ->
-                        val rendered = performance.render()
+                        val rendered = current.reportHeader + "\n\n" + performance.render()
                         current.performance = rendered
                         main.post {
                             if (isCurrent(current, ticket) && !current.cancelled.get())
@@ -251,8 +255,13 @@ class LocalSrtTranslationJob(
                         "Traduction arrêtée. Les occurrences validées sont conservées ; relance avec le même fichier, modèle et réglages pour reprendre.",
                         busy = false, complete = false)
                 } catch (error: TranslationFailure) {
+                    val diagnostic = error.localDiagnostic?.render()
+                    val details = listOfNotNull(diagnostic, error.localAttemptReport)
+                    current.performance = (listOfNotNull(current.performance) +
+                        listOf("Fin de la préparation : " + error.reason.message) + details).joinToString("\n\n")
                     terminal = state.copy(status = error.reason.message +
-                        " Les occurrences déjà validées restent conservées.", busy = false, complete = false)
+                        " Les occurrences déjà validées restent conservées.", busy = false, complete = false,
+                        performance = current.performance)
                 } catch (_: Exception) {
                     terminal = state.copy(status =
                         if (current.cancelled.get() || closed || Thread.currentThread().isInterrupted)

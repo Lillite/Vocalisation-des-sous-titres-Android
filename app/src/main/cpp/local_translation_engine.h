@@ -3,6 +3,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <functional>
 #include "execution_diagnostic.h"
 #ifdef SUBTITLE_NATIVE_TESTING
 #include <vector>
@@ -16,6 +17,7 @@ struct LoadProfile {
     bool present = false;
     long long backend_init_ms = 0;
     long long opencl_prepare_ms = 0;
+    long long vulkan_prepare_ms = 0;
     long long model_load_ms = 0;
     long long context_init_ms = 0;
     long long open_total_ms = 0;
@@ -55,6 +57,9 @@ struct Response {
     long long generation_ms = 0;
     int process_id = 0;
     int context_tokens = 0;
+    int batch_tokens = 0;
+    int micro_batch_tokens = 0;
+    bool compact_swa = false;
     int prompt_tokens = 0;
     int generated_tokens = 0;
     std::string json() const;
@@ -63,7 +68,10 @@ class Session {
 public:
     Session();
     ~Session();
-    Response open(const std::string & path, int threads, int context_tokens, const std::string & execution = "CPU", int gpu_layers = -1, const std::string & cache_path = "");
+    Response open(const std::string & path, int threads, int context_tokens, const std::string & execution = "CPU",
+        int gpu_layers = -1, const std::string & cache_path = "", int batch_tokens = 512,
+        int micro_batch_tokens = 128, bool compact_swa = false,
+        const std::function<void(const char *, int)> & on_progress = {});
     Response generate(const std::string & prompt, int output_tokens, bool add_special,
         bool use_model_template = false);
     void cancel();

@@ -41,7 +41,8 @@ class LocalGgufBenchmarkRobolectricTest {
     private class FakeEngine(val config: TranslationProviderConfig, private val events: MutableList<String>,
         private val inputs: MutableList<String>, private val gpuObserved: Boolean = true,
         private val output: String = "Le train part à 07 h 30. Garde la porte bleue fermée.",
-        private val beforeGeneration: ((() -> Boolean) -> Unit)? = null) : TranslationEngine, LocalTranslationPerformanceSource {
+        private val beforeGeneration: ((() -> Boolean) -> Unit)? = null,
+        private val gpuTransport: String? = null) : TranslationEngine, LocalTranslationPerformanceSource {
         private var listener: ((LocalTranslationPerformance) -> Unit)? = null
         private var calls = 0
         private var closed = false
@@ -58,10 +59,10 @@ class LocalGgufBenchmarkRobolectricTest {
             calls++
             if (calls == 1) listener?.invoke(LocalTranslationPerformance(phase = "load", requestedMode = config.localExecution,
                 backend = config.localExecution, loadMs = 10))
-            val actualGpu = config.localExecution == "OPENCL" && gpuObserved
+            val actualGpu = config.localExecution in setOf("OPENCL", "VULKAN") && gpuObserved
             listener?.invoke(LocalTranslationPerformance(requestedMode = config.localExecution,
-                backend = if (actualGpu) "OPENCL" else "CPU", gpuObserved = actualGpu,
-                openClTransport = if (actualGpu) "DIRECT" else "",
+                backend = if (actualGpu) config.localExecution else "CPU", gpuObserved = actualGpu,
+                openClTransport = gpuTransport ?: if (actualGpu && config.localExecution == "OPENCL") "DIRECT" else "",
                 gpuGraphNodes = if (actualGpu) 8 else 0, device = "synthetic test device",
                 promptMs = if (calls == 1) 12 else 1, generationMs = 20, endToEndMs = 40,
                 promptTokens = 15, generatedTokens = 5, cachedPromptTokens = if (calls == 1) 0 else 14,
@@ -128,6 +129,84 @@ class LocalGgufBenchmarkRobolectricTest {
             assertEquals("CPU", gpu.lastPerformance?.backend)
             assertTrue(benchmark.state.report().contains("Dernières mesures reçues avant l’arrêt"))
             assertFalse(benchmark.state.report().contains("GPU réellement observé : oui"))
+        } finally { benchmark.close() }
+    }
+
+
+    @Test fun selectedVulkanRunsStrictlyAfterCpuAndReportsItsOwnBackend() {
+        val loadSettings = LocalGgufLoadSettings(gpuLayers = 8, batchTokens = 128, microBatchTokens = 32, compactSwa = true)
+        val events = mutableListOf<String>(); val inputs = mutableListOf<String>()
+        val benchmark = LocalGgufBenchmark(context, {}, engineFactory = { config ->
+            if (config.localExecution == "VULKAN") assertEquals("CPU:closed", events.last())
+            assertEquals(loadSettings, config.localLoadSettings)
+            events += "${config.localExecution}:open"
+            FakeEngine(config, events, inputs)
+        }, snapshot = probe)
+        try {
+            benchmark.start(model, 4, LocalGgufProfile.AUTO,
+                LocalGgufBenchmark.Options(gpuMode = "VULKAN", loadSettings = loadSettings)); await(benchmark)
+            assertEquals(listOf("CPU", "VULKAN"), benchmark.state.runs.map { it.requestedMode })
+            assertTrue(benchmark.state.runs.all { it.failure == null && it.cleanupConfirmed })
+            val gpu = benchmark.state.runs.last()
+            assertEquals(2, gpu.samples.size)
+            assertTrue(gpu.samples.all { sample -> sample.performance?.let {
+                it.backend == "VULKAN" && it.gpuObserved && it.gpuGraphNodes > 0 && it.openClTransport.isEmpty()
+            } == true })
+            assertEquals(List(4) { LocalGgufBenchmark.SOURCE }, inputs)
+            val report = benchmark.state.report()
+            assertTrue(report.contains("Moteur GPU demandé pour ce comparatif : Vulkan strict"))
+            assertTrue(report.contains("Ordre fixe : CPU puis GPU Vulkan strict."))
+            assertTrue(report.contains("Mode demandé : VULKAN"))
+            assertTrue(report.contains(loadSettings.render()))
+            assertTrue(report.contains("le passage CPU utilise zéro couche GPU"))
+            assertFalse(report.contains("GPU OpenCL strict"))
+        } finally { benchmark.close() }
+    }
+
+    @Test fun vulkanCpuFallbackIsRejectedWhileActualCpuMeasurementsRemainInReport() {
+        val benchmark = LocalGgufBenchmark(context, {}, engineFactory = {
+            FakeEngine(it, mutableListOf(), mutableListOf(), gpuObserved = false)
+        }, snapshot = probe)
+        try {
+            benchmark.start(model, 4, LocalGgufProfile.AUTO,
+                LocalGgufBenchmark.Options(gpuMode = "VULKAN")); await(benchmark)
+            val gpu = benchmark.state.runs.last()
+            assertEquals("VULKAN", gpu.requestedMode)
+            assertNotNull(gpu.failure)
+            assertTrue(gpu.samples.isEmpty())
+            assertEquals("CPU", gpu.lastPerformance?.backend)
+            assertTrue(benchmark.state.report().contains("Dernières mesures reçues avant l’arrêt"))
+            assertFalse(benchmark.state.report().contains("GPU réellement observé : oui"))
+        } finally { benchmark.close() }
+    }
+
+    @Test fun vulkanCannotValidateAnOpenClTransportOrAnUnknownBackendChoice() {
+        var created = 0
+        val benchmark = LocalGgufBenchmark(context, {}, engineFactory = { config ->
+            created++
+            FakeEngine(config, mutableListOf(), mutableListOf(),
+                gpuTransport = if (config.localExecution == "VULKAN") "DIRECT" else "")
+        }, snapshot = probe)
+        try {
+            benchmark.start(model, 4, LocalGgufProfile.AUTO,
+                LocalGgufBenchmark.Options(gpuMode = "AUTO"))
+            assertFalse(benchmark.state.busy)
+            assertEquals(0, created)
+            assertTrue(benchmark.state.status.contains("Moteur GPU invalide"))
+            benchmark.start(model, 4, LocalGgufProfile.AUTO, LocalGgufBenchmark.Options(
+                gpuMode = "VULKAN", loadSettings = LocalGgufLoadSettings(batchTokens = 32, microBatchTokens = 64)))
+            assertFalse(benchmark.state.busy)
+            assertEquals(0, created)
+            assertTrue(benchmark.state.status.contains("Réglages de chargement invalides"))
+            benchmark.start(model, 4, LocalGgufProfile.AUTO,
+                LocalGgufBenchmark.Options(gpuMode = "VULKAN")); await(benchmark)
+            assertEquals(2, created)
+            val gpu = benchmark.state.runs.last()
+            assertEquals("VULKAN", gpu.requestedMode)
+            assertTrue(gpu.samples.isEmpty())
+            assertNotNull(gpu.failure)
+            assertEquals("DIRECT", gpu.lastPerformance?.openClTransport)
+            assertFalse(benchmark.state.report().contains("sorties CPU et GPU sont identiques"))
         } finally { benchmark.close() }
     }
 
@@ -203,6 +282,7 @@ class LocalGgufBenchmarkRobolectricTest {
 
     @Test fun gpuFailureRetainsBoundedDiagnosticAndReleasesBothModesWithoutFalseSuccess() {
         val privateMarker = "synthetic private marker must not leave the parser"
+        val attemptReport = "Fin de l’essai local : processus arrêté (DIED)."
         val diagnostic = requireNotNull(LocalGgufDiagnostic.parse(JSONObject().apply {
             put("stage", "OPENCL_ICD"); put("reason", "ICD_NO_PLATFORM"); put("elapsedMs", 50)
             put("openClStatus", -1001); put("directPlatforms", 1); put("icdPlatforms", 0)
@@ -217,7 +297,7 @@ class LocalGgufBenchmarkRobolectricTest {
                 override val id = TranslationEngines.translationIdentity(config)
                 override fun translate(texts: List<String>, sourceLanguage: String, targetLanguage: String,
                     cancelled: () -> Boolean): List<String> =
-                    throw TranslationFailure(TranslationFailure.Reason.LOCAL_BACKEND, diagnostic)
+                    throw TranslationFailure(TranslationFailure.Reason.LOCAL_BACKEND, diagnostic, localAttemptReport = attemptReport)
                 override fun close() { if (events.lastOrNull() != "OPENCL:closed") events += "OPENCL:closed" }
             }
         }, snapshot = probe)
@@ -236,6 +316,7 @@ class LocalGgufBenchmarkRobolectricTest {
             assertEquals(listOf("CPU:open", "CPU:generate:1", "CPU:generate:2", "CPU:closed", "OPENCL:open", "OPENCL:closed"), events)
             val report = benchmark.state.report()
             assertTrue(report.contains("OPENCL_ICD"))
+            assertEquals(1, Regex(Regex.escape(attemptReport)).findAll(report).count())
             assertTrue(report.contains("ICD_NO_PLATFORM"))
             assertTrue(report.contains("-1001"))
             assertTrue(report.contains("un chargement a pu être tenté"))

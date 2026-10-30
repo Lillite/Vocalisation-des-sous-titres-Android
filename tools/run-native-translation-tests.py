@@ -46,6 +46,22 @@ def parse_chat_format_evidence(log):
     return counts
 
 
+def parse_swa_comparison(log):
+    matches = re.findall(r'^Compact SWA: requests=6, safe_recompute=1, short_reuse=1, cached-vs-fresh maximum error (' +
+        NUMBER + r'), compact-vs-full maximum error (' + NUMBER + r'), compact-vs-full relative error (' +
+        NUMBER + r')\.[ \t]*$', log, re.MULTILINE)
+    if len(matches) != 1:
+        raise RuntimeError('A unique real compact SWA comparison was not reported')
+    cached_error, full_error, relative_error = map(float, matches[0])
+    if (not math.isfinite(cached_error) or not 0 <= cached_error < 0.00002 or
+            not math.isfinite(full_error) or not 0 <= full_error < 0.0001 or
+            not math.isfinite(relative_error) or not 0 <= relative_error < 0.00001):
+        raise RuntimeError('Compact SWA prefix-reuse or full-cache equivalence failed')
+    return {'requests': 6, 'safeRecompute': True, 'shortPrefixReuse': True,
+            'cachedVsFreshMaxLogitError': cached_error, 'compactVsFullMaxLogitError': full_error,
+            'compactVsFullRelativeLogitError': relative_error}
+
+
 def unique_dependency(name):
     matches = list((ROOT / 'app/.cxx/Debug').glob('*/arm64-v8a/_deps/' + name))
     if len(matches) != 1:
@@ -99,14 +115,18 @@ def main():
         run('fixture-context', ['python3', generator, context, '--terminating', '--context-sensitive', '--roundtrip'], 30)
         chat_fixtures = work / 'chat-formats'
         run('fixture-chat-formats', ['python3', generator, chat_fixtures, '--chat-template-fixtures'], 30)
-        translation_log = run('translation', [work / 'build/local-translation-smoke', eos, repeat, context, chat_fixtures], 120)
+        swa = work / 'gemma-swa.gguf'
+        run('fixture-gemma-swa', ['python3', generator, swa, '--terminating', '--context-sensitive', '--roundtrip', '--gemma-swa'], 30)
+        translation_log = run('translation', [work / 'build/local-translation-smoke', eos, repeat, context, chat_fixtures, swa], 120)
         run('probe', [work / 'build/model-probe-smoke', repeat], 60)
         run('diagnostic', [work / 'build/optional-opencl-diagnostic-smoke'], 60)
         error, delta = parse_logit_comparison(translation_log)
         chat_counts = parse_chat_format_evidence(translation_log)
+        swa_evidence = parse_swa_comparison(translation_log)
         summary.update(status='passed', cachedVsFreshMaxLogitError=error, changedContextDelta=delta,
                        builtinChatFormatValidation=chat_counts, chatTemplateMode='BUILTIN_FORMAT',
-                       embeddedJinjaExecuted=False)
+                       embeddedJinjaExecuted=False,
+                       compactSwaValidation=swa_evidence)
     except BaseException as error:
         summary.update(status='failed', failureType=type(error).__name__)
         raise

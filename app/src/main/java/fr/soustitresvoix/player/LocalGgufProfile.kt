@@ -7,6 +7,7 @@ enum class LocalGgufProfile(val id: String, val label: String) {
     TRANSLATE_GEMMA("translategemma", "TranslateGemma — profil de traduction"),
     HY_MT("hy-mt", "Hy-MT / Hy-MT2 — profil de traduction"),
     INDEX_TRANSLATE("index-translate", "Index-Translate — profil de traduction"),
+    QWEN35_INSTRUCT("qwen35-instruct", "Qwen3.5 — traduction sans raisonnement"),
     MODEL_TEMPLATE("model-template", "Gabarit intégré au GGUF — formats reconnus")
 }
 
@@ -40,6 +41,18 @@ internal object LocalGgufProfiles {
     const val OFFICIAL_INDEX_Q8 = "21c65d2f8402ee03cb90135b29d8b9eceba7d6ed4ef680c8fcede2def77b5184"
     private val verifiedIndex = setOf(OFFICIAL_INDEX_Q4, OFFICIAL_INDEX_Q5, OFFICIAL_INDEX_Q6, OFFICIAL_INDEX_Q8)
 
+    // Public Unsloth Qwen3.5-9B Q6_K file identity. Names in a converted GGUF
+    // can be less informative than the repository name. This is not an Index
+    // checkpoint and must never inherit its specialized Chinese instruction.
+    const val VERIFIED_QWEN35_9B_Q6 = "91898433cf5ce0a8f45516a4cc3e9343b6e01d052d01f684309098c66a326c59"
+    private val postTrainedQwenNames = setOf("qwen3508b", "qwen352b", "qwen354b", "qwen359b", "qwen3527b")
+
+    /** AUTO changed the framing only for these positively identified models. */
+    fun usesQwen35PromptIdentity(model: LocalGgufModel): Boolean =
+        model.sha256 == VERIFIED_QWEN35_9B_Q6 ||
+            model.metadata.architecture == "qwen35" &&
+            specialized("qwen35", model.metadata.name, model.sha256, model.metadata) == LocalGgufPrompts.Family.QWEN35_INSTRUCT
+
     /** Header absence is not runtime incompatibility: defer missing hints to the native open. */
     fun preflight(model: LocalGgufModel, requested: LocalGgufProfile): LocalGgufPrompts.Family? {
         val hints = model.metadata
@@ -48,6 +61,7 @@ internal object LocalGgufProfiles {
             LocalGgufProfile.TRANSLATE_GEMMA -> requireArchitecture(hints.architecture, "gemma3", LocalGgufPrompts.Family.TRANSLATE_GEMMA)
             LocalGgufProfile.HY_MT -> requireArchitecture(hints.architecture, "hunyuan-dense", LocalGgufPrompts.Family.HY_MT)
             LocalGgufProfile.INDEX_TRANSLATE -> requireArchitecture(hints.architecture, "qwen35", LocalGgufPrompts.Family.INDEX_TRANSLATE)
+            LocalGgufProfile.QWEN35_INSTRUCT -> requireArchitecture(hints.architecture, "qwen35", LocalGgufPrompts.Family.QWEN35_INSTRUCT)
             LocalGgufProfile.MODEL_TEMPLATE -> if (hints.chatTemplateAvailable) LocalGgufPrompts.Family.MODEL_TEMPLATE else null
             LocalGgufProfile.AUTO -> specialized(hints.architecture, hints.name, model.sha256, hints)
                 ?: if (hints.chatTemplateAvailable) LocalGgufPrompts.Family.MODEL_TEMPLATE else null
@@ -63,6 +77,7 @@ internal object LocalGgufProfiles {
             LocalGgufProfile.TRANSLATE_GEMMA -> requireArchitecture(architecture, "gemma3", LocalGgufPrompts.Family.TRANSLATE_GEMMA)
             LocalGgufProfile.HY_MT -> requireArchitecture(architecture, "hunyuan-dense", LocalGgufPrompts.Family.HY_MT)
             LocalGgufProfile.INDEX_TRANSLATE -> requireArchitecture(architecture, "qwen35", LocalGgufPrompts.Family.INDEX_TRANSLATE)
+            LocalGgufProfile.QWEN35_INSTRUCT -> requireArchitecture(architecture, "qwen35", LocalGgufPrompts.Family.QWEN35_INSTRUCT)
             LocalGgufProfile.MODEL_TEMPLATE -> LocalGgufPrompts.Family.MODEL_TEMPLATE
             LocalGgufProfile.AUTO -> specialized(architecture, runtimeName, sha256, hints)
                 ?: LocalGgufPrompts.Family.MODEL_TEMPLATE
@@ -94,6 +109,19 @@ internal object LocalGgufProfiles {
             return requireArchitecture(architecture, "qwen35", LocalGgufPrompts.Family.INDEX_TRANSLATE)
         if (architecture == "qwen35" && names.any { "indextranslate" in it })
             return LocalGgufPrompts.Family.INDEX_TRANSLATE
+        if (sha256 == VERIFIED_QWEN35_9B_Q6)
+            return requireArchitecture(architecture, "qwen35", LocalGgufPrompts.Family.QWEN35_INSTRUCT)
+        // Architecture alone cannot establish instruction training. Restrict
+        // automatic raw framing to the publisher's post-trained names, or an
+        // explicit Instruct/IT hint, and keep Base/custom checkpoints generic.
+        val qwenName = names.any { name ->
+            postTrainedQwenNames.any { name == it || name == "${it}instruct" || name == "${it}it" }
+        }
+        val qwenInstructHint = names.any { "qwen35" in it } && names.any { it == "instruct" || it == "it" }
+        val finetune = hints.finetune.lowercase(Locale.ROOT).filter(Char::isLetterOrDigit)
+        val knownFinetune = finetune.isEmpty() || finetune == "instruct" || finetune == "it" || finetune == "chat"
+        if (architecture == "qwen35" && names.none { "base" in it } && knownFinetune && (qwenName || qwenInstructHint))
+            return LocalGgufPrompts.Family.QWEN35_INSTRUCT
         return null
     }
 }

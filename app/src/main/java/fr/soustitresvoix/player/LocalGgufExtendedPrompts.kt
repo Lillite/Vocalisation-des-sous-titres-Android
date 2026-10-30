@@ -61,6 +61,19 @@ internal object LocalGgufExtendedPrompts {
         return "<|im_start|>user\n$content<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
     }
 
+    /**
+     * Qwen/Qwen3.5-9B chat_template.jinja, publisher commit
+     * c202236235762e1c871ad0ccb60c8ee5ba337b9a, enable_thinking=false.
+     * One text-only user turn, no tools, no system turn and no added BOS.
+     * The translation instruction/history are this application's adaptation;
+     * the empty thinking span is framing, never generated subtitle content.
+     */
+    fun qwen35(text: String, source: LocalGgufPrompts.Language, target: LocalGgufPrompts.Language,
+        previous: List<LocalGgufPrompts.PairContext>, context: String): String {
+        val content = generic(text, source, target, previous, context)
+        return "<|im_start|>user\n$content<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+    }
+
     /** Plain user content only: the native recognized conversation format supplies roles/tokens. */
     fun generic(text: String, source: LocalGgufPrompts.Language, target: LocalGgufPrompts.Language,
         previous: List<LocalGgufPrompts.PairContext>, context: String): String = buildString {

@@ -23,6 +23,8 @@ internal object LocalGgufBenchmarkReport {
         state.platform?.let { append('\n'); append(it.render()) }
         append("\nModèle : "); append(state.modelBytes); append(" octets ; SHA-256 "); append(state.modelSha256)
         append("\nProfil demandé : "); append(state.profile.label); append(" ; threads CPU demandés : "); append(state.threads)
+        append('\n'); append(state.options.loadSettings.render())
+        append("\nCes réglages de chargement sont identiques entre modes ; le passage CPU utilise zéro couche GPU. Les valeurs réellement retenues par le moteur figurent dans ses mesures lorsqu’elles sont disponibles.")
         if (varied) {
             val cues = LocalGgufBenchmark.cues(state.options)
             append("\nCorpus : "); append(if (contextComparison && state.options.qualityCorpus) LocalGgufQualityCorpus.VERSION
@@ -34,9 +36,11 @@ internal object LocalGgufBenchmarkReport {
             append("\nLe contexte est reconstruit uniquement à partir de paires source/traduction complètes de la même session. Des sorties différentes modifient aussi les contextes suivants ; les entrées en tokens ne sont donc pas supposées identiques. Les limites natives peuvent retirer les paires anciennes entières sans tronquer la source courante.")
         } else { append("\nSource anglaise fixe : "); append(LocalGgufBenchmark.SOURCE) }
         append("\nCible : français ; contexte personnel vide ; mêmes poids, profil et limites de génération pour tous les passages.")
-        if (contextComparison) append("\nOrdre fixe des stratégies : deux échanges précédents, occurrence seule, blocs de six. GPU OpenCL strict pour chacune ; aucun passage CPU ni réouverture supplémentaire. Cet ordre, le cache système et la chauffe peuvent influencer la comparaison.")
+        val gpuLabel = if (state.options.gpuMode == "VULKAN") "Vulkan" else "OpenCL"
+        append("\nMoteur GPU demandé pour ce comparatif : "); append(gpuLabel); append(" strict ; aucun repli CPU accepté pour les passages GPU.")
+        if (contextComparison) append("\nOrdre fixe des stratégies : deux échanges précédents, occurrence seule, blocs de six. GPU $gpuLabel strict pour chacune ; aucun passage CPU ni réouverture supplémentaire. Cet ordre, le cache système et la chauffe peuvent influencer la comparaison.")
         else append(if (state.options.order == LocalGgufBenchmark.Order.CPU_THEN_GPU)
-            "\nOrdre fixe : CPU puis GPU OpenCL strict." else "\nOrdre fixe : GPU OpenCL strict puis CPU.")
+            "\nOrdre fixe : CPU puis GPU $gpuLabel strict." else "\nOrdre fixe : GPU $gpuLabel strict puis CPU.")
         append(if (varied) " Une session et un chargement par série ; chaque occurrence est traitée dans son ordre."
             else " Deux passages identiques par mode : premier passage puis réutilisation éventuelle du préfixe.")
         if (state.options.reopenForLoad && !contextComparison) append("\nRéouverture demandée : après chaque série libérée, une nouvelle session traduit seulement la première occurrence. Les caches ne sont pas effacés ; ceci n’est pas une mesure garantie à cache froid.")

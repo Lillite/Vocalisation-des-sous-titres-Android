@@ -155,4 +155,53 @@ class LocalGgufPromptsTest {
         assertFalse(prompt.contains("<|im_start|>")); assertFalse(prompt.contains("<bos>"))
     }
 
+    @Test fun qwen35PlainTaskMatchesExecutedPublisherTemplateWithThinkingDisabled() {
+        // Qwen/Qwen3.5-9B c202236235762e1c871ad0ccb60c8ee5ba337b9a,
+        // chat_template.jinja, one user, no tools, enable_thinking=false.
+        // Independently rendered with Jinja2 3.1.6 outside the application.
+        val expected = "<|im_start|>user\n" +
+            "Translate the source text from English (en) into French (fr).\n" +
+            "Output only the complete translation, without explanation. Preserve meaning, names, numbers, negations and line breaks. " +
+            "Use background and previous translations only for interpretation; do not translate or repeat them.\n" +
+            "\n[Source text]\nThe blue door is closed.\n[End source text]" +
+            "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+        val actual = LocalGgufPrompts.render(LocalGgufPrompts.Family.QWEN35_INSTRUCT,
+            "The blue door is closed.", "en", "fr", emptyList(), "")
+        assertEquals(expected, actual)
+        assertEquals(407, actual.toByteArray(Charsets.UTF_8).size)
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(actual.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(java.util.Locale.ROOT, it.toInt() and 255) }
+        assertEquals("0729811e10f8cf330d83f0aac77fd5e78586eec678e2c949cf019e62080bc4fa", digest)
+        assertFalse(actual.contains("/nothink")); assertFalse(actual.contains("<bos>"))
+    }
+
+    @Test fun qwen35CompleteHistoryAndBackgroundStayInsideOneTextOnlyUserTurn() {
+        val source = " \nGive it to her. 😀\n "
+        val history = listOf(LocalGgufPrompts.PairContext("The letter belongs to Maya.", "La lettre appartient à Maya."))
+        val prompt = LocalGgufPrompts.render(LocalGgufPrompts.Family.QWEN35_INSTRUCT,
+            source, "en", "fr", history, "Maya is speaking to Chen.")
+        assertTrue(prompt.contains("[Source text]\n$source\n[End source text]"))
+        assertTrue(prompt.contains("[Background for interpretation only]\nMaya is speaking to Chen."))
+        assertTrue(prompt.contains("[Previous source]\nThe letter belongs to Maya."))
+        assertTrue(prompt.contains("[Previous translation]\nLa lettre appartient à Maya."))
+        assertEquals(1, Regex(Regex.escape("<|im_start|>user\n")).findAll(prompt).count())
+        assertEquals(1, Regex(Regex.escape("<|im_start|>assistant\n")).findAll(prompt).count())
+        assertTrue(prompt.endsWith("<think>\n\n</think>\n\n"))
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(prompt.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(java.util.Locale.ROOT, it.toInt() and 255) }
+        assertEquals("1bfcfb999d6544aa2f1f7e7e806fafbb7a4f88fbc9e2ba7bb0bb8ea77ea82d85", digest)
+    }
+
+    @Test fun qwen35LanguageCodesAreValidatedAndRegionalCodesStayExplicit() {
+        val prompt = LocalGgufPrompts.render(LocalGgufPrompts.Family.QWEN35_INSTRUCT,
+            "Não a entregue.", "pt-BR", "fr-FR", emptyList(), "")
+        assertTrue(prompt.contains("Portuguese (pt-BR) into French (fr-FR)"))
+        for ((source, target) in listOf("zz" to "fr", "en" to "zz", "en\nfr" to "fr")) {
+            try {
+                LocalGgufPrompts.render(LocalGgufPrompts.Family.QWEN35_INSTRUCT, "Source.", source, target, emptyList(), "")
+                fail("Invalid language must fail before model inference")
+            } catch (failure: TranslationFailure) { assertEquals(TranslationFailure.Reason.LANGUAGE, failure.reason) }
+        }
+    }
+
 }

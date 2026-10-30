@@ -14,6 +14,11 @@ std::atomic<int> allocated_gpu_layers{-1};
 extern "C" void subtitle_opencl_graph_executed(uint64_t nodes) {
     executed_gpu_nodes.fetch_add(nodes, std::memory_order_relaxed);
 }
+// Vulkan reports only after its real graph submission has succeeded. This
+// counter is reset per request and published only after llama_synchronize().
+extern "C" void subtitle_vulkan_graph_executed(uint64_t nodes) {
+    executed_gpu_nodes.fetch_add(nodes, std::memory_order_relaxed);
+}
 namespace subtitle_native {
 namespace {
 std::atomic_flag model_in_use = ATOMIC_FLAG_INIT;

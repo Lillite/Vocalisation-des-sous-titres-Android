@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicLong
 /** Optional OpenCL and CPU execution; text and paths stay inside private app processes. */
 internal object LocalGgufRuntime {
     enum class Code { BUSY, MODEL, CONTEXT, INPUT_TOO_LONG, OUTPUT_LIMIT, CANCELLED, DIED, TIMEOUT, RESPONSE, BACKEND, MEMORY, TEMPLATE }
-    class Failure(val code: Code, val diagnostic: LocalGgufDiagnostic? = null) : Exception("Local GGUF: ${code.name}")
+    class Failure(val code: Code, val diagnostic: LocalGgufDiagnostic? = null, val attemptReport: String? = null) : Exception("Local GGUF: ${code.name}")
     data class Info(val name: String, val architecture: String, val fileType: String,
         val contextTokens: Int, val modelBytes: Long, val modelParameters: Long,
         val loadMs: Long = 0, val peakRssBytes: Long = 0, val processId: Int = 0,
@@ -32,7 +32,8 @@ internal object LocalGgufRuntime {
         val gpuObserved: Boolean = false, val residentBytes: Long = -1, val availableRamBytes: Long = -1,
         val diagnostic: LocalGgufDiagnostic? = null, val openClTransport: String = "",
         val loadProfile: LocalGgufLoadProfile? = null,
-        val chatTemplateAvailable: Boolean = false, val chatTemplateMode: String = "")
+        val chatTemplateAvailable: Boolean = false, val chatTemplateMode: String = "",
+        val batchTokens: Int = 0, val microBatchTokens: Int = 0, val compactSwa: Boolean? = null)
     data class Generation(val output: String, val promptTokens: Int, val generatedTokens: Int,
         val stopReason: String, val promptMs: Long, val generationMs: Long, val peakRssBytes: Long,
         val backend: String = "CPU", val device: String = "CPU", val requestedMode: String = "CPU",
@@ -40,7 +41,8 @@ internal object LocalGgufRuntime {
         val gpuObserved: Boolean = false, val gpuGraphNodes: Long = 0,
         val cachedPromptTokens: Int = 0, val promptEvaluatedTokens: Int = 0,
         val residentBytes: Long = -1, val availableRamBytes: Long = -1,
-        val diagnostic: LocalGgufDiagnostic? = null, val openClTransport: String = "")
+        val diagnostic: LocalGgufDiagnostic? = null, val openClTransport: String = "",
+        val batchTokens: Int = 0, val microBatchTokens: Int = 0, val compactSwa: Boolean? = null)
     private val loaded by lazy {
         try { System.loadLibrary("subtitle_model_probe"); true }
         catch (_: LinkageError) { false }
@@ -65,12 +67,13 @@ internal object LocalGgufRuntime {
                 x.optString("fallbackReason").take(128), x.optInt("requestedGpuLayers"), x.optInt("actualGpuLayers"),
                 x.optBoolean("gpuObserved"), x.optLong("residentBytes", -1), x.optLong("availableRamBytes", -1),
                 LocalGgufDiagnostic.parse(x.optJSONObject("diagnostic")), openClTransport(x), LocalGgufLoadProfile.fromResponse(x),
-                chatTemplateAvailable(x), chatTemplateMode(x)).also {
+                chatTemplateAvailable(x), chatTemplateMode(x), settingInt(x, "batchTokens"), settingInt(x, "microBatchTokens"), compactSwa(x)).also {
                 if (it.contextTokens !in 128..2048 || it.modelBytes <= 0 || it.modelParameters <= 0 ||
                     it.loadMs < 0 || it.peakRssBytes < 0 || !validBackend(it.backend, it.requestedMode) ||
                     it.gpuObserved || it.actualGpuLayers !in -1..1024 || it.requestedGpuLayers !in -1..1024 ||
                     it.residentBytes < -1 || it.availableRamBytes < -1 || !validTransport(it.backend, it.openClTransport) ||
-                    it.chatTemplateAvailable != (it.chatTemplateMode == "BUILTIN_FORMAT"))
+                    it.chatTemplateAvailable != (it.chatTemplateMode == "BUILTIN_FORMAT") ||
+                    !validSettings(it.batchTokens, it.microBatchTokens, it.compactSwa, it.contextTokens))
                     throw Failure(Code.RESPONSE)
                 it.loadProfile?.let { profile ->
                     if (profile.modelLoadMs + profile.contextInitMs > it.loadMs || it.loadMs > profile.openTotalMs)
@@ -89,22 +92,41 @@ internal object LocalGgufRuntime {
                 x.optString("fallbackReason").take(128), x.optInt("requestedGpuLayers"), x.optInt("actualGpuLayers"),
                 x.optBoolean("gpuObserved"), x.optLong("gpuGraphNodes"), x.optInt("cachedPromptTokens"),
                 x.optInt("promptEvaluatedTokens", x.getInt("promptTokens")), x.optLong("residentBytes", -1),
-                x.optLong("availableRamBytes", -1), LocalGgufDiagnostic.parse(x.optJSONObject("diagnostic")), openClTransport(x)).also {
+                x.optLong("availableRamBytes", -1), LocalGgufDiagnostic.parse(x.optJSONObject("diagnostic")), openClTransport(x),
+                settingInt(x, "batchTokens"), settingInt(x, "microBatchTokens"), compactSwa(x)).also {
                 if (it.stopReason != "end_of_generation" || it.output.toByteArray(Charsets.UTF_8).size > 65536 ||
                     it.promptTokens !in 1..2048 || it.generatedTokens !in 0..1024 ||
                     it.promptMs < 0 || it.generationMs < 0 || it.peakRssBytes < 0 || !validBackend(it.backend, it.requestedMode) ||
-                    it.gpuGraphNodes < 0 || it.gpuObserved != (it.backend == "OPENCL" && it.gpuGraphNodes > 0) ||
-                    it.gpuGraphNodes > 0 && it.backend != "OPENCL" ||
+                    it.gpuGraphNodes < 0 || it.gpuObserved != (it.backend in setOf("OPENCL", "VULKAN") && it.gpuGraphNodes > 0) ||
+                    it.gpuGraphNodes > 0 && it.backend !in setOf("OPENCL", "VULKAN") ||
                     it.cachedPromptTokens < 0 || it.promptEvaluatedTokens < 1 ||
                     it.cachedPromptTokens + it.promptEvaluatedTokens != it.promptTokens ||
                     it.actualGpuLayers !in -1..1024 || it.requestedGpuLayers !in -1..1024 ||
-                    it.residentBytes < -1 || it.availableRamBytes < -1 || !validTransport(it.backend, it.openClTransport))
+                    it.residentBytes < -1 || it.availableRamBytes < -1 || !validTransport(it.backend, it.openClTransport) ||
+                    !validSettings(it.batchTokens, it.microBatchTokens, it.compactSwa, 2048))
                     throw Failure(Code.RESPONSE)
             }
         } catch (failure: Failure) { throw failure }
           catch (_: Exception) { throw Failure(Code.RESPONSE) }
     }
-    private fun validBackend(backend: String, mode: String) = backend in setOf("CPU", "OPENCL") && mode in setOf("AUTO", "CPU", "OPENCL")
+    private fun validBackend(backend: String, mode: String) = when (mode) {
+        "CPU" -> backend == "CPU"
+        "OPENCL" -> backend == "OPENCL"
+        "VULKAN" -> backend == "VULKAN"
+        "AUTO" -> backend in setOf("CPU", "OPENCL")
+        else -> false
+    }
+    private fun settingInt(value: JSONObject, key: String): Int {
+        if (!value.has(key)) return 0
+        val number = value.get(key)
+        return when (number) { is Int -> number; is Long -> number.takeIf { it in 1..512 }?.toInt()
+            ?: throw Failure(Code.RESPONSE); else -> throw Failure(Code.RESPONSE) }
+    }
+    private fun compactSwa(value: JSONObject): Boolean? =
+        if (!value.has("compactSwa")) null else value.get("compactSwa") as? Boolean ?: throw Failure(Code.RESPONSE)
+    private fun validSettings(batch: Int, micro: Int, compact: Boolean?, context: Int): Boolean =
+        if (batch == 0 && micro == 0 && compact == null) true
+        else batch in 1..minOf(512, context) && micro in 1..minOf(128, batch) && compact != null
     private fun openClTransport(value: JSONObject): String {
         if (!value.has("openClTransport")) return ""
         return (value.get("openClTransport") as? String)?.takeIf { it.isEmpty() || it == "DIRECT" }
@@ -133,9 +155,11 @@ internal object LocalGgufRuntime {
                 .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString() }
             catch (_: Exception) { throw Failure(Code.RESPONSE) }
         }
-        fun open(file: File, threads: Int, contextTokens: Int, executionMode: String = "CPU", gpuLayers: Int = -1, cacheDirectory: File? = null): String {
+        fun open(file: File, threads: Int, contextTokens: Int, executionMode: String = "CPU", gpuLayers: Int = -1,
+            cacheDirectory: File? = null, batchTokens: Int = 512, microBatchTokens: Int = 128,
+            compactSwa: Boolean = false, progress: LocalGgufProgressListener? = null): String {
             val id = handle.get().takeIf { it != 0L } ?: throw Failure(Code.CANCELLED)
-            return decode(nativeOpen(id, file.absolutePath.toByteArray(Charsets.UTF_8), threads, contextTokens, executionMode, gpuLayers, cacheDirectory?.absolutePath.orEmpty().toByteArray(Charsets.UTF_8)))
+            return decode(nativeOpen(id, file.absolutePath.toByteArray(Charsets.UTF_8), threads, contextTokens, executionMode, gpuLayers, cacheDirectory?.absolutePath.orEmpty().toByteArray(Charsets.UTF_8), batchTokens, microBatchTokens, compactSwa, progress))
         }
         fun generate(prompt: String, maxOutputTokens: Int, addSpecialTokens: Boolean): String {
             val id = handle.get().takeIf { it != 0L } ?: throw Failure(Code.CANCELLED)
@@ -170,7 +194,14 @@ internal object LocalGgufRuntime {
         private val released = CountDownLatch(1)
         @Volatile private var releaseFailure: Code? = null
         private var releaseDeadline: Runnable? = null
+        @Volatile private var progressListener: ((LocalGgufProgress) -> Unit)? = null
+        @Volatile private var serviceProcessId = 0
+        fun setProgressListener(listener: ((LocalGgufProgress) -> Unit)?) { progressListener = listener }
         private class Pending(val id: Long, val what: Int, val arguments: Bundle) {
+            val startedAtMs = System.currentTimeMillis()
+            val startedAtNanos = System.nanoTime()
+            @Volatile var progress: LocalGgufProgress? = null
+            val progressEvents = ArrayDeque<LocalGgufProgress>()
             val ready = CountDownLatch(1)
             @Volatile var json: String? = null
             @Volatile var failure: Code? = null
@@ -178,7 +209,21 @@ internal object LocalGgufRuntime {
             fun fail(code: Code) { failure = code; ready.countDown() }
         }
         private val replies = Messenger(Handler(Looper.getMainLooper()) { message ->
-            if (message.what == GgufMessages.RESULT && message.data.getLong(GgufMessages.SESSION) == session) {
+            if (message.what == GgufMessages.PROGRESS && message.data.getLong(GgufMessages.SESSION) == session) {
+                synchronized(state) {
+                    val request = pending
+                    if (!closed.get() && !cancelled.get() && request != null && request.ready.count > 0 &&
+                        request.id == message.data.getLong(GgufMessages.REQUEST)) {
+                        val progress = LocalGgufProgress.parse(message.data, request.startedAtMs, System.currentTimeMillis())
+                        if (progress != null && (serviceProcessId == 0 || serviceProcessId == progress.processId)) {
+                            serviceProcessId = progress.processId
+                            request.progress = progress
+                            if (request.progressEvents.size >= 128) request.progressEvents.removeFirst()
+                            request.progressEvents.addLast(progress)
+                        }
+                    }
+                }
+            } else if (message.what == GgufMessages.RESULT && message.data.getLong(GgufMessages.SESSION) == session) {
                 if (message.data.getLong(GgufMessages.REQUEST) == GgufMessages.CLOSE_REQUEST) {
                     val json = message.data.getString(GgufMessages.JSON).orEmpty()
                     releaseFailure = runCatching<Code?> { response(json); null }.getOrElse { Code.RESPONSE }
@@ -196,14 +241,17 @@ internal object LocalGgufRuntime {
             true
         })
         fun open(file: File, threads: Int = 4, contextTokens: Int = 2048,
-            cancelled: () -> Boolean = { false }, executionMode: String = "CPU", gpuLayers: Int = -1): Info = onWorker {
+            cancelled: () -> Boolean = { false }, executionMode: String = "CPU", gpuLayers: Int = -1,
+            batchTokens: Int = 512, microBatchTokens: Int = 128, compactSwa: Boolean = false): Info = onWorker {
             if (opened) throw Failure(Code.CONTEXT)
-            if (threads !in 1..8 || contextTokens !in 128..2048 || executionMode !in setOf("AUTO", "CPU", "OPENCL") ||
-                gpuLayers !in -1..1024) throw Failure(Code.CONTEXT)
+            if (threads !in 1..8 || contextTokens !in 128..2048 || executionMode !in setOf("AUTO", "CPU", "OPENCL", "VULKAN") ||
+                gpuLayers !in -1..1024 || gpuLayers == 0 && executionMode != "CPU" ||
+                batchTokens !in 16..512 || microBatchTokens !in 16..128 || microBatchTokens > batchTokens) throw Failure(Code.CONTEXT)
             val privateFile = privateGgufFile(app, file.absolutePath) ?: throw Failure(Code.MODEL)
             info(perform(GgufMessages.OPEN, Bundle().apply {
                 putString(GgufMessages.PATH, privateFile.absolutePath); putInt(GgufMessages.THREADS, threads)
                 putInt(GgufMessages.CONTEXT, contextTokens); putString(GgufMessages.EXECUTION, executionMode); putInt(GgufMessages.LAYERS, gpuLayers)
+                putInt(GgufMessages.BATCH, batchTokens); putInt(GgufMessages.MICRO_BATCH, microBatchTokens); putBoolean(GgufMessages.COMPACT_SWA, compactSwa)
             }, GgufMessages.OPEN_TIMEOUT_MS, cancelled)).also { opened = true }
         }
         fun generate(prompt: String, maxOutputTokens: Int = 512, addSpecialTokens: Boolean = false,
@@ -242,15 +290,38 @@ internal object LocalGgufRuntime {
             val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
             try {
                 while (!request.ready.await(50, TimeUnit.MILLISECONDS)) {
+                    publishProgress(request)
                     if (closed.get() || cancelled.get() || isCancelled()) { cancel(); throw Failure(Code.CANCELLED) }
                     if (System.nanoTime() >= deadline) { abort(Code.TIMEOUT); throw Failure(Code.TIMEOUT) }
                 }
                 if (closed.get() || cancelled.get() || isCancelled()) throw Failure(Code.CANCELLED)
+                publishProgress(request)
                 request.failure?.let { throw Failure(it) }
-                return request.json ?: throw Failure(Code.RESPONSE)
+                val json = request.json ?: throw Failure(Code.RESPONSE)
+                response(json) // Preserve a native failure together with this request's last stage.
+                return json
+            } catch (failure: Failure) {
+                if (failure.code == Code.CANCELLED) throw failure
+                val stoppedAtMs = System.currentTimeMillis()
+                val exit = if (failure.code == Code.DIED) LocalGgufAttemptReport.exitFor(app, serviceProcessId,
+                    request.startedAtMs, stoppedAtMs) else null
+                throw Failure(failure.code, failure.diagnostic, LocalGgufAttemptReport.failure(failure.code,
+                    request.progress, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - request.startedAtNanos), exit))
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt(); cancel(); throw Failure(Code.CANCELLED)
             } finally { synchronized(state) { if (pending === request) pending = null } }
+        }
+        private fun publishProgress(request: Pending) {
+            val events = synchronized(state) {
+                if (closed.get() || cancelled.get() || pending !== request) {
+                    request.progressEvents.clear()
+                    emptyList()
+                } else request.progressEvents.toList().also { request.progressEvents.clear() }
+            }
+            events.forEach { progress ->
+                if (closed.get() || cancelled.get() || synchronized(state) { pending !== request }) return
+                runCatching { progressListener?.invoke(progress) }
+            }
         }
         private fun ensureBinding(request: Pending) {
             if (closed.get() || cancelled.get()) { request.fail(Code.CANCELLED); return }
@@ -361,16 +432,21 @@ internal object LocalGgufRuntime {
     private external fun nativeCreate(): Long
     private external fun nativeCancel(handle: Long)
     private external fun nativeDestroy(handle: Long)
-    private external fun nativeOpen(handle: Long, path: ByteArray, threads: Int, context: Int, execution: String, gpuLayers: Int, cachePath: ByteArray): ByteArray?
+    private external fun nativeOpen(handle: Long, path: ByteArray, threads: Int, context: Int, execution: String,
+        gpuLayers: Int, cachePath: ByteArray, batchTokens: Int, microBatchTokens: Int, compactSwa: Boolean,
+        progress: LocalGgufProgressListener?): ByteArray?
     private external fun nativeGenerate(handle: Long, prompt: ByteArray, tokens: Int, addSpecial: Boolean): ByteArray?
     private external fun nativeGenerateChat(handle: Long, userContent: ByteArray, tokens: Int): ByteArray?
 }
 
 internal object GgufMessages {
-    const val OPEN = 1; const val GENERATE = 2; const val CANCEL = 3; const val CLOSE = 4; const val RESULT = 5
+    const val OPEN = 1; const val GENERATE = 2; const val CANCEL = 3; const val CLOSE = 4; const val RESULT = 5; const val PROGRESS = 6
     const val SESSION = "session"; const val REQUEST = "request"; const val PATH = "path"; const val THREADS = "threads"
     const val CONTEXT = "context"; const val TEXT = "text"; const val TOKENS = "tokens"; const val SPECIAL = "special"; const val JSON = "json"
     const val EXECUTION = "execution"; const val LAYERS = "layers"
+    const val BATCH = "batchTokens"; const val MICRO_BATCH = "microBatchTokens"; const val COMPACT_SWA = "compactSwa"
+    const val STAGE = "stage"; const val PERCENT = "percent"; const val PROCESS_ID = "processId"
+    const val STARTED_AT = "startedAtMs"; const val ELAPSED = "elapsedMs"
     const val MODEL_TEMPLATE = "modelTemplate"
     const val CLOSE_REQUEST = Long.MAX_VALUE
     const val MAX_JSON = 196608

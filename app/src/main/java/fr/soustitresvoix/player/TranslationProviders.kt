@@ -43,7 +43,8 @@ class TranslationProviderConfig(
     val localContext: String = "",
     val localProfile: LocalGgufProfile = LocalGgufProfile.AUTO,
     val localExecution: String = "AUTO",
-    val localContextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO
+    val localContextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO,
+    val localLoadSettings: LocalGgufLoadSettings = LocalGgufLoadSettings()
 ) {
     override fun toString(): String = "TranslationProviderConfig(provider=${provider.id}, credentials=hidden)"
 }
@@ -60,8 +61,9 @@ interface TranslationEngine : Closeable {
 class TranslationCancelledException : IOException("Traduction annulée ; aucune piste incomplète n’a été activée.")
 
 /** Only application-owned messages cross the UI boundary; no cause/body/URI is attached. */
-class TranslationFailure(val reason: Reason, val localDiagnostic: LocalGgufDiagnostic? = null) :
-    IOException(reason.message + (localDiagnostic?.let { "\n" + it.render() } ?: "")) {
+class TranslationFailure(val reason: Reason, val localDiagnostic: LocalGgufDiagnostic? = null,
+    val localAttemptReport: String? = null) :
+    IOException(reason.message + (localDiagnostic?.let { "\n" + it.render() } ?: "") + (localAttemptReport?.let { "\n$it" } ?: "")) {
     enum class Reason(val message: String) {
         BUDGET("Le volume restant dépasse ton plafond local de nouveaux caractères. Aucun nouveau lot n’a été envoyé."),
         CONFIGURATION("Configuration du traducteur invalide. Vérifie le moteur, sa clé, sa région et les langues."),
@@ -79,14 +81,16 @@ class TranslationFailure(val reason: Reason, val localDiagnostic: LocalGgufDiagn
         LOCAL_MODEL("Le moteur n’a pas pu charger ce modèle GGUF. Son format, ses tenseurs ou les ressources nécessaires peuvent être en cause. Les occurrences validées restent conservées."),
         LOCAL_MODEL_MISSING("La copie privée du modèle GGUF est absente ou inaccessible. Choisis à nouveau son fichier ; les occurrences validées restent conservées."),
         LOCAL_MODEL_CHANGED("Le modèle préparé a été remplacé ou son empreinte a changé. Sélectionne le modèle actuel avant de reprendre ; les anciens résultats restent liés à leur modèle."),
-        LOCAL_PROFILE("Le profil de traduction de ce modèle GGUF n’a pas pu être reconnu. Vérifie sa famille : TranslateGemma, Hy-MT / Hy-MT2 ou Index-Translate. Le mode Gabarit intégré au GGUF utilise les formats de conversation reconnus par le moteur ; l’architecture et le chargement restent à vérifier."),
+        LOCAL_PROFILE("Le profil de traduction de ce modèle GGUF n’a pas pu être reconnu. Vérifie sa famille : TranslateGemma, Hy-MT / Hy-MT2, Index-Translate ou Qwen3.5. Le mode Gabarit intégré au GGUF utilise les formats de conversation reconnus par le moteur ; l’architecture et le chargement restent à vérifier."),
         LOCAL_TEMPLATE("Le format de conversation intégré au GGUF est absent, non reconnu ou incompatible avec cette requête. Les gabarits personnalisés et les marqueurs réservés peuvent être refusés. Aucune traduction incomplète n’a été validée."),
-        LOCAL_BACKEND("Le moteur de calcul local demandé n’est pas disponible ou n’a pas pu exécuter ce modèle. Pour un échec GPU OpenCL, choisis Automatique afin d’autoriser un repli CPU signalé, ou CPU pour un essai séparé."),
+        LOCAL_BACKEND("Le moteur de calcul local demandé n’est pas disponible ou n’a pas pu exécuter ce modèle. Consulte le diagnostic. Automatique peut autoriser un repli OpenCL vers CPU signalé ; les modes OpenCL et Vulkan stricts ne changent pas silencieusement de moteur."),
         LOCAL_MEMORY("La mémoire nécessaire au modèle local n’a pas pu être allouée. Les occurrences validées restent conservées ; libère des ressources ou choisis un modèle moins volumineux avant de reprendre."),
         LOCAL_BUSY("Un autre calcul ou import de modèle local est en cours. Attends sa fin ou annule-le avant de reprendre cette traduction."),
         LOCAL_CONTEXT("Cette occurrence dépasse le contexte que le modèle peut traiter. Sa traduction n’a pas été validée ; aucune partie manquante n’est ignorée."),
         LOCAL_TRUNCATED("Le modèle a atteint sa limite de sortie avant de terminer cette occurrence. Le texte incomplet est refusé ; les occurrences déjà validées sont conservées."),
-        LOCAL_PROCESS("Le processus du modèle local s’est arrêté ou n’a pas répondu à temps. La mémoire peut être insuffisante. Les occurrences validées restent enregistrées pour une reprise explicite.")
+        LOCAL_PROCESS("Le processus du modèle local s’est arrêté ou n’a pas répondu à temps. Consulte le diagnostic ; la cause précise n’est pas établie. Les occurrences validées restent enregistrées pour une reprise explicite."),
+        LOCAL_PROCESS_DIED("Le processus du modèle local s’est arrêté ou sa liaison a été perdue. Consulte le diagnostic pour le dernier stade observé et le motif Android éventuel. Les occurrences validées restent conservées."),
+        LOCAL_TIMEOUT("Le calcul local a dépassé le délai de cet appel. Ce dépassement ne prouve pas un manque de mémoire. Consulte le dernier stade observé avant de reprendre explicitement.")
     }
 }
 
@@ -199,7 +203,8 @@ object TranslationEngines {
                 LocalGgufTranslationEngine(
                     context ?: throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION),
                     config.localModel ?: throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION),
-                    config.localThreads, config.localContext, config.localProfile, config.localExecution, config.localContextPolicy)
+                    config.localThreads, config.localContext, config.localProfile, config.localExecution, config.localContextPolicy,
+                    config.localLoadSettings)
             }
             else -> HttpEngine(config, transport, TranslationRequestPacing())
         }
@@ -211,7 +216,8 @@ object TranslationEngines {
     fun identity(config: TranslationProviderConfig): String {
         if (config.provider == TranslationProvider.LOCAL_GGUF) return LocalGgufTranslationEngine.identity(
             config.localModel ?: throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION),
-            config.localThreads, config.localContext, config.localProfile, config.localExecution, config.localContextPolicy)
+            config.localThreads, config.localContext, config.localProfile, config.localExecution, config.localContextPolicy,
+            config.localLoadSettings)
         if (config.provider != TranslationProvider.LIBRE) return config.provider.id
         val endpoint = libreEndpoint(config.endpoint).toASCIIString()
         val digest = MessageDigest.getInstance("SHA-256").digest(endpoint.toByteArray(Charsets.UTF_8))

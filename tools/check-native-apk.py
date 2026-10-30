@@ -18,6 +18,7 @@ with zipfile.ZipFile(sys.argv[1]) as archive, tempfile.TemporaryDirectory() as w
     assert required.issubset(libraries), 'Both tested diagnostic native ABIs must be packaged'
     assert {name.split('/')[1] for name in libraries} == {'arm64-v8a', 'x86_64'}
     assert all(Path(name).name != 'libOpenCL.so' for name in libraries), 'Do not bundle a vendor OpenCL driver'
+    assert all(Path(name).name != 'libvulkan.so' for name in libraries), 'Do not bundle a vendor Vulkan loader'
     for name in sorted(libraries):
         local = Path(work) / 'library.so'
         local.write_bytes(archive.read(name))
@@ -28,6 +29,7 @@ with zipfile.ZipFile(sys.argv[1]) as archive, tempfile.TemporaryDirectory() as w
         dynamic = subprocess.run([str(readelf), '-dW', str(local)], check=True, text=True, capture_output=True)
         needed = re.findall(r'\(NEEDED\).*?\[([^\]]+)\]', dynamic.stdout)
         assert 'libOpenCL.so' not in needed, f'CPU execution must not require the optional vendor OpenCL library: {name}'
+        assert 'libvulkan.so' not in needed, f'CPU execution must not require the optional Vulkan loader: {name}'
         if Path(name).name == 'libsubtitle_model_probe.so':
             symbols = subprocess.run([str(readelf), '--dyn-syms', '-W', str(local)],
                                      check=True, text=True, capture_output=True)
@@ -35,6 +37,12 @@ with zipfile.ZipFile(sys.argv[1]) as archive, tempfile.TemporaryDirectory() as w
                               if len(line.split()) >= 8 and
                               re.fullmatch(r'cl[A-Z][A-Za-z0-9_]*(?:@[^ ]+)?', line.split()[7])]
             assert not opencl_symbols, f'OpenCL forwarding must stay private and have no unresolved vendor APIs: {name}'
+            vulkan_symbols = [line.split() for line in symbols.stdout.splitlines()
+                              if len(line.split()) >= 8 and
+                              re.fullmatch(r'vk[A-Z][A-Za-z0-9_]*(?:@[^ ]+)?', line.split()[7])]
+            assert not vulkan_symbols, f'Vulkan forwarding must stay private and have no unresolved loader APIs: {name}'
             print(f'PASS OpenCL API wrappers absent from exported/unresolved dynamic symbols: {name}')
+            print(f'PASS Vulkan API wrappers absent from exported/unresolved dynamic symbols: {name}')
         print(f'PASS native ELF LOAD alignment >= 16 KiB: {name}')
         print(f'PASS vendor OpenCL absent from mandatory ELF dependencies: {name}')
+        print(f'PASS Vulkan loader absent from mandatory ELF dependencies: {name}')

@@ -337,16 +337,46 @@ class LocalSrtTranslationJobRobolectricTest {
         job.start("en", configuration())
         await { !job.state.busy }
         assertTrue(job.state.status, job.state.complete)
-        assertEquals(measured.render(), job.state.performance)
+        val completedReport = requireNotNull(job.state.performance)
+        assertTrue(completedReport.contains("Préparation locale commencée"))
+        assertTrue(completedReport.endsWith(measured.render()))
         assertNotNull(job.completedExport())
         lateListener?.invoke(measured.copy(backend = "VULKAN", gpuObserved = true))
         shadowOf(Looper.getMainLooper()).idle()
-        assertEquals("A completed task cannot be changed by a late native reply", measured.render(), job.state.performance)
+        assertEquals("A completed task cannot be changed by a late native reply", completedReport, job.state.performance)
         job.importExample()
         assertNull(job.state.performance)
         await { !job.state.busy }
         assertNull(job.state.performance)
         assertFalse(job.state.complete)
+    }
+
+
+    @Test fun failedBeforeFirstOccurrenceStillHasAnAttemptReportAndPreservesTheNativeDiagnostic() {
+        val nativeDiagnostic = requireNotNull(LocalGgufDiagnostic.parse(org.json.JSONObject()
+            .put("stage", "MODEL_LOAD").put("reason", "ALLOCATION_FAILED").put("elapsedMs", 15)
+            .put("openClStatus", org.json.JSONObject.NULL).put("directPlatforms", -1).put("icdPlatforms", -1)
+            .put("gpuDevices", -1).put("probeCached", false)))
+        val failureReport = LocalGgufAttemptReport.failure(LocalGgufRuntime.Code.DIED, null, 30)
+        val job = job({ throw TranslationFailure(TranslationFailure.Reason.LOCAL_PROCESS_DIED,
+            nativeDiagnostic, failureReport) })
+        import(job)
+        job.start("en", configuration())
+        assertNotNull("A report must exist before engine construction or any successful load", job.state.performance)
+        assertTrue(requireNotNull(job.state.performance).contains("Aucun chargement ou calcul réussi"))
+        await { !job.state.busy }
+        assertEquals(0, job.state.done)
+        assertFalse(job.state.complete)
+        assertNull(job.completedExport())
+        val report = requireNotNull(job.state.performance)
+        assertTrue(report.contains("ALLOCATION_FAILED"))
+        assertTrue(report.contains("[DIED]"))
+        assertTrue(report.contains("cause reste indéterminée"))
+        assertFalse(report.contains(model.file.absolutePath))
+        assertFalse(report.contains("Hello Élodie"))
+        job.importExample()
+        await { !job.state.busy }
+        assertNull("A different source must not inherit the previous failed attempt", job.state.performance)
     }
 
     @Test fun anOldModelDescriptorCannotSilentlyRestoreItsCachedResultAfterAnotherModelWasImported() {

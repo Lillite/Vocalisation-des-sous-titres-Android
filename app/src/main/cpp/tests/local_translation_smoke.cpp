@@ -10,15 +10,17 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
 void check_profile(const subtitle_local::Response & response) {
     const auto & profile = response.load_profile;
     assert(profile.present && profile.load_attempts >= 1 && profile.load_attempts <= 2);
-    assert(profile.backend_init_ms >= 0 && profile.opencl_prepare_ms >= 0);
+    assert(profile.backend_init_ms >= 0 && profile.opencl_prepare_ms >= 0 && profile.vulkan_prepare_ms >= 0);
     assert(profile.model_load_ms >= 0 && profile.context_init_ms >= 0);
-    assert(profile.backend_init_ms + profile.opencl_prepare_ms + profile.model_load_ms +
+    assert(profile.backend_init_ms + profile.opencl_prepare_ms + profile.vulkan_prepare_ms + profile.model_load_ms +
            profile.context_init_ms <= profile.open_total_ms);
     assert(profile.model_load_ms + profile.context_init_ms <= response.load_ms);
     assert(response.load_ms <= profile.open_total_ms);
@@ -39,8 +41,18 @@ void check_output(const subtitle_local::Response & response) {
 float difference(const std::vector<float> & left, const std::vector<float> & right) {
     assert(!left.empty() && left.size() == right.size());
     float maximum = 0;
-    for (size_t i = 0; i < left.size(); ++i) maximum = std::max(maximum, std::abs(left[i] - right[i]));
+    for (size_t i = 0; i < left.size(); ++i) {
+        assert(std::isfinite(left[i]) && std::isfinite(right[i]));
+        maximum = std::max(maximum, std::abs(left[i] - right[i]));
+    }
     return maximum;
+}
+float relative_difference(const std::vector<float> & left, const std::vector<float> & right) {
+    const float error = difference(left, right);
+    float norm = 0;
+    for (size_t i = 0; i < left.size(); ++i)
+        norm = std::max(norm, std::max(std::abs(left[i]), std::abs(right[i])));
+    return norm > 0 ? error / norm : error;
 }
 void check_greedy_chain_equivalence() {
     using Sampler = std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)>;
@@ -241,8 +253,67 @@ void check_gguf_chat_templates(const std::string & fixtures, const std::string &
 #endif
 }
 int main(int argc, char ** argv) {
-    assert(argc == 3 || argc == 4 || argc == 5);
+    assert(argc >= 3 && argc <= 6);
     check_greedy_chain_equivalence();
+    {
+        // Bounds must fail before a backend is initialized or a model lease is
+        // retained. Subsequent valid sessions exercise the same process.
+        const std::vector<std::pair<int, int>> invalid = {
+            {15, 16}, {513, 32}, {64, 15}, {512, 129}, {32, 64}
+        };
+        for (const auto & settings : invalid) {
+            subtitle_local::Session rejected;
+            bool progress_called = false;
+            const auto result = rejected.open(argv[1], 1, 512, "CPU", -1, "",
+                settings.first, settings.second, false,
+                [&](const char *, int) { progress_called = true; });
+            assert(result.code == "CONTEXT" && !progress_called);
+        }
+        std::vector<std::pair<std::string, int>> progress_events;
+        subtitle_local::Session small;
+        const auto info = small.open(argv[1], 1, 512, "CPU", -1, "", 64, 32, false,
+            [&](const char * stage, int percent) { progress_events.emplace_back(stage, percent); });
+        assert(info.code == "OK" && info.context_tokens == 512);
+        assert(info.batch_tokens == 64 && info.micro_batch_tokens == 32 && !info.compact_swa);
+        assert(info.json().find("\"batchTokens\":64,\"microBatchTokens\":32,\"compactSwa\":false") != std::string::npos);
+        assert(!progress_events.empty() && progress_events.front().first == "BACKEND");
+        assert(progress_events.back() == std::make_pair(std::string("READY"), 100));
+        int last_loading_percent = -1;
+        bool saw_context = false, saw_template = false;
+        for (const auto & event : progress_events) {
+            assert(event.second >= -1 && event.second <= 100);
+            assert(event.first != "OPENCL" && event.first != "VULKAN");
+            if (event.first == "MODEL_LOAD") {
+                assert(event.second >= last_loading_percent);
+                last_loading_percent = event.second;
+            }
+            if (event.first == "CONTEXT_INIT") saw_context = true;
+            if (event.first == "CHAT_TEMPLATE") saw_template = true;
+        }
+        assert(last_loading_percent == 100 && saw_context && saw_template);
+        const std::string entire_prompt = "A complete source " + std::string(180, 'x') + " with a preserved ending.";
+        const auto computed = small.generate(entire_prompt, 1, true);
+        check_output(computed);
+        assert(computed.prompt_tokens > 64 && computed.prompt_evaluated_tokens == computed.prompt_tokens);
+        check_output(small.generate(entire_prompt, 1, true));
+    }
+    {
+        subtitle_local::Session listener_failure;
+        const auto info = listener_failure.open(argv[1], 1, 512, "CPU", -1, "", 512, 128, false,
+            [](const char *, int) { throw std::runtime_error("synthetic telemetry failure"); });
+        assert(info.code == "OK");
+        check_output(listener_failure.generate("Telemetry must not own inference.", 1, true));
+    }
+    {
+        subtitle_local::Session cancelled_during_load;
+        const auto result = cancelled_during_load.open(argv[1], 1, 512, "CPU", -1, "", 512, 128, false,
+            [&](const char * stage, int) {
+                if (std::string(stage) == "MODEL_LOAD") cancelled_during_load.cancel();
+            });
+        assert(result.code == "CANCELLED");
+        subtitle_local::Session next;
+        assert(next.open(argv[1], 1, 512).code == "OK");
+    }
     {
         subtitle_local::Session first;
         const auto info = first.open(argv[1], 1, 512);
@@ -326,6 +397,14 @@ int main(int argc, char ** argv) {
         assert(rejected.json().find("\"openClStatus\":null") != std::string::npos);
         assert(!rejected.load_profile.present && rejected.json().find("\"loadProfile\"") == std::string::npos);
     }
+    {
+        subtitle_local::Session strict_vulkan;
+        const auto rejected = strict_vulkan.open(argv[1], 1, 512, "VULKAN");
+        assert(rejected.code == "BACKEND" && rejected.diagnostic.present());
+        assert(std::string(rejected.diagnostic.stage) == "VULKAN_DRIVER");
+        assert(std::string(rejected.diagnostic.reason) == "BACKEND_NOT_COMPILED");
+        assert(rejected.requested_mode == "VULKAN" && !rejected.gpu_observed);
+    }
 #ifdef SUBTITLE_NATIVE_TESTING
     if (argc >= 4) {
         const std::string original = "Prefix common context: Alpha. The train leaves.";
@@ -381,7 +460,62 @@ int main(int argc, char ** argv) {
         std::cout << "Context-sensitive logits: cached-vs-fresh maximum error " << max_error
                   << ", changed-context delta " << context_difference << ".\n";
     }
-    if (argc == 5) check_gguf_chat_templates(argv[4], argv[1]);
+    if (argc >= 5) check_gguf_chat_templates(argv[4], argv[1]);
+    if (argc == 6) {
+        const std::string introduction = "Original context " + std::string(300, 'a');
+        const std::vector<std::string> prompts = {
+            introduction, introduction + " Another request.",
+            introduction.substr(0, 280) + " Changed tail.",
+            "A short context.", "A short context.", introduction
+        };
+        std::vector<std::vector<float>> compact_logits;
+        bool saw_recompute_after_wrap = false, saw_short_prefix_reuse = false;
+        {
+            subtitle_local::Session warm;
+            const auto info = warm.open(argv[5], 1, 512, "CPU", -1, "", 64, 32, true);
+            if (info.code != "OK") std::cerr << info.json() << '\n';
+            assert(info.code == "OK" && info.architecture == "gemma3" && info.compact_swa);
+            assert(info.context_tokens == 512 && info.batch_tokens == 64 && info.micro_batch_tokens == 32);
+            for (size_t i = 0; i < prompts.size(); ++i) {
+                const auto response = warm.generate(prompts[i], 1, true);
+                check_output(response);
+                if (i == 1) saw_recompute_after_wrap = response.cached_prompt_tokens == 0;
+                if (i == 4) saw_short_prefix_reuse = response.cached_prompt_tokens > 0;
+                compact_logits.push_back(warm.test_logits());
+            }
+        }
+        assert(saw_recompute_after_wrap && saw_short_prefix_reuse);
+        float compact_error = 0, full_error = 0, full_relative_error = 0;
+        for (size_t i = 0; i < prompts.size(); ++i) {
+            {
+                subtitle_local::Session fresh;
+                assert(fresh.open(argv[5], 1, 512, "CPU", -1, "", 64, 32, true).code == "OK");
+                check_output(fresh.generate(prompts[i], 1, true));
+                const auto error = difference(compact_logits[i], fresh.test_logits());
+                if (error >= 0.00002f) std::cerr << "Compact SWA cached/fresh mismatch at request " << i << ": " << error << '\n';
+                compact_error = std::max(compact_error, error);
+            }
+            {
+                subtitle_local::Session full;
+                assert(full.open(argv[5], 1, 512, "CPU", -1, "", 64, 32, false).code == "OK");
+                check_output(full.generate(prompts[i], 1, true));
+                const auto logits = full.test_logits();
+                const auto error = difference(compact_logits[i], logits);
+                full_relative_error = std::max(full_relative_error, relative_difference(compact_logits[i], logits));
+                if (error >= 0.0001f) std::cerr << "Compact SWA/full mismatch at request " << i << ": " << error << '\n';
+                full_error = std::max(full_error, error);
+            }
+        }
+        // Cache reuse must match a fresh compact context under the same strict
+        // bound as the existing Llama regression. Full and compact attention
+        // use different padding/reduction geometries, so their floating-point
+        // logits need not be bit-identical. Both must emit the same exact probe
+        // + EOS and stay within this separate, explicit numerical bound.
+        assert(compact_error < 0.00002f && full_error < 0.0001f && full_relative_error < 0.00001f);
+        std::cout << "Compact SWA: requests=6, safe_recompute=1, short_reuse=1, cached-vs-fresh maximum error "
+                  << compact_error << ", compact-vs-full maximum error " << full_error
+                  << ", compact-vs-full relative error " << full_relative_error << ".\n";
+    }
 #endif
     std::cout << "Persistent native session: EOS, exact evaluated input/output prefix reuse, context isolation, failure reset, cancellation, CPU fallback, strict GPU rejection, probe exclusion and measured load-phase accounting passed.\n";
     return 0;

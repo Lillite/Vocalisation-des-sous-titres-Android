@@ -200,6 +200,100 @@ class LocalGgufRuntimeRobolectricTest {
             assertFalse(TranslationFailure(TranslationFailure.Reason.LOCAL_TEMPLATE).message.orEmpty().contains("private"))
         } finally { host.destroy(); shadowOf(Looper.getMainLooper()).idle() }
     }
+    @Test fun vulkanExecutionEvidenceAndOptionalLoadSettingsAreStrictlyValidated() {
+        val valid = JSONObject(generation()).put("backend", "VULKAN").put("requestedMode", "VULKAN")
+            .put("gpuObserved", true).put("gpuGraphNodes", 5)
+            .put("batchTokens", 128).put("microBatchTokens", 32).put("compactSwa", true)
+        val output = LocalGgufRuntime.generation(valid.toString())
+        assertTrue(output.gpuObserved); assertEquals("VULKAN", output.backend)
+        assertEquals(128, output.batchTokens); assertEquals(32, output.microBatchTokens)
+        assertEquals(true, output.compactSwa)
+        val invalid = listOf(
+            JSONObject(valid.toString()).put("gpuGraphNodes", 0),
+            JSONObject(valid.toString()).put("requestedMode", "CPU"),
+            JSONObject(valid.toString()).put("requestedMode", "OPENCL"),
+            JSONObject(valid.toString()).put("requestedMode", "AUTO"),
+            JSONObject(valid.toString()).put("openClTransport", "DIRECT"),
+            JSONObject(valid.toString()).put("batchTokens", "128"),
+            JSONObject(valid.toString()).put("microBatchTokens", 129),
+            JSONObject(valid.toString()).put("microBatchTokens", 256),
+            JSONObject(valid.toString()).put("compactSwa", "true"),
+            JSONObject(valid.toString()).apply { remove("compactSwa") })
+        invalid.forEach {
+            try { LocalGgufRuntime.generation(it.toString()); fail("Contradictory backend or load settings accepted") }
+            catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.RESPONSE, failure.code) }
+        }
+    }
+
+    @Test fun progressFromAnotherSessionRequestOrProcessCannotOverwriteTheCurrentAttempt() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val client = LocalGgufRuntime.Client(context)
+        val type = client.javaClass
+        val session = type.getDeclaredField("session").apply { isAccessible = true }.getLong(client)
+        val pendingType = type.declaredClasses.first { it.simpleName == "Pending" }
+        val constructor = pendingType.getDeclaredConstructor(java.lang.Long.TYPE, java.lang.Integer.TYPE, android.os.Bundle::class.java)
+            .apply { isAccessible = true }
+        val pending = constructor.newInstance(4L, GgufMessages.OPEN, android.os.Bundle())
+        val started = pendingType.getDeclaredField("startedAtMs").apply { isAccessible = true }.getLong(pending)
+        val progressField = pendingType.getDeclaredField("progress").apply { isAccessible = true }
+        type.getDeclaredField("pending").apply { isAccessible = true }.set(client, pending)
+        val replies = type.getDeclaredField("replies").apply { isAccessible = true }.get(client) as Messenger
+        fun deliver(sessionId: Long = session, request: Long = 4, pid: Int = 123, stage: String = "MODEL_LOAD") {
+            replies.send(android.os.Message.obtain(null, GgufMessages.PROGRESS).apply {
+                data = android.os.Bundle().apply {
+                    putLong(GgufMessages.SESSION, sessionId); putLong(GgufMessages.REQUEST, request)
+                    putString(GgufMessages.STAGE, stage); putInt(GgufMessages.PERCENT, 10)
+                    putInt(GgufMessages.PROCESS_ID, pid); putLong(GgufMessages.STARTED_AT, started)
+                    putLong(GgufMessages.ELAPSED, 1)
+                }
+            })
+            shadowOf(Looper.getMainLooper()).idle()
+        }
+        try {
+            deliver()
+            val current = progressField.get(pending) as LocalGgufProgress
+            assertEquals("MODEL_LOAD", current.stage)
+            deliver(sessionId = session + 1, stage = "READY")
+            deliver(request = 5, stage = "READY")
+            deliver(pid = 124, stage = "READY")
+            deliver(stage = "/private/untrusted-stage")
+            assertEquals(current, progressField.get(pending))
+            val ready = pendingType.getDeclaredField("ready").apply { isAccessible = true }.get(pending)
+                as java.util.concurrent.CountDownLatch
+            ready.countDown()
+            deliver(stage = "READY")
+            assertEquals("A stage arriving after a terminal reply must be ignored", current, progressField.get(pending))
+            var delivered = 0
+            client.setProgressListener { delivered++ }
+            client.close()
+            deliver(stage = "READY")
+            type.getDeclaredMethod("publishProgress", pendingType).apply { isAccessible = true }.invoke(client, pending)
+            assertEquals("Already queued progress must not be delivered after close", 0, delivered)
+            assertEquals(current, progressField.get(pending))
+        } finally { client.close(); shadowOf(Looper.getMainLooper()).idle() }
+    }
+
+    @Test fun cancellationInsideAProgressCallbackPreventsTheRemainingQueuedCallbacks() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val client = LocalGgufRuntime.Client(context)
+        val type = client.javaClass
+        val pendingType = type.declaredClasses.first { it.simpleName == "Pending" }
+        val pending = pendingType.getDeclaredConstructor(java.lang.Long.TYPE, java.lang.Integer.TYPE, android.os.Bundle::class.java)
+            .apply { isAccessible = true }.newInstance(4L, GgufMessages.OPEN, android.os.Bundle())
+        type.getDeclaredField("pending").apply { isAccessible = true }.set(client, pending)
+        @Suppress("UNCHECKED_CAST")
+        val queue = pendingType.getDeclaredField("progressEvents").apply { isAccessible = true }.get(pending)
+            as ArrayDeque<LocalGgufProgress>
+        queue.addLast(LocalGgufProgress("MODEL_LOAD", 0, 123, 10_000, 1))
+        queue.addLast(LocalGgufProgress("CONTEXT_INIT", -1, 123, 10_000, 2))
+        val delivered = mutableListOf<String>()
+        client.setProgressListener { delivered += it.stage; client.cancel() }
+        try {
+            type.getDeclaredMethod("publishProgress", pendingType).apply { isAccessible = true }.invoke(client, pending)
+            assertEquals(listOf("MODEL_LOAD"), delivered)
+        } finally { client.close(); shadowOf(Looper.getMainLooper()).idle() }
+    }
+
     @Test fun mainThreadCallsFailBeforeBindingAndCloseNeverWaits() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val client = LocalGgufRuntime.Client(context)

@@ -39,6 +39,33 @@ class LocalGgufRuntimeAndroidTest {
             }
         }
     }
+    @Test fun loadingProgressCrossesRealJniAndIpcAndCarriesTheSelectedMemorySettings() {
+        val file = fixture(true)
+        val client = LocalGgufRuntime.Client(context)
+        val stages = mutableListOf<LocalGgufProgress>()
+        client.setProgressListener { stages += it }
+        try {
+            val info = client.open(file, threads = 1, contextTokens = 512, executionMode = "CPU",
+                batchTokens = 64, microBatchTokens = 16, compactSwa = true)
+            assertFalse(stages.isEmpty())
+            assertEquals("SERVICE", stages.first().stage)
+            for (stage in listOf("MODEL_LOAD", "CONTEXT_INIT", "READY"))
+                assertTrue("The native loading stage $stage must cross JNI and IPC", stages.any { it.stage == stage })
+            assertTrue(stages.all { it.stage in LocalGgufProgress.STAGES && it.processId == info.processId })
+            assertTrue(stages.all { it.processId != Process.myPid() && it.elapsedMs >= 0 })
+            assertTrue(stages.zipWithNext().all { (previous, next) -> previous.elapsedMs <= next.elapsedMs })
+            assertEquals(64, info.batchTokens)
+            assertEquals(16, info.microBatchTokens)
+            assertEquals(true, info.compactSwa)
+            val generated = client.generate("A complete synthetic input.", 1, true)
+            assertEquals("end_of_generation", generated.stopReason)
+            assertEquals(64, generated.batchTokens)
+            assertEquals(16, generated.microBatchTokens)
+            assertFalse(generated.gpuObserved)
+            assertEquals("GENERATION", stages.last().stage)
+        } finally { client.setProgressListener(null); client.closeAndAwait(); file.delete() }
+    }
+
     @Test fun builtinTemplateUsesRealJniAndIpcAndRejectsControlsWithoutRawFallback() {
         val file = File(context.cacheDir, "translation-chat-é-🚆.gguf")
         instrumentation.context.assets.open("translation_chat_test_model.gguf").use { input ->

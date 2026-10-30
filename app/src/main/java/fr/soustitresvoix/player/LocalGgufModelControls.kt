@@ -13,6 +13,9 @@ import android.widget.AdapterView
 import android.widget.LinearLayout
 import android.widget.Spinner
 import android.widget.TextView
+import android.widget.EditText
+import android.widget.CheckBox
+import android.text.InputType
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -56,6 +59,22 @@ internal class LocalGgufModelControls(
     private var cancelButton: Button? = null
     private var executionSpinner: Spinner? = null
     private var profileSpinner: Spinner? = null
+    private var storedLoadSettings = runCatching {
+        LocalGgufLoadSettings(preferences.getInt("local-gpu-layers", -1), preferences.getInt("local-batch-tokens", 512),
+            preferences.getInt("local-micro-batch-tokens", 128), preferences.getBoolean("local-compact-swa", false))
+            .also { it.validate() }
+    }.getOrDefault(LocalGgufLoadSettings())
+    private var gpuLayersField: EditText? = null
+    private var batchField: EditText? = null
+    private var microBatchField: EditText? = null
+    private var compactSwaChoice: CheckBox? = null
+    private val loadingControls = mutableListOf<View>()
+    val loadSettings: LocalGgufLoadSettings get() {
+        fun value(field: EditText?, fallback: Int): Int = if (field == null) fallback else field.text.toString().toIntOrNull() ?: 0
+        return LocalGgufLoadSettings(value(gpuLayersField, storedLoadSettings.gpuLayers),
+            value(batchField, storedLoadSettings.batchTokens), value(microBatchField, storedLoadSettings.microBatchTokens),
+            compactSwaChoice?.isChecked ?: storedLoadSettings.compactSwa)
+    }
 
     private fun dp(value: Int) = (value * activity.resources.displayMetrics.density).toInt()
     private fun label(value: String) = TextView(activity).apply {
@@ -63,6 +82,7 @@ internal class LocalGgufModelControls(
     }
     private fun action(value: String, block: () -> Unit) = Button(activity).apply {
         text = value; textSize = 18f; isAllCaps = false; minimumHeight = dp(64); minHeight = dp(64)
+        isSingleLine = false; maxLines = Int.MAX_VALUE; ellipsize = null
         setOnClickListener { block() }
     }
     private fun choices(labels: List<String>) = object : ArrayAdapter<String>(activity, android.R.layout.simple_spinner_dropdown_item, labels) {
@@ -75,7 +95,8 @@ internal class LocalGgufModelControls(
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View = readable(super.getView(position, convertView, parent))
         override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View = readable(super.getDropDownView(position, convertView, parent))
     }
-    fun view(showExecutionChoice: Boolean = true, showContextChoice: Boolean = true): View = LinearLayout(activity).apply {
+    fun view(showExecutionChoice: Boolean = true, showContextChoice: Boolean = true,
+        showLoadChoices: Boolean = showExecutionChoice): View = LinearLayout(activity).apply {
         orientation = LinearLayout.VERTICAL
         addView(label("Modèle GGUF local : choisis son fichier avec Android ou réutilise celui du diagnostic. L’import crée une copie privée et conserve l’original. Aucun téléchargement de modèle et aucun envoi de sous-titres ne sont effectués ici."))
         status = label(modelDescription()).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
@@ -90,7 +111,8 @@ internal class LocalGgufModelControls(
             executionSpinner = Spinner(activity).apply {
                 id = View.generateViewId(); contentDescription = "Exécution du modèle GGUF"
                 minimumHeight = dp(64)
-                adapter = choices(listOf("Automatique (recommandé)", "CPU uniquement", "GPU OpenCL uniquement — sans repli CPU"))
+                adapter = choices(listOf("Automatique (recommandé)", "CPU uniquement", "GPU OpenCL uniquement — sans repli CPU",
+                    "GPU Vulkan uniquement — sans repli CPU"))
                 setSelection(EXECUTION_MODES.indexOf(execution).coerceAtLeast(0))
                 onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                     override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -102,7 +124,36 @@ internal class LocalGgufModelControls(
                 addView(label("Exécution du modèle GGUF").apply { labelFor = spinner.id })
                 addView(spinner)
             }
-            addView(label("Automatique essaie le GPU OpenCL disponible et peut revenir au CPU avec une raison affichée. Le choix GPU seul refuse un GPU indisponible. Les mesures indiquent le moteur réellement utilisé ; choisir GPU ne prouve pas son exécution. Aucun calcul NPU n’est annoncé."))
+            addView(label("Automatique essaie le GPU OpenCL disponible et peut revenir au CPU avec une raison affichée. OpenCL seul et Vulkan seul refusent un GPU indisponible. Vulkan est une option de comparaison : aucun gain de vitesse ou de mémoire n’est garanti. Les mesures indiquent le moteur réellement utilisé ; choisir GPU ne prouve pas son exécution. Aucun calcul NPU n’est annoncé."))
+        }
+        if (showLoadChoices) {
+            addView(label("Mémoire du calcul GGUF — réglages de chargement"))
+            fun number(title: String, initial: Int, signed: Boolean = false): EditText {
+                val input = EditText(activity).apply {
+                    id = View.generateViewId(); textSize = 18f; minimumHeight = dp(64)
+                    importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+                    inputType = InputType.TYPE_CLASS_NUMBER or if (signed) InputType.TYPE_NUMBER_FLAG_SIGNED else 0
+                    setText(initial.toString()); contentDescription = title
+                }
+                addView(label(title).apply { labelFor = input.id }); addView(input); loadingControls.add(input)
+                return input
+            }
+            gpuLayersField = number("Couches GPU : -1 pour toutes, sinon 1 à 1024 (le moteur borne au modèle)", storedLoadSettings.gpuLayers, true)
+            batchField = number("Lot logique : 16 à 512 tokens", storedLoadSettings.batchTokens)
+            microBatchField = number("Micro-lot : 16 à 128 tokens, inférieur ou égal au lot logique", storedLoadSettings.microBatchTokens)
+            compactSwaChoice = CheckBox(activity).apply {
+                text = "Cache d’attention locale compact — expérimental pour les modèles à attention locale"
+                textSize = 18f; minimumHeight = dp(64); minHeight = dp(64); isChecked = storedLoadSettings.compactSwa
+                isSingleLine = false; maxLines = Int.MAX_VALUE; ellipsize = null
+            }.also { addView(it); loadingControls.add(it) }
+            fun preset(title: String, batch: Int, micro: Int) {
+                action(title) {
+                    batchField?.setText(batch.toString()); microBatchField?.setText(micro.toString())
+                }.also { addView(it); loadingControls.add(it) }
+            }
+            preset("Lots standard : 512 et 128 tokens", 512, 128)
+            preset("Réduire la mémoire temporaire : 128 et 32 tokens", 128, 32)
+            addView(label("Ces réglages conservent les poids, le texte complet, le contexte de 2048 tokens et la limite de sortie. Des lots plus petits peuvent ralentir l’entrée. Répartir les couches entre CPU et GPU ne crée pas de RAM supplémentaire. En mode CPU, le nombre de couches GPU est ignoré. Le cache compact peut demander un recalcul du contexte ; son bénéfice et la fidélité doivent être vérifiés. Aucune de ces commandes ne lance de calcul."))
         }
         profileSpinner = Spinner(activity).apply {
             id = View.generateViewId(); contentDescription = "Profil de traduction du modèle GGUF"
@@ -148,13 +199,20 @@ internal class LocalGgufModelControls(
         executionSpinner?.isEnabled = active && !busy
         profileSpinner?.isEnabled = active && !busy
         contextPolicySpinner?.isEnabled = active && !busy
+        loadingControls.forEach { it.isEnabled = active && !busy }
     }
     fun saveChoices(selectedExecution: String = execution, selectedProfile: LocalGgufProfile = profile,
-        selectedContextPolicy: LocalGgufContextPolicy = contextPolicy) {
+        selectedContextPolicy: LocalGgufContextPolicy = contextPolicy,
+        selectedLoadSettings: LocalGgufLoadSettings = loadSettings) {
         require(selectedExecution in EXECUTION_MODES)
+        selectedLoadSettings.validate()
+        storedLoadSettings = selectedLoadSettings
         preferences.edit().putString("local-execution", selectedExecution)
             .putString("local-profile", selectedProfile.name)
-            .putString("local-context-policy", selectedContextPolicy.name).apply()
+            .putString("local-context-policy", selectedContextPolicy.name)
+            .putInt("local-gpu-layers", selectedLoadSettings.gpuLayers).putInt("local-batch-tokens", selectedLoadSettings.batchTokens)
+            .putInt("local-micro-batch-tokens", selectedLoadSettings.microBatchTokens)
+            .putBoolean("local-compact-swa", selectedLoadSettings.compactSwa).apply()
     }
     fun setActive(value: Boolean) {
         active = value
@@ -250,10 +308,11 @@ internal class LocalGgufModelControls(
         worker.shutdownNow(); main.removeCallbacksAndMessages(null)
         status = null; chooseButton = null; existingButton = null; cancelButton = null
         executionSpinner = null; profileSpinner = null; contextPolicySpinner = null
+        gpuLayersField = null; batchField = null; microBatchField = null; compactSwaChoice = null; loadingControls.clear()
     }
     companion object {
         private val CONTEXT_POLICIES = LocalGgufContextPolicy.entries
-        private val EXECUTION_MODES = listOf("AUTO", "CPU", "OPENCL")
+        private val EXECUTION_MODES = listOf("AUTO", "CPU", "OPENCL", "VULKAN")
         private val PROFILES = LocalGgufProfile.entries
     }
 }
