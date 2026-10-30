@@ -18,6 +18,12 @@ L’inventaire source final attendu contient **196 méthodes noyau, 544 méthode
 
 Les preuves de la 0.5.11 restent historiques. Aucun gain de qualité, vitesse, mémoire ou autonomie, aucun chargement de TranslateGemma 12B Q6_K et aucun essai TalkBack réel n’est attribué à cette nouvelle version avant exécution correspondante. La **0.5.2 reste la dernière stable**.
 
+### Première campagne CI 0.5.12 et correction d’un attendu Android
+
+Le [run 40980573505](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/40980573505), job **123819310549**, a exécuté les **196 méthodes noyau, 544 méthodes JVM application et 113 méthodes Android**, soit **853 méthodes**, sur le head **724a0c576e58ece8b47b5b62915c5f426d09af1e**, arbre **f8ed26cbab4ea0bb34a8d54559c0bb62832bbd17**. Il s’est terminé avec **un échec Android unique** : `SubtitleTranslationAndroidTest.actualTranslationPanelKeepsLabelsDescriptionsAndScrollableHelpAtDoubleFontScale`. Les **112 autres méthodes Android ont réussi**. Le nouveau contrôle JNI de progression et d’attention locale a notamment réussi en **0,03 s** ; cela ne valide ni un GPU physique ni le chargement d’un modèle de production.
+
+L’assertion en échec attendait encore **14 champs**, alors que les **trois nouveaux réglages mémoire** portent le panneau à **17 champs**. La correction est limitée aux attendus du test, avec **113 méthodes Android conservées** ; elle ne modifie pas le panneau de production. La réussite d’une nouvelle campagne sur cette correction reste à établir. L’artefact original collecté est conservé : **8 364 125 octets**, SHA-256 **a165fb3d3713f87b249c35512d76402c56cdbf991cdff0037989d24cdb1ff0ac**. Ce premier passage ne permet ni fusion ni distribution de la candidate.
+
 ### Vérifications JVM et accessibilité ciblées
 
 Les **144 méthodes JVM ciblées** ont été réellement exécutées et réussies, sans échec, erreur ni test ignoré. Les identités des méthodes dans les XML correspondent exactement à celles des sources, sans méthode manquante, inattendue ou dupliquée. Elles couvrent les profils et prompts, le moteur, le protocole runtime, les diagnostics, les réglages mémoire, les contrôles de modèles, le comparatif et la préparation SRT.

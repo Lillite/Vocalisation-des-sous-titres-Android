@@ -14,6 +14,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inspector.WindowInspector
 import android.widget.EditText
+import android.widget.Button
 import android.widget.CheckBox
 import android.widget.ScrollView
 import android.widget.Spinner
@@ -439,9 +440,16 @@ class SubtitleTranslationAndroidTest {
                         "Clé API personnelle — masquée ; laisse vide pour tenter une piste déjà en cache",
                         "Région Azure — code de la ressource, par exemple francecentral ; vide uniquement si la clé est globale",
                         "Adresse de base du serveur LibreTranslate — HTTPS, sans identifiant, paramètres ou fragment",
+                        "Couches GPU : -1 pour toutes, sinon 1 à 1024 (le moteur borne au modèle)",
+                        "Lot logique : 16 à 512 tokens",
+                        "Micro-lot : 16 à 128 tokens, inférieur ou égal au lot logique",
                         "GGUF local : threads de calcul — 1 à 8, défaut 4",
                         "GGUF local : contexte de l’œuvre ou de la scène, facultatif — reste sur le téléphone"
                     )
+                    val nestedMemoryLabels = expectedFieldLabels.subList(12, 15).toSet()
+                    val compactCacheLabel = "Cache d’attention locale compact — expérimental pour les modèles à attention locale"
+                    val memoryPresetLabels = listOf("Lots standard : 512 et 128 tokens",
+                        "Réduire la mémoire temporaire : 128 et 32 tokens")
                     lateinit var fieldsByLabel: Map<String, EditText>
                     scenario.onActivity {
                         val views = descendants(panel.get())
@@ -470,6 +478,17 @@ class SubtitleTranslationAndroidTest {
                                 .any { it.text.toString() == SubtitleTranslationControls.description(provider) && it.layout != null }
                         }
                         instrument.waitForIdleSync()
+                        if (provider == TranslationProvider.LOCAL_GGUF) {
+                            await("New GGUF memory controls were not laid out after selecting the provider") {
+                                val memoryControls = descendants(panel.get()).filterIsInstance<TextView>().filter {
+                                    it.text.toString() in memoryPresetLabels || it.text.toString() == compactCacheLabel ||
+                                        it.text.toString() in nestedMemoryLabels
+                                }
+                                memoryControls.size == 6 && memoryControls.all {
+                                    it.isShown && it.layout != null && it.width > 0 && it.height > 0
+                                }
+                            }
+                        }
                         scenario.onActivity { current ->
                             assertEquals(2f, current.resources.configuration.fontScale, .01f)
                             val views = descendants(panel.get())
@@ -484,7 +503,7 @@ class SubtitleTranslationAndroidTest {
                                     TranslationProvider.LIBRE -> setOf(expectedFieldLabels[11])
                                     TranslationProvider.GOOGLE_WEB -> setOf(expectedFieldLabels[2])
                                     TranslationProvider.GOOGLE_LOCAL -> emptySet()
-                                    TranslationProvider.LOCAL_GGUF -> expectedFieldLabels.subList(12, 14).toSet()
+                                    TranslationProvider.LOCAL_GGUF -> expectedFieldLabels.subList(12, 17).toSet()
                                 }
                             val remember = views.filterIsInstance<CheckBox>().single {
                                 it.text.toString() == "Mémoriser cette clé, chiffrée avec Android Keystore sur ce téléphone"
@@ -495,6 +514,18 @@ class SubtitleTranslationAndroidTest {
                             }
                             assertEquals(if (provider == TranslationProvider.GOOGLE_LOCAL) View.VISIBLE else View.GONE, mobileModels.visibility)
                             assertFalse("Model downloads on mobile data remain opt-in", mobileModels.isChecked)
+                            val compactCache = views.filterIsInstance<CheckBox>().single { it.text.toString() == compactCacheLabel }
+                            assertFalse("Compact attention cache must remain an explicit experimental choice", compactCache.isChecked)
+                            assertEquals("Compact-cache visibility must follow the entire GGUF group",
+                                provider == TranslationProvider.LOCAL_GGUF, compactCache.isShown)
+                            val memoryPresets = memoryPresetLabels.map { title ->
+                                views.filterIsInstance<Button>().single { it.text.toString() == title }
+                            }
+                            for (preset in memoryPresets) assertEquals("Memory presets must follow the GGUF group",
+                                provider == TranslationProvider.LOCAL_GGUF, preset.isShown)
+                            assertEquals("-1", fieldsByLabel.getValue(expectedFieldLabels[12]).text.toString())
+                            assertEquals("512", fieldsByLabel.getValue(expectedFieldLabels[13]).text.toString())
+                            assertEquals("128", fieldsByLabel.getValue(expectedFieldLabels[14]).text.toString())
                             assertEquals("30", fieldsByLabel.getValue(expectedFieldLabels[1]).text.toString())
                             assertEquals("1000", fieldsByLabel.getValue(expectedFieldLabels[2]).text.toString())
                             val scroll = requireNotNull(panel.get().findViewById<ScrollView>(R.id.translation_controls_scroll))
@@ -503,13 +534,29 @@ class SubtitleTranslationAndroidTest {
                                 val label = views.filterIsInstance<TextView>().single { it.labelFor == field.id }
                                 assertEquals(labelText, label.text.toString())
                                 val expectedVisibility = if (labelText in visibleLabels) View.VISIBLE else View.GONE
-                                assertEquals("Field visibility for ${provider.id}: $labelText", expectedVisibility, field.visibility)
-                                assertEquals("Label visibility for ${provider.id}: $labelText", expectedVisibility, label.visibility)
+                                if (labelText in nestedMemoryLabels) {
+                                    // These controls are nested inside the GGUF group. That group
+                                    // hides them together; their own visibility need not be GONE.
+                                    assertEquals("Nested field visibility for ${provider.id}: $labelText",
+                                        expectedVisibility == View.VISIBLE, field.isShown)
+                                    assertEquals("Nested label visibility for ${provider.id}: $labelText",
+                                        expectedVisibility == View.VISIBLE, label.isShown)
+                                } else {
+                                    assertEquals("Field visibility for ${provider.id}: $labelText", expectedVisibility, field.visibility)
+                                    assertEquals("Label visibility for ${provider.id}: $labelText", expectedVisibility, label.visibility)
+                                }
                                 if (expectedVisibility == View.VISIBLE) {
                                     assertNotNull(label.layout)
                                     for (line in 0 until label.layout.lineCount) assertEquals(0, label.layout.getEllipsisCount(line))
                                     assertReachableInForm(scroll, label)
                                     assertReachableInForm(scroll, field)
+                                }
+                            }
+                            if (provider == TranslationProvider.LOCAL_GGUF) {
+                                for (control in listOf<TextView>(compactCache) + memoryPresets) {
+                                    assertTrue("Memory controls need a readable multiline layout", control.layout != null)
+                                    for (line in 0 until control.layout.lineCount) assertEquals(0, control.layout.getEllipsisCount(line))
+                                    assertReachableInForm(scroll, control)
                                 }
                             }
                             assertReachableInForm(scroll, views.filterIsInstance<CheckBox>().single {
