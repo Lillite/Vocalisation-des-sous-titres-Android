@@ -509,6 +509,10 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
         if (failure_code == "MEMORY") diagnose(result, "GENERATION", "ALLOCATION_FAILED", generate_start);
         else if (failure_code == "RESPONSE") diagnose(result, "GENERATION", "UNEXPECTED_FAILURE", generate_start);
         result.code = code; result.stop_reason = reason; result.output.clear();
+        // decode may have queued GPU work before returning an error, or a
+        // cancellation can arrive between successful prefill batches. Drain it
+        // before invalidating/reusing sequence state; clear(false) is no barrier.
+        if (state_->context) llama_synchronize(state_->context.get());
         state_->clear_cache(); result.cache_reset_reason = "FAILURE";
         state_->measure_workspace(result); measure_memory(result); return result;
     };

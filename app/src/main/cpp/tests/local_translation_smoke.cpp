@@ -416,14 +416,43 @@ int main(int argc, char ** argv) {
         assert(next.open(argv[1], 1, 512).code == "OK");
     }
     {
-        subtitle_local::Session cancelled_during_prefill;
-        assert(cancelled_during_prefill.open(argv[1], 1, 512).code == "OK");
-        const auto result = cancelled_during_prefill.generate("Cancel before evaluating this complete input.", 1, true, false,
-            [&](const char * stage, int) {
-                if (std::string(stage) == "PREFILL") cancelled_during_prefill.cancel();
-            });
-        assert(result.code == "CANCELLED" && result.output.empty());
-        assert(result.cache_reset_reason == "FAILURE");
+        const std::string prompt = "A complete source " + std::string(180, 'x') + " with a preserved ending.";
+        int interrupted_percent = -1;
+        {
+            subtitle_local::Session cancelled_during_prefill;
+            assert(cancelled_during_prefill.open(argv[1], 1, 512, "CPU", -1, "", 64, 32).code == "OK");
+            bool decoded = false, completed = false;
+            const auto result = cancelled_during_prefill.generate(prompt, 1, true, false,
+                [&](const char * stage, int percent) {
+                    const std::string phase(stage);
+                    if (phase == "DECODE") decoded = true;
+                    if (phase == "COMPLETE") completed = true;
+                    // PREFILL=0 has not evaluated anything. Interrupt only
+                    // after one real batch returned and before the next one;
+                    // an asynchronous backend may still have that work queued.
+                    if (phase == "PREFILL" && percent > 0 && percent < 100 && interrupted_percent < 0) {
+                        interrupted_percent = percent;
+                        cancelled_during_prefill.cancel();
+                    }
+                });
+            assert(interrupted_percent > 0 && interrupted_percent < 100);
+            assert(result.prompt_tokens > 64 && result.generated_tokens == 0);
+            assert(result.code == "CANCELLED" && result.output.empty() && !decoded && !completed);
+            assert(result.cache_reset_reason == "FAILURE");
+            assert(cancelled_during_prefill.generate(prompt, 1, true).code == "CANCELLED");
+            subtitle_local::Session still_owned;
+            assert(still_owned.open(argv[1], 1, 512).code == "BUSY");
+        }
+        // Destruction must finish releasing the cancelled context before a
+        // fresh owner can load and evaluate the entire preserved prompt.
+        subtitle_local::Session next;
+        assert(next.open(argv[1], 1, 512, "CPU", -1, "", 64, 32).code == "OK");
+        const auto recovered = next.generate(prompt, 1, true);
+        check_output(recovered);
+        assert(recovered.prompt_tokens > 64 && recovered.cached_prompt_tokens == 0);
+        assert(recovered.prompt_evaluated_tokens == recovered.prompt_tokens);
+        std::cout << "Post-prefill cancellation: completed batch tokens=64, interrupted percent=" << interrupted_percent
+                  << ", partial output published=0, cancelled owner rejected=1, lease held until close=1, fresh owner completed=1 (CPU host fixture).\n";
     }
     {
         subtitle_local::Session first;

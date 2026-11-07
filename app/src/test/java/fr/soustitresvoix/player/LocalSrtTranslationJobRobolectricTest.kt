@@ -18,6 +18,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowProcess
 import java.io.File
 import java.io.ByteArrayInputStream
 import java.util.concurrent.CountDownLatch
@@ -51,6 +52,9 @@ class LocalSrtTranslationJobRobolectricTest {
     """.trimIndent()
 
     @Before fun setUp() {
+        // A running Android application always has a positive PID. Robolectric
+        // defaults to zero, which must remain invalid in the production journal.
+        ShadowProcess.setPid(12_345)
         val files = temporary.newFolder("private-files")
         val cache = temporary.newFolder("private-cache")
         application = object : ContextWrapper(ApplicationProvider.getApplicationContext<Context>()) {

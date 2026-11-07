@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Publish only the signed 0.5.13-memory candidate already validated on main.
 
-The temporary branch contains three data files, never a signing key. This script
+The temporary branch contains only bounded release data, never a signing key. This script
 does not compile or sign an APK, delete a release/tag, replace an asset, execute a
 payload command, or accept a caller-controlled API host. An interrupted draft is
 left visible for review and is never silently replaced by a later invocation.
@@ -43,6 +43,10 @@ EXPECTED_SIGNER_SHA256 = "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c
 APK_PATH = "release-upload/SousTitresVoix-0.5.13-memory.apk"
 NOTES_PATH = "release-upload/notes.md"
 METADATA_PATH = "release-upload/release.json"
+APK_PARTS_DIRECTORY = "release-upload/apk-parts"
+APK_CHUNK_BYTES = 1024 * 1024
+MAX_APK_CHUNKS = 512
+MAX_METADATA_BYTES = 64 * 1024
 VALIDATION_ARTIFACT = "SousTitresVoix-release-main"
 API_VERSION = "2026-03-10"
 MAX_BINARY_BYTES = 512 * 1024 * 1024
@@ -214,13 +218,44 @@ class GitHub:
         return asset
 
 
-def metadata(root: Path) -> dict[str, str]:
-    path = root / METADATA_PATH
-    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 8192,
-            "Release metadata is missing or invalid.")
-    value = parse_json(path.read_bytes())
+def repository_file(root: Path, relative: str) -> Path:
+    """Accept a fixed repository path only when every component is unsymlinked."""
+    file = root / relative
+    current = root
+    for component in PurePosixPath(relative).parts:
+        current /= component
+        require(not current.is_symlink(), "Release payload symlink refused.")
+    require(file.is_file() and file.resolve().is_relative_to(root.resolve()),
+            "A release payload must be a regular repository file.")
+    return file
+
+
+def chunk_digests(value: dict[str, Any]) -> list[str] | None:
+    if "apk_chunks" not in value:
+        return None
+    chunks = value["apk_chunks"]
+    require(isinstance(chunks, list) and 1 <= len(chunks) <= MAX_APK_CHUNKS and
+            all(isinstance(digest, str) and HEX64.fullmatch(digest) for digest in chunks),
+            "APK chunk digest list refused.")
+    return chunks
+
+
+def upload_payload_paths(value: dict[str, Any]) -> list[str]:
+    chunks = chunk_digests(value)
+    return ([APK_PATH] if chunks is None else
+            [f"{APK_PARTS_DIRECTORY}/{index:04d}.part" for index in range(len(chunks))])
+
+
+def metadata(root: Path) -> dict[str, Any]:
+    path = repository_file(root, METADATA_PATH)
+    require(path.stat().st_size <= MAX_METADATA_BYTES, "Release metadata is missing or invalid.")
+    with path.open("rb") as stream:
+        data = stream.read(MAX_METADATA_BYTES + 1)
+    require(len(data) <= MAX_METADATA_BYTES, "Release metadata is missing or invalid.")
+    value = parse_json(data)
     fields = {"tag", "source_sha", "apk_sha256", "signer_sha256", "apk_file", "notes_file", "title"}
-    require(isinstance(value, dict) and set(value) == fields and all(isinstance(v, str) for v in value.values()),
+    require(isinstance(value, dict) and set(value) in (fields, fields | {"apk_chunks"}) and
+            all(isinstance(value[field], str) for field in fields),
             "Release metadata schema refused.")
     require(value["tag"] == TAG and value["title"] == TITLE and value["apk_file"] == APK_PATH and
             value["notes_file"] == NOTES_PATH, "Release version, title or payload path refused.")
@@ -228,15 +263,29 @@ def metadata(root: Path) -> dict[str, str]:
             HEX64.fullmatch(value["signer_sha256"]), "Malformed release digest.")
     require(value["signer_sha256"] == EXPECTED_SIGNER_SHA256,
             "The supplied signing identity differs from this edition's durable signer.")
-    for relative in (METADATA_PATH, APK_PATH, NOTES_PATH):
-        file = root / relative
-        require(file.is_file() and not file.is_symlink() and file.resolve().is_relative_to(root),
-                "A release payload must be a regular repository file.")
-        require(not (root / PurePosixPath(relative).parent).is_symlink(), "Payload directory symlink refused.")
+    chunks = chunk_digests(value)
     apk = root / APK_PATH
-    require(0 < apk.stat().st_size <= MAX_BINARY_BYTES and sha256(apk) == value["apk_sha256"],
-            "Signed APK digest or size mismatch.")
-    notes = root / NOTES_PATH
+    parts = root / APK_PARTS_DIRECTORY
+    if chunks is None:
+        require(not parts.exists() and not parts.is_symlink(), "Whole APK mode cannot contain APK parts.")
+        apk = repository_file(root, APK_PATH)
+        require(0 < apk.stat().st_size <= MAX_BINARY_BYTES and sha256(apk) == value["apk_sha256"],
+                "Signed APK digest or size mismatch.")
+    else:
+        require(not apk.exists() and not apk.is_symlink(), "Chunked APK mode cannot contain a whole APK.")
+        require(parts.is_dir() and not parts.is_symlink(), "APK parts directory is missing or invalid.")
+        paths = upload_payload_paths(value)
+        require({item.name for item in parts.iterdir()} == {PurePosixPath(item).name for item in paths},
+                "APK parts directory must contain exactly the declared parts.")
+        total = 0
+        for index, relative in enumerate(paths):
+            part = repository_file(root, relative)
+            size = part.stat().st_size
+            require(0 < size <= APK_CHUNK_BYTES and (index == len(paths) - 1 or size == APK_CHUNK_BYTES),
+                    "APK chunk size refused.")
+            total += size
+        require(total <= MAX_BINARY_BYTES, "Chunked APK exceeds the verification limit.")
+    notes = repository_file(root, NOTES_PATH)
     require(0 < notes.stat().st_size <= 64 * 1024, "Release notes size refused.")
     try:
         notes.read_text(encoding="utf-8")
@@ -245,15 +294,54 @@ def metadata(root: Path) -> dict[str, str]:
     return value
 
 
-def verify_upload_commit(root: Path, value: dict[str, str], upload_sha: str) -> None:
+def resolve_apk(root: Path, value: dict[str, Any], work: Path) -> Path:
+    """Reassemble ordered, hashed chunks outside checkout; return no unverified APK."""
+    chunks = chunk_digests(value)
+    if chunks is None:
+        return repository_file(root, APK_PATH)
+    require(not work.resolve().is_relative_to(root.resolve()), "APK reassembly must remain outside the checkout.")
+    apk = work / PurePosixPath(APK_PATH).name
+    digest = hashlib.sha256()
+    total = 0
+    created = False
+    try:
+        # Exclusive creation prevents replacing any other verified local file.
+        descriptor = os.open(apk, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        created = True
+        with os.fdopen(descriptor, "wb") as output:
+            for index, (relative, expected) in enumerate(zip(upload_payload_paths(value), chunks)):
+                part = repository_file(root, relative)
+                part_digest = hashlib.sha256()
+                size = 0
+                with part.open("rb") as stream:
+                    while block := stream.read(64 * 1024):
+                        size += len(block)
+                        total += len(block)
+                        require(size <= APK_CHUNK_BYTES and total <= MAX_BINARY_BYTES,
+                                "Chunked APK exceeds the verification limit.")
+                        part_digest.update(block)
+                        digest.update(block)
+                        output.write(block)
+                require(0 < size <= APK_CHUNK_BYTES and (index == len(chunks) - 1 or size == APK_CHUNK_BYTES),
+                        "APK chunk size refused.")
+                require(part_digest.hexdigest() == expected, "APK chunk digest mismatch.")
+        require(digest.hexdigest() == value["apk_sha256"], "Reassembled APK digest mismatch.")
+    except Exception:
+        if created:
+            apk.unlink(missing_ok=True)
+        raise
+    return apk
+
+
+def verify_upload_commit(root: Path, value: dict[str, Any], upload_sha: str) -> None:
     require(HEX40.fullmatch(upload_sha), "Invalid workflow commit.")
     actual = run(["git", "rev-parse", "HEAD"]).strip()
     require(actual == upload_sha, "Checkout does not match the triggering upload commit.")
     parents = run(["git", "show", "-s", "--format=%P", upload_sha]).strip().split()
     require(parents == [value["source_sha"]], "Upload commit must have the validated source as its sole parent.")
     changed = set(run(["git", "diff", "--name-only", value["source_sha"], upload_sha, "--"]).splitlines())
-    require(changed == {METADATA_PATH, APK_PATH, NOTES_PATH},
-            "Upload branch must add only release metadata, signed APK and notes.")
+    require(changed == {METADATA_PATH, NOTES_PATH, *upload_payload_paths(value)},
+            "Upload branch must add only release metadata, notes and the exact signed APK payload.")
     status = run(["git", "status", "--porcelain", "--untracked-files=all"]).strip()
     require(not status, "Checkout contains uncommitted changes.")
     require(run(["git", "ls-tree", value["source_sha"], "release-upload"]).strip() == "",
@@ -403,10 +491,14 @@ def verify_tag(github: GitHub, source_sha: str, reference: dict[str, Any] | None
     raise Refusal("Published tag indirection limit exceeded.")
 
 
-def publish(root: Path, github: GitHub, value: dict[str, str], work: Path, ci_run: dict[str, Any]) -> str:
+def publish(root: Path, github: GitHub, value: dict[str, Any], work: Path, ci_run: dict[str, Any],
+            apk: Path | None = None) -> str:
+    apk = root / APK_PATH if apk is None else apk
+    require(apk.is_file() and not apk.is_symlink() and apk.name == PurePosixPath(APK_PATH).name and
+            0 < apk.stat().st_size <= MAX_BINARY_BYTES and sha256(apk) == value["apk_sha256"],
+            "Verified publication APK digest, name or size mismatch.")
     assert_main(github, value["source_sha"])
     no_existing_release_or_tag(github)
-    apk = root / APK_PATH
     sums = work / "SHA256SUMS"
     sums.write_text(f"{value['apk_sha256']}  {apk.name}\n", encoding="ascii")
     notes = (root / NOTES_PATH).read_text(encoding="utf-8")
@@ -533,14 +625,15 @@ def main() -> None:
     require(Path.cwd().resolve() == root, "Run publication from the repository root.")
     value = metadata(root)
     verify_upload_commit(root, value, os.environ.get("GITHUB_SHA", ""))
-    verify_signed_apk(root / APK_PATH, value)
-    github = GitHub(os.environ.get("GITHUB_TOKEN", ""))
-    no_existing_release_or_tag(github)
-    ci_run = successful_main_run(github, value["source_sha"])
     with tempfile.TemporaryDirectory(prefix="verified-local-release-") as directory:
         work = Path(directory)
-        compare_ci_artifact(github, ci_run, value["source_sha"], root / APK_PATH, work)
-        url = publish(root, github, value, work, ci_run)
+        apk = resolve_apk(root, value, work)
+        verify_signed_apk(apk, value)
+        github = GitHub(os.environ.get("GITHUB_TOKEN", ""))
+        no_existing_release_or_tag(github)
+        ci_run = successful_main_run(github, value["source_sha"])
+        compare_ci_artifact(github, ci_run, value["source_sha"], apk, work)
+        url = publish(root, github, value, work, ci_run, apk)
     print(f"Published verified release: {url}", flush=True)
     archived = archive_merged_branches(github, value["source_sha"])
     cleanup = "Temporary upload branch deleted after verified public publication."

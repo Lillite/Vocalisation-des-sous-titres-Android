@@ -16,9 +16,13 @@ Les sources préparent **0.5.13-memory / code 20**. Le [guide](docs/TRADUCTION_R
 
 Les contrôles documentaires hors réseau exécutés pendant cette préparation ont réussi : **23 tests de synchronisation de l’historique** et **10 tests de nettoyage documentaire**, soit **33 réussites**, sans modification de ces suites. Les liens locaux des pages modifiées, l’unicité des tags du manifeste et `git diff --check` ont également été vérifiés. Ces contrôles ne constituent ni une compilation Android, ni une instrumentation, ni une mesure de performance du téléphone.
 
-### Preuve native hôte de la préparation
+Les **45 tests Python de publication** de `tools/test-publish-verified-release.py` ont réussi : **20 historiques et 25 nouveaux**. Ils couvrent les deux formats de transport temporaires, les tailles et empreintes des fragments puis de l’APK reconstitué, les parties absentes ou supplémentaires, les liens symboliques, le parent et le diff exacts du commit de transport, ainsi que l’ordre des vérifications avant toute publication. Ces tests sont hors réseau : GitHub, signature et artefact CI sont simulés dans les tests du parcours complet. Ils ne constituent ni une publication réelle ni une vérification de certificat sur l’APK de cette candidate.
 
-Le résumé local `build/verification/native-optimization-local/summary.json`, SHA-256 **c4d04d2af94447d9792077b680fdd318bf302e35531219dfd2f5d3949b292a81**, enregistre une construction puis une reconstruction incrémentale et les trois exécutables natifs réels de traduction, de sonde et de diagnostic, tous terminés avec le code **0**. La suite complète a été réexécutée après le dernier contrôle d’annulation de génération et l’ajustement du libellé métrique. Les **10 méthodes Python** de `tools/test-native-translation-results.py` ont réussi, sans échec ; elles contrôlent le contrat du lecteur de preuves, notamment l’absence, l’ambiguïté, les écarts non finis ou hors bornes et la séparation Q8/F16.
+### Preuve native hôte finale de la préparation
+
+La première campagne native locale avait réussi sur ses sources d’alors : `build/verification/native-optimization-local/summary.json`, SHA-256 **c4d04d2af94447d9792077b680fdd318bf302e35531219dfd2f5d3949b292a81**. Cette preuve initiale est conservée ; elle ne couvre pas le correctif ultérieur de synchronisation avant invalidation du cache ni sa nouvelle régression d’annulation.
+
+La campagne finale `build/verification/native-optimization-final/summary.json`, SHA-256 **8839bf53228276e3e086863ca6c51a0955bb695779363a769e6308caef72fdaa**, enregistre une configuration et construction propres puis les trois exécutables natifs réels de traduction, de sonde et de diagnostic, tous terminés avec le code **0**. Aucun des sept fichiers suivis n’a changé après le début de la configuration. Les **10 méthodes Python** de `tools/test-native-translation-results.py` ont également réussi, sans échec ; elles contrôlent le contrat du lecteur de preuves, notamment l’absence, l’ambiguïté, les écarts non finis ou hors bornes et la séparation Q8/F16.
 
 | Observation sur les fixtures miniatures | Résultat enregistré |
 | --- | --- |
@@ -28,24 +32,33 @@ Le résumé local `build/verification/native-optimization-local/summary.json`, S
 | Attention locale compacte, 6 requêtes | Recalcul après débordement et réutilisation d’un préfixe court vérifiés ; écart maximal cache/recalcul frais **0** ; écarts compact/complet **2,69338 × 10⁻⁵** absolu et **1,68453 × 10⁻⁶** relatif. |
 | Formats de conversation intégrés | **14** fixtures, **3** familles de prompts exacts, **3** contrôles d’entrée littérale, **55** générations terminées, **18** refus attendus et **5** contrôles de bornes. |
 | Greedy réutilisé | **21** sélections finies, égalités, valeurs non finies et remises à zéro conformes à la règle directe antérieure ; les générations hôte comparent aussi chaque token choisi, EOS compris. |
+| Annulation après un premier lot réel de calcul de l’entrée | **64 tokens** traités avant interruption à **27 %** de PREFILL ; aucune sortie partielle publiée ; propriétaire annulé refusé et accès conservé jusqu’à sa destruction ; nouveau propriétaire rechargé puis inférence fraîche terminée. Ce contrôle utilise le CPU hôte, sans exécuter d’asynchronie GPU. |
 
 Les sept empreintes ci-dessous ont été rapprochées des fichiers présents après cette campagne et étaient identiques au manifeste du résumé. Elles identifient précisément les sources couvertes par cette preuve locale, distinctement de toute future campagne CI ou modification ultérieure.
 
 | Source native ou outil de preuve | SHA-256 validé |
 | --- | --- |
-| `app/src/main/cpp/local_translation_engine.cpp` | `70d2ac27951d56df011c88bcba78ff007dbd181ee2cf6ae319c804890c021912` |
+| `app/src/main/cpp/local_translation_engine.cpp` | `a927f93ccf0bc3586c09b4c95dc0b903051496524682709b6cfa7068f9a2cd16` |
 | `app/src/main/cpp/local_translation_engine.h` | `44b19b7162a738733dcafda8565160f973999e028e7e87d6e101dd0b32627a47` |
 | `app/src/main/cpp/local_translation_jni.cpp` | `b6cb48488755c8294988fe4386a5fbe176ddcfbcaba1e5a63e53ce095aaa7b98` |
-| `app/src/main/cpp/tests/local_translation_smoke.cpp` | `2b226456edee909941c358c36979717c9b8d9e13fc7584f7bfcc306a683816c0` |
+| `app/src/main/cpp/tests/local_translation_smoke.cpp` | `fa785a410d7280a922da56c36f1e4d4f94ac9877e7d2379dab98cf922ddcac08` |
 | `app/src/main/cpp/tests/make_tiny_gguf.py` | `58c2b75526fcad7c49e00ac1aeb782390ebd2c37b7762b5ce4cfa20ca5030e24` |
 | `tools/run-native-translation-tests.py` | `bf30708396b13ff890639ae2b0ddc73969287cfba82c8645d15b2f4c2cfa8ba2` |
 | `tools/test-native-translation-results.py` | `a69d866cdde834b30e61d7bde47f55c68fa70e63fb2bb0364c5bab05fc5fabc5` |
 
 Les **4 352 octets** concernent uniquement les petits buffers texte/tokens du wrapper, sans les poids, le cache K/V ni les allocations du moteur ou du pilote. Le chronométrage brut du résumé inclut un chargement hôte ; il ne compare pas deux implémentations et n’établit aucun gain, même à la microseconde. Les écarts Q8/F16 sont non nuls malgré l’égalité des tokens sur ces fixtures : aucune équivalence linguistique n’est établie. Ce résumé déclare explicitement **aucune validation GPU, aucune mesure de performance sur téléphone et aucune validation de qualité linguistique**.
 
+### Vérifications JVM ciblées de la préparation
+
+Les **84 méthodes distinctes de dix classes ciblées** sont couvertes par des résultats réussis, sans échec restant, erreur ni test ignoré. Le résumé combiné `build/verification/jvm-optimization-targeted-final/summary.json`, SHA-256 **3d15afe8fc41979c66e342489ffa4074d6878007f80f929b06c955f70c9e3fc3**, conserve **67 méthodes de neuf classes inchangées** de la première exécution et **17 méthodes** de `LocalSrtTranslationJobRobolectricTest` rejouée seule après correction. Les 84 identités classe/méthode des XML retenus correspondent exactement aux sources actuelles, sans méthode manquante, inattendue ou dupliquée ; les empreintes des dix XML ont été revérifiées.
+
+La première exécution avait réellement terminé **84 méthodes, dont deux échecs**, sans erreur ni test ignoré. Sa preuve est conservée dans `build/verification/jvm-optimization-targeted-initial/summary.json`, SHA-256 **e0638436f59b971648135b049aa393dbb9fc4cdca6358cb4ff5fadcb59c1a5f9**. Les deux échecs concernaient les essais de restauration après interruption ou erreur : Robolectric fournissait un PID synthétique nul alors que le journal exige un PID positif. Seul le setup de cette classe a été corrigé par `ShadowProcess.setPid(12_345)` ; la validation de production et les assertions sont conservées. La comparaison des instantanés de **255 entrées JVM** confirme que seul ce fichier de test a changé entre les deux exécutions et qu’aucune entrée n’a changé pendant la reprise ciblée.
+
+La reprise de cette seule classe a réussi **17 méthodes sur 17** ; résumé `build/verification/jvm-optimization-job-final/summary.json`, SHA-256 **0be864f879c72a0b7135b32bd91925b8c3621e319f8b3debf44d743470df7f3d**. Sa source porte le SHA-256 **2297b3d07cb9e52e3df52b2d46c819c7e185cc0b656da495f349cc82185f79f6** et son XML frais **da648359ca46dabc92ac35e1f470c02517595ce9624a1493471752a8961865a0**. Les XML anciens laissés par Gradle ne sont pas comptés comme une nouvelle exécution : les neuf autres classes s’appuient sur leurs copies initiales immuables. Ces résultats ciblés ne constituent ni une seconde campagne JVM globale, ni la validation complète du noyau, ni une instrumentation Android.
+
 ### Campagne applicative à établir
 
-L’inventaire source attendu de la proposition contient **196 méthodes noyau, 576 méthodes JVM application et 114 méthodes Android**, soit **886 méthodes**. Il doit être rapproché des identités des XML frais du commit testé, sans méthode manquante, ignorée, inattendue ou dupliquée. Cet inventaire ne constitue pas un résultat d’exécution. Aucune réussite JVM ou Android de cette candidate n’est annoncée à ce stade.
+L’inventaire source attendu de la proposition contient **196 méthodes noyau, 576 méthodes JVM application et 114 méthodes Android**, soit **886 méthodes**. Il doit être rapproché des identités des XML frais du commit testé, sans méthode manquante, ignorée, inattendue ou dupliquée. Cet inventaire ne constitue pas un résultat d’exécution. Les 84 méthodes JVM ciblées ci-dessus ne remplacent pas cette campagne complète ; aucune réussite d’instrumentation Android de cette candidate n’est annoncée à ce stade.
 
 La campagne finale doit construire puis instrumenter l’APK release sur Android 17 / API 37 avant fusion. Les suites déjà réussies de la proposition finale ne doivent pas être rejouées après fusion : la reconstruction vérifie arbre, parents et contenu applicatif identiques hors métadonnées de signature autorisées, puis la signature durable et la publication. Aucune durée gagnée ni baisse de mémoire sur téléphone n’est déclarée.
 
