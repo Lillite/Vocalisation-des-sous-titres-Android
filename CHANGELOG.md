@@ -2,7 +2,21 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
-## 0.5.12-runtime — candidate de calcul local et de diagnostic du chargement
+## 0.5.13-memory — candidate de mémoire et de reprise du calcul local
+
+VersionCode **20**, identité Traduction et certificat durable conservés. [Guide](docs/TRADUCTION_RUNTIME_0513.md) · [Notes et limites](docs/releases/0.5.13-memory.md). La 0.5.2 reste la dernière stable recommandée. La validation complète et la publication de cette candidate doivent encore être établies.
+
+- Réutilisation par session des buffers de tokens/caractères et du sélecteur greedy ; remise à zéro du sélecteur avant chaque génération, sans remplacement des poids ni modification volontaire du choix des tokens.
+- Invalidation du cache natif par remise à zéro de ses positions logiques, sans effacement physique systématique des données ; libération du contexte sans remise à zéro juste avant destruction. La réévaluation exacte reste requise quand le préfixe ne peut pas être réutilisé.
+- Suivi des étapes fixes de tokenisation, cache, calcul de l’entrée et génération ; PID, RSS ponctuels, raisons de recalcul et compteurs des petits buffers réutilisables. Une étape ou une politique Flash Attention ne prouve pas une occurrence validée ni un calcul GPU effectif.
+- Cache K/V **F16 conservé par défaut** ; option **Q8_0 expérimentale explicite**, avec identité distincte, compatibilité stricte et politique Flash Attention activée exigée pour le cache V quantifié. Les poids et leur quantification ne changent pas ; la précision des états d’attention change et demande une relecture de fidélité.
+- Journal de diagnostic SRT privé, borné et atomique, séparé des traductions durables ; conservation des compteurs et dernières étapes avant interruption, puis consultation après réouverture sans relance automatique. Marqueur Android `MemoryLimiter:AnonSwap` reconnu sans conservation de description libre.
+- Cache exact de requêtes : format historique conservé, lecture bornée sans copie intégrale du corps, empreinte calculée en flux à l’écriture et chemin sous quota sans tri ni lecture des dates de tous les fichiers ; inventaire réel et contrôles d’intégrité conservés.
+- Contexte natif de 2 048 tokens, borne de génération de 512 tokens, textes complets, minutages, répétitions et protections de Pause conservés. Aucun gain universel, stabilisation du 12B ou classement de modèles n’est déduit de ces changements.
+
+## 0.5.12-runtime — calcul local publié ; historique de préparation
+
+La [préversion 0.5.12-runtime](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.12-runtime) est publiée au commit `9f19792656b6a274297a3e23c2d142ddfdb33acc`. Les paragraphes suivants conservent la description de sa préparation ; leurs attentes historiques ne constituent pas les résultats de la 0.5.13.
 
 VersionCode **19**, identité Traduction et certificat durable conservés. [Guide](docs/TRADUCTION_RUNTIME_0512.md) · [Notes et limites](docs/releases/0.5.12-runtime.md). La 0.5.2 reste la dernière stable. Les preuves de cette candidate doivent être établies avant distribution.
 

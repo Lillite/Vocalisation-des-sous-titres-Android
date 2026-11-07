@@ -21,6 +21,15 @@ srt = root / 'examples/demonstration.srt'
 assert srt.is_file() and len(re.findall(r' --> ', srt.read_text(encoding='utf-8'))) == 8
 script = (root / 'app/build.gradle.kts').read_text(encoding='utf-8')
 assert 'generateDemo' in script and 'dependsOn(generateDemo)' in script
+version_checker = (root / 'tools/check-apk-manifest.py').read_text(encoding='utf-8')
+for field, name, pattern in (
+    ('versionCode', 'CODE', r'^\s*versionCode\s*=\s*(\d+)\s*$'),
+    ('versionName', 'NAME', r'^\s*versionName\s*=\s*"([^\"]+)"\s*$'),
+):
+    declared = re.findall(pattern, script, re.M)
+    checked = re.findall(rf"^EXPECTED_VERSION_{name} = '([^']+)'$", version_checker, re.M)
+    assert len(declared) == 1 and declared == checked, f'{field}: compiled APK checker must match the declared release before building'
+print('PASS compiled APK version expectations match the declared release')
 assert not any(list(root.rglob(pattern)) for pattern in ('*.jks', '*.keystore', '*.p12', '*.pfx', 'signing.properties'))
 production = list(root.glob('app/src/main/java/**/*.kt')) + list(root.glob('core/src/main/kotlin/**/*.kt'))
 assert len(production) >= 7, 'Missing production sources'

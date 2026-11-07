@@ -68,4 +68,39 @@ class LocalGgufAttemptReportTest {
         for (privateText in listOf("secret", "private.invalid", "PRIVATE SUBTITLE BACKGROUND"))
             assertFalse(report.contains(privateText))
     }
+
+    @Test fun cpuRequestAndObservedProgressCannotKeepTheMisleadingInitialPendingClaim() {
+        val config = TranslationProviderConfig(TranslationProvider.LOCAL_GGUF, localExecution = "CPU")
+        val initial = LocalGgufAttemptReport.initial(config, 0)
+        assertTrue(initial.contains("couches GPU 0 (calcul CPU explicite)"))
+        assertFalse(initial.contains("couches GPU toutes"))
+        val observed = LocalGgufAttemptReport.initial(config, 0, pendingStatus = false)
+        assertFalse(observed.contains("Aucun chargement ou calcul réussi"))
+        assertTrue(observed.contains("1970-01-01T00:00:00Z"))
+    }
+
+    @Test fun memoryLimiterDescriptionRetainsOnlyTheFixedMarkerWithAnAppropriateReason() {
+        assertTrue(LocalGgufAttemptReport.memoryLimiterMarker(13,
+            "MemoryLimiter:AnonSwap PRIVATE PATH /secret personal text"))
+        assertTrue(LocalGgufAttemptReport.memoryLimiterMarker(17, "MemoryLimiter:AnonSwap"))
+        assertFalse(LocalGgufAttemptReport.memoryLimiterMarker(3, "MemoryLimiter:AnonSwap"))
+        assertFalse(LocalGgufAttemptReport.memoryLimiterMarker(13, null))
+        assertFalse(LocalGgufAttemptReport.memoryLimiterMarker(13, "unrelated /private/path"))
+        val exit = LocalGgufAttemptReport.ExitRecord(123, "app:model_diagnostic", 1000, 10_350,
+            13, 0, 20, 10, memoryLimiter = true)
+        val report = LocalGgufAttemptReport.failure(LocalGgufRuntime.Code.DIED, null, 50, exit)
+        assertTrue(report.contains("MemoryLimiter:AnonSwap"))
+        assertFalse(report.contains("PRIVATE"))
+        assertFalse(report.contains("/secret"))
+        assertFalse(report.contains("pression mémoire rapporté"))
+    }
+
+    @Test fun generationStagesRemainObservationsAndNeverClaimAValidatedOccurrence() {
+        for (stage in listOf("TOKENIZE", "CACHE_REUSE", "PREFILL", "DECODE", "COMPLETE")) {
+            val p = progress().apply { putString(GgufMessages.STAGE, stage) }
+            val parsed = requireNotNull(LocalGgufProgress.parse(p, 10_000, 10_500))
+            assertTrue(parsed.render().contains(stage))
+            assertTrue(parsed.render().contains("ne prouve pas qu’une occurrence complète a été validée"))
+        }
+    }
 }

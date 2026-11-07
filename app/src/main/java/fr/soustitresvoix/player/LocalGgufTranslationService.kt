@@ -97,11 +97,13 @@ class LocalGgufTranslationService : Service() {
         val batch = message.data.getInt(GgufMessages.BATCH, 512)
         val microBatch = message.data.getInt(GgufMessages.MICRO_BATCH, 128)
         val compactSwa = message.data.getBoolean(GgufMessages.COMPACT_SWA, false)
+        val kvCacheType = message.data.getString(GgufMessages.KV_CACHE_TYPE) ?: "F16"
         val malformedSettings = listOf(GgufMessages.LAYERS, GgufMessages.BATCH, GgufMessages.MICRO_BATCH)
             .any { message.data.containsKey(it) && message.data.get(it) !is Int } ||
-            message.data.containsKey(GgufMessages.COMPACT_SWA) && message.data.get(GgufMessages.COMPACT_SWA) !is Boolean
+            message.data.containsKey(GgufMessages.COMPACT_SWA) && message.data.get(GgufMessages.COMPACT_SWA) !is Boolean ||
+            message.data.containsKey(GgufMessages.KV_CACHE_TYPE) && message.data.get(GgufMessages.KV_CACHE_TYPE) !is String
         if (malformedSettings || file == null || threads !in 1..8 || context !in 128..2048 || execution !in setOf("AUTO", "CPU", "OPENCL", "VULKAN") ||
-            layers !in -1..1024 || layers == 0 && execution != "CPU" || batch !in 16..512 || microBatch !in 16..128 || microBatch > batch) { respond(reply, request, session, error(LocalGgufRuntime.Code.MODEL)); return }
+            layers !in -1..1024 || layers == 0 && execution != "CPU" || batch !in 16..512 || microBatch !in 16..128 || microBatch > batch || kvCacheType !in setOf("F16", "Q8_0")) { respond(reply, request, session, error(LocalGgufRuntime.Code.MODEL)); return }
         registerOwner(reply, session)
         val cancelled = ownerCancelled
         running.set(true)
@@ -121,7 +123,7 @@ class LocalGgufTranslationService : Service() {
                 val cache = File(cacheRoot, "local-gguf-opencl-kernels").canonicalFile.takeIf {
                     it.path.startsWith(cacheRoot.path + File.separator) && (it.isDirectory || it.mkdirs())
                 }
-                opened.open(file, threads, context, execution, layers, cache, batch, microBatch, compactSwa, observer).also { LocalGgufRuntime.info(it); succeeded = true }
+                opened.open(file, threads, context, execution, layers, cache, batch, microBatch, compactSwa, observer, kvCacheType).also { LocalGgufRuntime.info(it); succeeded = true }
             } catch (failure: LocalGgufRuntime.Failure) { error(failure.code, failure.diagnostic) }
               catch (_: Exception) { error(LocalGgufRuntime.Code.MODEL) }
               catch (_: LinkageError) { error(LocalGgufRuntime.Code.BACKEND) }
@@ -154,11 +156,16 @@ class LocalGgufTranslationService : Service() {
         val cancelled = ownerCancelled
         running.set(true)
         worker.execute {
-            progress(reply, request, session, System.currentTimeMillis(), System.nanoTime(), "GENERATION", -1)
+            val startedAtMs = System.currentTimeMillis()
+            val startedAtNanos = System.nanoTime()
+            progress(reply, request, session, startedAtMs, startedAtNanos, "GENERATION", -1)
+            val observer = LocalGgufProgressListener { stage, percent ->
+                if (!cancelled.get()) progress(reply, request, session, startedAtMs, startedAtNanos, stage, percent)
+            }
             val json = try {
                 if (cancelled.get()) throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.CANCELLED)
                 nativeSession?.let {
-                    if (useModelTemplate) it.generateChat(text, tokens) else it.generate(text, tokens, special)
+                    if (useModelTemplate) it.generateChat(text, tokens, observer) else it.generate(text, tokens, special, observer)
                 } ?: error(LocalGgufRuntime.Code.MODEL)
             } catch (failure: LocalGgufRuntime.Failure) { error(failure.code, failure.diagnostic) }
               catch (_: Exception) { error(LocalGgufRuntime.Code.RESPONSE) }

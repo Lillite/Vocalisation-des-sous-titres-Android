@@ -448,6 +448,7 @@ class SubtitleTranslationAndroidTest {
                     )
                     val nestedMemoryLabels = expectedFieldLabels.subList(12, 15).toSet()
                     val compactCacheLabel = "Cache d’attention locale compact — expérimental pour les modèles à attention locale"
+                    val quantizedCacheLabel = "Cache d’attention K/V en 8 bits — expérimental ; F16 si désactivé"
                     val memoryPresetLabels = listOf("Lots standard : 512 et 128 tokens",
                         "Réduire la mémoire temporaire : 128 et 32 tokens")
                     lateinit var fieldsByLabel: Map<String, EditText>
@@ -481,10 +482,10 @@ class SubtitleTranslationAndroidTest {
                         if (provider == TranslationProvider.LOCAL_GGUF) {
                             await("New GGUF memory controls were not laid out after selecting the provider") {
                                 val memoryControls = descendants(panel.get()).filterIsInstance<TextView>().filter {
-                                    it.text.toString() in memoryPresetLabels || it.text.toString() == compactCacheLabel ||
+                                    it.text.toString() in memoryPresetLabels || it.text.toString() == compactCacheLabel || it.text.toString() == quantizedCacheLabel ||
                                         it.text.toString() in nestedMemoryLabels
                                 }
-                                memoryControls.size == 6 && memoryControls.all {
+                                memoryControls.size == 7 && memoryControls.all {
                                     it.isShown && it.layout != null && it.width > 0 && it.height > 0
                                 }
                             }
@@ -518,6 +519,10 @@ class SubtitleTranslationAndroidTest {
                             assertFalse("Compact attention cache must remain an explicit experimental choice", compactCache.isChecked)
                             assertEquals("Compact-cache visibility must follow the entire GGUF group",
                                 provider == TranslationProvider.LOCAL_GGUF, compactCache.isShown)
+                            val quantizedCache = views.filterIsInstance<CheckBox>().single { it.text.toString() == quantizedCacheLabel }
+                            assertFalse("Quantized attention cache must remain an explicit experimental choice", quantizedCache.isChecked)
+                            assertEquals("Quantized-cache visibility must follow the entire GGUF group",
+                                provider == TranslationProvider.LOCAL_GGUF, quantizedCache.isShown)
                             val memoryPresets = memoryPresetLabels.map { title ->
                                 views.filterIsInstance<Button>().single { it.text.toString() == title }
                             }

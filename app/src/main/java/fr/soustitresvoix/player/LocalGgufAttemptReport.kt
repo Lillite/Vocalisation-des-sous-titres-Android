@@ -8,7 +8,7 @@ import android.os.Process
 import java.time.Instant
 
 /** Only fixed stages and numeric measurements; never a prompt, filename or native exception. */
-internal data class LocalGgufProgress(
+data class LocalGgufProgress(
     val stage: String,
     val percent: Int,
     val processId: Int,
@@ -20,10 +20,13 @@ internal data class LocalGgufProgress(
         if (percent >= 0) { append(" ; progression de cette étape : "); append(percent); append(" %") }
         append(".\nProcessus du moteur : "); append(processId)
         append(" ; temps écoulé dans cet appel : "); append(elapsedMs); append(" ms.")
-        append("\nUne étape de chargement ne prouve ni un calcul GPU effectif ni une traduction terminée.")
+        append(if (stage in CALCULATION_STAGES)
+            "\nUne étape de calcul ne prouve pas qu’une occurrence complète a été validée ni que sa traduction est fidèle."
+        else "\nUne étape de chargement ne prouve ni un calcul GPU effectif ni une traduction terminée.")
     }
 
     companion object {
+        private val CALCULATION_STAGES = setOf("GENERATION", "TOKENIZE", "CACHE_REUSE", "PREFILL", "DECODE", "COMPLETE")
         val STAGES = mapOf(
             "SERVICE" to "initialisation du processus de calcul",
             "BACKEND" to "préparation du moteur",
@@ -33,7 +36,12 @@ internal data class LocalGgufProgress(
             "CONTEXT_INIT" to "allocation du contexte de calcul",
             "CHAT_TEMPLATE" to "préparation du format de requête",
             "READY" to "chargement terminé",
-            "GENERATION" to "calcul de la traduction")
+            "GENERATION" to "calcul de la traduction",
+            "TOKENIZE" to "préparation des tokens de la requête",
+            "CACHE_REUSE" to "vérification et réutilisation du préfixe d’attention",
+            "PREFILL" to "calcul du contexte de la requête",
+            "DECODE" to "génération de la réponse",
+            "COMPLETE" to "appel de calcul terminé")
 
         fun parse(bundle: Bundle, requestStartedAtMs: Long, nowMs: Long): LocalGgufProgress? {
             val stage = bundle.get(GgufMessages.STAGE) as? String ?: return null
@@ -55,31 +63,49 @@ internal fun interface LocalGgufProgressListener {
 }
 
 internal object LocalGgufAttemptReport {
-    fun initial(config: TranslationProviderConfig, startedAtMs: Long = System.currentTimeMillis()): String = buildString {
+    private val MODES = setOf("AUTO", "CPU", "OPENCL", "VULKAN")
+    private val SHA256 = Regex("[a-fA-F0-9]{64}")
+    fun initial(config: TranslationProviderConfig, startedAtMs: Long = System.currentTimeMillis(),
+        pendingStatus: Boolean = true): String = buildString {
         append("Préparation locale commencée (UTC) : "); append(Instant.ofEpochMilli(startedAtMs))
-        append("\nCalcul demandé : "); append(config.localExecution.takeIf { it in setOf("AUTO", "CPU", "OPENCL", "VULKAN") } ?: "non reconnu")
+        append("\nCalcul demandé : "); append(config.localExecution.takeIf { it in MODES } ?: "non reconnu")
         append(" ; profil : "); append(config.localProfile.label)
         append(" ; threads CPU demandés : "); append(config.localThreads)
         config.localModel?.let {
             append(".\nModèle : "); append(it.bytes); append(" octets")
-            if (it.sha256.matches(Regex("[a-fA-F0-9]{64}"))) { append(" ; SHA-256 "); append(it.sha256) }
+            if (SHA256.matches(it.sha256)) { append(" ; SHA-256 "); append(it.sha256) }
         }
         val settings = config.localLoadSettings
-        append(".\nChargement demandé : couches GPU "); append(if (settings.gpuLayers == -1) "toutes" else settings.gpuLayers.toString())
+        append(".\nChargement demandé : couches GPU ")
+        append(if (config.localExecution == "CPU") "0 (calcul CPU explicite)"
+            else if (settings.gpuLayers == -1) "toutes" else settings.gpuLayers.toString())
         append(" ; lot "); append(settings.batchTokens); append(" ; micro-lot "); append(settings.microBatchTokens)
         append(" ; cache d’attention locale compact : "); append(if (settings.compactSwa) "oui" else "non")
-        append(".\nAucun chargement ou calcul réussi n’est encore établi pour cette préparation.")
+        append(" ; cache K/V demandé : "); append(settings.kvCacheType)
+        append(" ; contexte : "); append(config.localContextPolicy.label)
+        append('.')
+        if (pendingStatus) append("\nAucun chargement ou calcul réussi n’est encore établi pour cette préparation.")
     }
 
     data class ExitRecord(val pid: Int, val processName: String, val uid: Int, val timestampMs: Long,
-        val reason: Int, val status: Int, val rssKiB: Long, val pssKiB: Long)
+        val reason: Int, val status: Int, val rssKiB: Long, val pssKiB: Long,
+        val memoryLimiter: Boolean = false)
+
+    /** Retain only the documented fixed marker, never Android's free-form description. */
+    fun memoryLimiterMarker(reason: Int, description: String?): Boolean =
+        (reason == 13 || reason == 17) && description?.contains("MemoryLimiter:AnonSwap") == true
 
     /** Exact PID, name, own UID and this request's time interval exclude unrelated/stale kills. */
     fun matchingExit(records: List<ExitRecord>, pid: Int, processName: String, uid: Int,
         startedAtMs: Long, stoppedAtMs: Long): ExitRecord? {
         if (pid <= 0 || stoppedAtMs < startedAtMs) return null
-        return records.filter { it.pid == pid && it.processName == processName && it.uid == uid &&
-            it.timestampMs in startedAtMs..stoppedAtMs }.maxByOrNull { it.timestampMs }
+        var latest: ExitRecord? = null
+        for (record in records) {
+            if (record.pid == pid && record.processName == processName && record.uid == uid &&
+                record.timestampMs in startedAtMs..stoppedAtMs &&
+                (latest == null || record.timestampMs > latest.timestampMs)) latest = record
+        }
+        return latest
     }
 
     fun exitLabel(reason: Int): String = when (reason) {
@@ -118,6 +144,7 @@ internal object LocalGgufAttemptReport {
             else {
                 append("\nMotif d’arrêt Android : "); append(exitLabel(exit.reason)); append(" ["); append(exit.reason); append("]")
                 append(" ; code ou signal : "); append(exit.status); append('.')
+                if (exit.memoryLimiter) append("\nAndroid a également fourni le marqueur du limiteur mémoire par application [MemoryLimiter:AnonSwap].")
                 if (exit.rssKiB > 0) { append("\nDernier RSS échantillonné par Android : "); append(exit.rssKiB); append(" Kio.") }
                 if (exit.pssKiB > 0) { append("\nDernier PSS échantillonné par Android : "); append(exit.pssKiB); append(" Kio.") }
                 append("\nCes échantillons ne mesurent pas exactement la mémoire au moment de l’arrêt ni toute la mémoire GPU.")
@@ -126,14 +153,24 @@ internal object LocalGgufAttemptReport {
     }
 
     fun exitFor(context: Context, pid: Int, startedAtMs: Long, stoppedAtMs: Long): ExitRecord? {
+        return exitForProcess(context, pid, "${context.packageName}:model_diagnostic", startedAtMs, stoppedAtMs)
+    }
+
+    fun exitForApplication(context: Context, pid: Int, startedAtMs: Long, stoppedAtMs: Long): ExitRecord? {
+        return exitForProcess(context, pid, context.packageName, startedAtMs, stoppedAtMs)
+    }
+
+    private fun exitForProcess(context: Context, pid: Int, name: String,
+        startedAtMs: Long, stoppedAtMs: Long): ExitRecord? {
         if (Build.VERSION.SDK_INT < 30 || pid <= 0) return null
         return runCatching {
             val manager = context.getSystemService(ActivityManager::class.java) ?: return null
             val records = manager.getHistoricalProcessExitReasons(context.packageName, pid, 16).map { entry ->
                 ExitRecord(entry.pid, entry.processName, entry.realUid, entry.timestamp,
-                    entry.reason, entry.status, entry.rss, entry.pss)
+                    entry.reason, entry.status, entry.rss, entry.pss,
+                    memoryLimiterMarker(entry.reason, entry.description))
             }
-            matchingExit(records, pid, "${context.packageName}:model_diagnostic", Process.myUid(), startedAtMs, stoppedAtMs)
+            matchingExit(records, pid, name, Process.myUid(), startedAtMs, stoppedAtMs)
         }.getOrNull()
     }
 }

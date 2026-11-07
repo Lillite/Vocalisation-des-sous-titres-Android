@@ -25,6 +25,29 @@ bool read(JNIEnv * env, jbyteArray array, std::string & result, int maximum) {
     result.resize(n); env->GetByteArrayRegion(array, 0, n, reinterpret_cast<jbyte *>(result.data()));
     return !env->ExceptionCheck();
 }
+std::function<void(const char *, int)> progress_report(JNIEnv * env, jobject progress) {
+    jmethodID on_progress = nullptr;
+    if (progress) {
+        jclass type = env->GetObjectClass(progress);
+        if (type) {
+            on_progress = env->GetMethodID(type, "onProgress", "(Ljava/lang/String;I)V");
+            env->DeleteLocalRef(type);
+        }
+        if (env->ExceptionCheck()) { env->ExceptionClear(); on_progress = nullptr; }
+    }
+    return [env, progress, on_progress](const char * stage, int percent) {
+        if (!on_progress) return;
+        // This callback is synchronous and never retained by Session. JNI env
+        // and the local observer reference belong to this invocation only.
+        jstring text = env->NewStringUTF(stage);
+        if (text) {
+            env->CallVoidMethod(progress, on_progress, text, static_cast<jint>(percent));
+            env->DeleteLocalRef(text);
+        }
+        // Diagnostic listeners never own inference or cancellation semantics.
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    };
+}
 }
 extern "C" JNIEXPORT jlong JNICALL
 Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeCreate(JNIEnv *, jobject) {
@@ -47,7 +70,7 @@ Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeDestroy(JNIEnv *, jobject, 
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeOpen(JNIEnv * env, jobject, jlong id, jbyteArray path,
         jint threads, jint context, jstring execution, jint gpu_layers, jbyteArray cache_path,
-        jint batch_tokens, jint micro_batch_tokens, jboolean compact_swa, jobject progress) {
+        jint batch_tokens, jint micro_batch_tokens, jboolean compact_swa, jobject progress, jint cache_type) {
     try {
         const auto session = find(id); std::string filename, cache;
         if (!session || !read(env, path, filename, 32768) || !execution || !cache_path) return nullptr;
@@ -56,42 +79,24 @@ Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeOpen(JNIEnv * env, jobject,
         if (!mode_chars) return nullptr;
         const std::string mode(mode_chars);
         env->ReleaseStringUTFChars(execution, mode_chars);
-        jmethodID on_progress = nullptr;
-        if (progress) {
-            jclass type = env->GetObjectClass(progress);
-            if (type) {
-                on_progress = env->GetMethodID(type, "onProgress", "(Ljava/lang/String;I)V");
-                env->DeleteLocalRef(type);
-            }
-            // Optional telemetry must not prevent the actual model attempt.
-            if (env->ExceptionCheck()) { env->ExceptionClear(); on_progress = nullptr; }
-        }
-        const auto report = [env, progress, on_progress](const char * stage, int percent) {
-            if (!on_progress) return;
-            // Pinned llama.cpp invokes its loading progress callback on the
-            // nativeOpen calling thread. This JNI env and argument stay valid
-            // for the synchronous duration of Session::open.
-            jstring text = env->NewStringUTF(stage);
-            if (text) {
-                env->CallVoidMethod(progress, on_progress, text, static_cast<jint>(percent));
-                env->DeleteLocalRef(text);
-            }
-            if (env->ExceptionCheck()) env->ExceptionClear();
-        };
+        const auto report = progress_report(env, progress);
+        const std::string kv = cache_type == 0 ? "F16" : cache_type == 1 ? "Q8_0" : "INVALID";
         return bytes(env, session->open(filename, threads, context, mode, gpu_layers, cache,
-            batch_tokens, micro_batch_tokens, compact_swa == JNI_TRUE, report).json());
+            batch_tokens, micro_batch_tokens, compact_swa == JNI_TRUE, report, kv).json());
     } catch (...) { return nullptr; }
 }
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeGenerate(JNIEnv * env, jobject, jlong id, jbyteArray prompt, jint tokens, jboolean add_special) {
+Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeGenerate(JNIEnv * env, jobject, jlong id, jbyteArray prompt,
+        jint tokens, jboolean add_special, jobject progress) {
     try {
         const auto session = find(id); std::string text;
         if (!session || !read(env, prompt, text, 65536)) return nullptr;
-        return bytes(env, session->generate(text, tokens, add_special).json());
+        return bytes(env, session->generate(text, tokens, add_special, false, progress_report(env, progress)).json());
     } catch (...) { return nullptr; }
 }
 extern "C" JNIEXPORT jbyteArray JNICALL
-Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeGenerateChat(JNIEnv * env, jobject, jlong id, jbyteArray user_content, jint tokens) {
+Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeGenerateChat(JNIEnv * env, jobject, jlong id, jbyteArray user_content,
+        jint tokens, jobject progress) {
     try {
         const auto session = find(id); std::string text;
         if (!session) return nullptr;
@@ -100,8 +105,8 @@ Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeGenerateChat(JNIEnv * env, 
             // Reject an absent, empty or oversized input without copying it,
             // while preserving the visible TEMPLATE/CANCELLED result and the
             // normal failure path that invalidates any reusable prompt cache.
-            return bytes(env, session->generate("", tokens, false, true).json());
+            return bytes(env, session->generate("", tokens, false, true, progress_report(env, progress)).json());
         }
-        return bytes(env, session->generate(text, tokens, false, true).json());
+        return bytes(env, session->generate(text, tokens, false, true, progress_report(env, progress)).json());
     } catch (...) { return nullptr; }
 }

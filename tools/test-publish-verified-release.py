@@ -1,11 +1,12 @@
 """Offline behavioral checks for the exact release publisher; never contacts GitHub."""
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from copy import deepcopy
 import hashlib
 import importlib.util
 import io
+import json
 from pathlib import Path
 import tempfile
 import sys
@@ -74,6 +75,342 @@ class DownloadTransportTests(unittest.TestCase):
         self.assert_download_transport(
             publisher.PREFIX + '/releases/assets/456', 'application/octet-stream',
             'https://release-assets.githubusercontent.com/synthetic-fixture.apk?fixture=only')
+
+
+class UploadPayloadTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(prefix='upload-payload-offline-test-')
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name) / 'root'
+        self.work = Path(self.temporary.name) / 'work'
+        self.root.mkdir(); self.work.mkdir()
+        self.upload = self.root / 'release-upload'
+        self.upload.mkdir()
+        self.payload = b'synthetic APK payload, never executed\x00\xff'
+        (self.root / publisher.APK_PATH).write_bytes(self.payload)
+        (self.root / publisher.NOTES_PATH).write_text('Synthetic release notes.', encoding='utf-8')
+        self.value = {
+            'tag': publisher.TAG, 'source_sha': SOURCE,
+            'apk_sha256': hashlib.sha256(self.payload).hexdigest(),
+            'signer_sha256': publisher.EXPECTED_SIGNER_SHA256,
+            'apk_file': publisher.APK_PATH, 'notes_file': publisher.NOTES_PATH,
+            'title': publisher.TITLE,
+        }
+        self.write_metadata()
+
+    def write_metadata(self):
+        (self.root / publisher.METADATA_PATH).write_text(
+            json.dumps(self.value, ensure_ascii=False), encoding='utf-8')
+
+    def make_chunks(self, pieces=None):
+        apk = self.root / publisher.APK_PATH
+        apk.unlink(missing_ok=True)
+        self.parts = self.root / publisher.APK_PARTS_DIRECTORY
+        self.parts.mkdir(exist_ok=True)
+        for part in self.parts.iterdir():
+            part.unlink()
+        if pieces is None:
+            pieces = [b'A' * publisher.APK_CHUNK_BYTES, b'final synthetic chunk\x00\xff']
+        self.payload = b''.join(pieces)
+        self.value['apk_sha256'] = hashlib.sha256(self.payload).hexdigest()
+        self.value['apk_chunks'] = [hashlib.sha256(piece).hexdigest() for piece in pieces]
+        for index, piece in enumerate(pieces):
+            (self.parts / f'{index:04d}.part').write_bytes(piece)
+        self.write_metadata()
+
+    def assert_no_reassembled_apk(self):
+        self.assertFalse((self.work / Path(publisher.APK_PATH).name).exists())
+
+    def git_verification(self, paths=None, parents=None, status='', existing_source_payload=''):
+        paths = publisher.upload_payload_paths(self.value) if paths is None else paths
+        changed = [publisher.METADATA_PATH, publisher.NOTES_PATH, *paths]
+        commands = {
+            ('git', 'rev-parse', 'HEAD'): NEW_HEAD + '\n',
+            ('git', 'show', '-s', '--format=%P', NEW_HEAD):
+                (SOURCE if parents is None else parents) + '\n',
+            ('git', 'diff', '--name-only', SOURCE, NEW_HEAD, '--'): '\n'.join(changed) + '\n',
+            ('git', 'status', '--porcelain', '--untracked-files=all'): status,
+            ('git', 'ls-tree', SOURCE, 'release-upload'): existing_source_payload,
+        }
+        with patch.object(publisher, 'run', side_effect=lambda args: commands[tuple(args)]):
+            publisher.verify_upload_commit(self.root, self.value, NEW_HEAD)
+
+    def test_whole_apk_schema_hash_and_three_file_commit_remain_compatible(self):
+        self.assertEqual(self.value, publisher.metadata(self.root))
+        self.assertEqual([publisher.APK_PATH], publisher.upload_payload_paths(self.value))
+        self.assertEqual(self.root / publisher.APK_PATH, publisher.resolve_apk(self.root, self.value, self.work))
+        self.git_verification()
+        (self.root / publisher.APK_PATH).write_bytes(b'changed')
+        with self.assertRaisesRegex(publisher.Refusal, 'digest or size'):
+            publisher.metadata(self.root)
+
+    def test_chunks_reassemble_in_declared_order_outside_checkout(self):
+        self.make_chunks()
+        value = publisher.metadata(self.root)
+        expected = [publisher.APK_PARTS_DIRECTORY + '/0000.part', publisher.APK_PARTS_DIRECTORY + '/0001.part']
+        self.assertEqual(expected, publisher.upload_payload_paths(value))
+        self.git_verification()
+        resolved = publisher.resolve_apk(self.root, value, self.work)
+        self.assertEqual(self.work / Path(publisher.APK_PATH).name, resolved)
+        self.assertEqual(self.payload, resolved.read_bytes())
+        self.assertEqual(self.value['apk_sha256'], publisher.sha256(resolved))
+        self.assertEqual(0o600, resolved.stat().st_mode & 0o777)
+        self.assertFalse((self.root / publisher.APK_PATH).exists())
+
+    def test_final_chunk_may_be_full_or_single_byte(self):
+        for final_size in (1, publisher.APK_CHUNK_BYTES):
+            with self.subTest(final_size=final_size):
+                self.make_chunks([b'A' * publisher.APK_CHUNK_BYTES, b'Z' * final_size])
+                value = publisher.metadata(self.root)
+                resolved = publisher.resolve_apk(self.root, value, self.work)
+                self.assertEqual(self.payload, resolved.read_bytes())
+                resolved.unlink()
+
+    def test_missing_part_is_refused(self):
+        self.make_chunks()
+        (self.parts / '0001.part').unlink()
+        with self.assertRaisesRegex(publisher.Refusal, 'exactly the declared parts'):
+            publisher.metadata(self.root)
+
+    def test_extra_part_or_directory_is_refused(self):
+        for directory in (False, True):
+            with self.subTest(directory=directory):
+                self.make_chunks()
+                extra = self.parts / '0002.part'
+                extra.mkdir() if directory else extra.write_bytes(b'extra')
+                with self.assertRaisesRegex(publisher.Refusal, 'exactly the declared parts'):
+                    publisher.metadata(self.root)
+                extra.rmdir() if directory else extra.unlink()
+
+    def test_corrupt_part_is_refused_and_partial_output_is_removed(self):
+        self.make_chunks()
+        value = publisher.metadata(self.root)
+        (self.parts / '0001.part').write_bytes(b'changed chunk')
+        with self.assertRaisesRegex(publisher.Refusal, 'chunk digest mismatch'):
+            publisher.resolve_apk(self.root, value, self.work)
+        self.assert_no_reassembled_apk()
+
+    def test_reordered_chunk_hashes_are_refused(self):
+        self.make_chunks()
+        self.value['apk_chunks'].reverse()
+        self.write_metadata()
+        value = publisher.metadata(self.root)
+        with self.assertRaisesRegex(publisher.Refusal, 'chunk digest mismatch'):
+            publisher.resolve_apk(self.root, value, self.work)
+        self.assert_no_reassembled_apk()
+
+    def test_global_apk_hash_is_required_in_addition_to_chunk_hashes(self):
+        self.make_chunks()
+        self.value['apk_sha256'] = '0' * 64
+        self.write_metadata()
+        value = publisher.metadata(self.root)
+        with self.assertRaisesRegex(publisher.Refusal, 'Reassembled APK digest mismatch'):
+            publisher.resolve_apk(self.root, value, self.work)
+        self.assert_no_reassembled_apk()
+
+    def test_part_leaf_symlink_is_refused_even_inside_checkout(self):
+        self.make_chunks()
+        target = self.upload / 'retained.part'
+        target.write_bytes((self.parts / '0001.part').read_bytes())
+        (self.parts / '0001.part').unlink()
+        (self.parts / '0001.part').symlink_to(target)
+        with self.assertRaisesRegex(publisher.Refusal, 'symlink'):
+            publisher.metadata(self.root)
+
+    def test_part_directory_symlink_is_refused(self):
+        self.make_chunks()
+        target = self.work / 'relocated-parts'
+        self.parts.rename(target)
+        self.parts.symlink_to(target, target_is_directory=True)
+        with self.assertRaisesRegex(publisher.Refusal, 'directory is missing or invalid'):
+            publisher.metadata(self.root)
+
+    def test_metadata_or_notes_symlink_is_refused(self):
+        for relative in (publisher.METADATA_PATH, publisher.NOTES_PATH):
+            with self.subTest(relative=relative):
+                original = self.root / relative
+                target = self.work / original.name
+                original.rename(target)
+                original.symlink_to(target)
+                with self.assertRaisesRegex(publisher.Refusal, 'symlink'):
+                    publisher.metadata(self.root)
+                original.unlink()
+                target.rename(original)
+
+    def test_whole_apk_and_parts_are_mutually_exclusive(self):
+        parts = self.root / publisher.APK_PARTS_DIRECTORY
+        parts.mkdir()
+        with self.assertRaisesRegex(publisher.Refusal, 'Whole APK mode'):
+            publisher.metadata(self.root)
+        self.make_chunks()
+        (self.root / publisher.APK_PATH).write_bytes(self.payload)
+        with self.assertRaisesRegex(publisher.Refusal, 'Chunked APK mode'):
+            publisher.metadata(self.root)
+
+    def test_chunk_schema_rejects_invalid_type_count_or_digest(self):
+        digest = 'a' * 64
+        invalid = (None, digest, {}, [], [digest] * 513, [1], ['A' * 64], ['a' * 63], [digest, 'https://example.invalid'])
+        for chunks in invalid:
+            with self.subTest(chunks_type=type(chunks).__name__, count=len(chunks) if isinstance(chunks, list) else None):
+                self.value['apk_chunks'] = chunks
+                self.write_metadata()
+                with self.assertRaisesRegex(publisher.Refusal, 'chunk digest list'):
+                    publisher.metadata(self.root)
+        self.assertEqual([digest] * 512, publisher.chunk_digests({'apk_chunks': [digest] * 512}))
+
+    def test_fixed_metadata_schema_rejects_unknown_fields_and_paths(self):
+        for field, value in (('command', 'never executed'), ('apk_file', '../other.apk'),
+                             ('notes_file', 'https://example.invalid'), ('source_sha', True)):
+            with self.subTest(field=field):
+                original = deepcopy(self.value)
+                self.value[field] = value
+                self.write_metadata()
+                with self.assertRaises(publisher.Refusal):
+                    publisher.metadata(self.root)
+                self.value = original
+
+    def test_metadata_size_limit_is_64_kib_in_both_modes(self):
+        for chunks in (False, True):
+            with self.subTest(chunks=chunks):
+                if chunks:
+                    self.make_chunks()
+                encoded = json.dumps(self.value, ensure_ascii=False).encode('utf-8')
+                path = self.root / publisher.METADATA_PATH
+                path.write_bytes(encoded + b' ' * (publisher.MAX_METADATA_BYTES - len(encoded)))
+                self.assertEqual(self.value, publisher.metadata(self.root))
+                with path.open('ab') as stream:
+                    stream.write(b' ')
+                with self.assertRaisesRegex(publisher.Refusal, 'metadata is missing or invalid'):
+                    publisher.metadata(self.root)
+
+    def test_zero_oversized_or_short_nonfinal_chunks_are_refused(self):
+        for sizes in ((0,), (publisher.APK_CHUNK_BYTES + 1,), (5, 1), (publisher.APK_CHUNK_BYTES, 0)):
+            with self.subTest(sizes=sizes):
+                self.make_chunks([b'A' * size for size in sizes])
+                with self.assertRaisesRegex(publisher.Refusal, 'chunk size'):
+                    publisher.metadata(self.root)
+
+    def test_total_size_limit_is_enforced_during_metadata_and_reassembly(self):
+        self.make_chunks()
+        with patch.object(publisher, 'MAX_BINARY_BYTES', publisher.APK_CHUNK_BYTES):
+            with self.assertRaisesRegex(publisher.Refusal, 'verification limit'):
+                publisher.metadata(self.root)
+            with self.assertRaisesRegex(publisher.Refusal, 'verification limit'):
+                publisher.resolve_apk(self.root, self.value, self.work)
+        self.assert_no_reassembled_apk()
+
+    def test_reassembly_inside_checkout_or_over_existing_output_is_refused(self):
+        self.make_chunks()
+        value = publisher.metadata(self.root)
+        with self.assertRaisesRegex(publisher.Refusal, 'outside the checkout'):
+            publisher.resolve_apk(self.root, value, self.root)
+        output = self.work / Path(publisher.APK_PATH).name
+        output.write_bytes(b'previous verified output')
+        with self.assertRaises(FileExistsError):
+            publisher.resolve_apk(self.root, value, self.work)
+        self.assertEqual(b'previous verified output', output.read_bytes())
+
+    def test_upload_commit_requires_exact_part_set_and_sole_source_parent(self):
+        self.make_chunks()
+        expected = publisher.upload_payload_paths(self.value)
+        for paths in (expected[:-1], [*expected, publisher.APK_PATH], [*expected, 'unrelated.txt']):
+            with self.subTest(paths=paths):
+                with self.assertRaisesRegex(publisher.Refusal, 'exact signed APK payload'):
+                    self.git_verification(paths=paths)
+        for parents in (OLD_HEAD, SOURCE + ' ' + OLD_HEAD):
+            with self.subTest(parents=parents):
+                with self.assertRaisesRegex(publisher.Refusal, 'sole parent'):
+                    self.git_verification(parents=parents)
+        with self.assertRaisesRegex(publisher.Refusal, 'uncommitted changes'):
+            self.git_verification(status='?? extra.txt')
+        with self.assertRaisesRegex(publisher.Refusal, 'must not contain release upload payloads'):
+            self.git_verification(existing_source_payload='040000 tree abc\trelease-upload')
+
+    def invoke_main(self, github_factory, verify_signature, compare_artifact, publish=None):
+        environment = {
+            'GITHUB_REPOSITORY': publisher.REPOSITORY, 'GITHUB_EVENT_NAME': 'push',
+            'GITHUB_REF': 'refs/heads/' + publisher.BRANCH, 'GITHUB_SHA': NEW_HEAD,
+            'GITHUB_TOKEN': 'synthetic-token-never-sent', 'GITHUB_STEP_SUMMARY': '',
+        }
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(publisher.os.environ, environment))
+            stack.enter_context(patch.object(publisher, '__file__', str(self.root / 'tools/publish-verified-release.py')))
+            stack.enter_context(patch.object(publisher.Path, 'cwd', return_value=self.root))
+            stack.enter_context(patch.object(publisher, 'verify_upload_commit'))
+            stack.enter_context(patch.object(publisher, 'GitHub', side_effect=github_factory))
+            stack.enter_context(patch.object(publisher, 'verify_signed_apk', side_effect=verify_signature))
+            stack.enter_context(patch.object(publisher, 'compare_ci_artifact', side_effect=compare_artifact))
+            stack.enter_context(patch.object(publisher, 'archive_merged_branches', return_value=[]))
+            if publish is not None:
+                stack.enter_context(patch.object(publisher, 'publish', side_effect=publish))
+            stack.enter_context(redirect_stdout(io.StringIO()))
+            publisher.main()
+
+    def test_main_refuses_corrupt_chunk_before_github_or_signature_work(self):
+        self.make_chunks()
+        (self.parts / '0000.part').write_bytes(b'Z' * publisher.APK_CHUNK_BYTES)
+        with self.assertRaisesRegex(publisher.Refusal, 'chunk digest mismatch'):
+            self.invoke_main(
+                lambda *_: self.fail('GitHub was created before chunk verification'),
+                lambda *_: self.fail('Signature work was reached for corrupt chunks'),
+                lambda *_: self.fail('CI comparison was reached for corrupt chunks'))
+
+    def test_main_refuses_signature_failure_before_github_or_publication(self):
+        self.make_chunks()
+        def refused_signature(apk, value):
+            self.assertEqual(self.payload, apk.read_bytes())
+            self.assertFalse(apk.resolve().is_relative_to(self.root))
+            raise publisher.Refusal('Synthetic signature refusal')
+        with self.assertRaisesRegex(publisher.Refusal, 'Synthetic signature refusal'):
+            self.invoke_main(
+                lambda *_: self.fail('GitHub was created before signature verification'),
+                refused_signature, lambda *_: self.fail('CI comparison preceded signature verification'))
+
+    def test_main_refuses_ci_payload_failure_before_any_publication_mutation(self):
+        self.make_chunks()
+        github = PublicationGitHub()
+        def refused_comparison(*_):
+            self.assertEqual([], github.mutations)
+            raise publisher.Refusal('Synthetic CI payload refusal')
+        with self.assertRaisesRegex(publisher.Refusal, 'Synthetic CI payload refusal'):
+            self.invoke_main(lambda *_: github, lambda *_: None, refused_comparison)
+        self.assertEqual([], github.mutations)
+
+    def test_main_verifies_same_reassembled_file_then_uploads_only_apk_and_sums(self):
+        self.make_chunks()
+        github = PublicationGitHub()
+        events = []
+        original_api = github.api
+        original_publish = publisher.publish
+        def cleanup_aware_api(path, method='GET', data=None, expected=(200,), absent=False):
+            if method == 'DELETE' and path == publisher.PREFIX + '/git/refs/heads/' + publisher.BRANCH:
+                github.mutations.append((method, path, None))
+                return None
+            return original_api(path, method, data, expected, absent)
+        github.api = cleanup_aware_api
+        def signature(apk, value):
+            self.assertEqual(self.value, value)
+            self.assertEqual(self.payload, apk.read_bytes())
+            events.append(('signature', apk))
+        def comparison(client, ci_run, source, apk, work):
+            self.assertIs(github, client)
+            self.assertEqual(SOURCE, source)
+            self.assertEqual([], github.mutations)
+            self.assertEqual(events[0][1], apk)
+            events.append(('payload', apk))
+        def checked_publication(root, client, value, work, ci_run, apk):
+            self.assertEqual(['signature', 'payload'], [event[0] for event in events])
+            self.assertEqual(events[0][1], apk)
+            self.assertFalse(apk.resolve().is_relative_to(self.root))
+            events.append(('publication', apk))
+            return original_publish(root, client, value, work, ci_run, apk)
+        self.invoke_main(lambda *_: github, signature, comparison, checked_publication)
+        self.assertEqual(['signature', 'payload', 'publication'], [event[0] for event in events])
+        self.assertFalse(events[0][1].exists(), 'Temporary reassembled APK must be removed after publication')
+        uploaded = [call[1] for call in github.calls if call[0] == 'UPLOAD']
+        self.assertEqual([Path(publisher.APK_PATH).name, 'SHA256SUMS'], uploaded)
+        self.assertEqual(self.payload, github.assets[30])
+        self.assertFalse((self.root / publisher.APK_PATH).exists())
 
 
 class PublicationGitHub:
@@ -252,6 +589,26 @@ class PublishBehaviorTests(unittest.TestCase):
         self.assertTrue(self.github.draft['prerelease'])
         self.assertEqual({'draft': False, 'prerelease': True, 'make_latest': 'false'},
                          self.github.mutations[-1][2], 'The stable release must remain latest')
+
+    def test_optional_verified_apk_path_is_used_without_whole_apk_in_checkout(self):
+        original = self.root / publisher.APK_PATH
+        verified = self.work / original.name
+        original.rename(verified)
+        with redirect_stdout(io.StringIO()):
+            result = publisher.publish(self.root, self.github, self.value, self.work, self.github.ci_run, verified)
+        self.assertEqual(PUBLIC_URL, result)
+        self.assertEqual(verified.read_bytes(), self.github.assets[30])
+        self.assertFalse(original.exists())
+
+    def test_optional_apk_with_changed_bytes_or_name_causes_no_mutation(self):
+        for wrong_name in (False, True):
+            with self.subTest(wrong_name=wrong_name):
+                verified = self.work / ('wrong.apk' if wrong_name else Path(publisher.APK_PATH).name)
+                verified.write_bytes((self.root / publisher.APK_PATH).read_bytes() if wrong_name else b'changed')
+                with self.assertRaisesRegex(publisher.Refusal, 'publication APK digest, name or size'):
+                    publisher.publish(self.root, self.github, self.value, self.work, self.github.ci_run, verified)
+                self.assertEqual([], self.github.calls)
+                self.assertEqual([], self.github.mutations)
 
     def test_changed_asset_bytes_leave_draft_private(self):
         self.github.corrupt_asset = True

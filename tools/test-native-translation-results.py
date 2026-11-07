@@ -20,6 +20,24 @@ def chat_evidence(fixtures=14, families=3, literal=3, generations=55, rejected=1
 
 
 class NativeTranslationResultsTest(unittest.TestCase):
+    def test_complete_optimization_evidence_keeps_quantized_deltas_separate(self):
+        valid = ('Moving two-turn window: requests=25, post-warmup workspace growths=0, workspace bytes=4352, '
+                 'cache resets=25, cached-vs-fresh maximum error 0, elapsed including load us=12345.\n'
+                 'Quantized cache Llama: requests=25, cached-vs-fresh maximum error 0, Q8-vs-F16 maximum error 0.001, synthetic output tokens equal=1.\n'
+                 'Quantized cache Gemma-SWA: requests=25, cached-vs-fresh maximum error 1e-6, Q8-vs-F16 maximum error 0.002, synthetic output tokens equal=1.\n')
+        result = runner.parse_optimization_evidence(valid)
+        self.assertEqual(0, result['movingWindow']['workspaceGrowthsAfterWarmup'])
+        self.assertEqual(0.002, result['quantizedCache']['Gemma-SWA']['q8VsF16MaxLogitError'])
+        self.assertFalse(result['phoneSpeedupMeasured'])
+        self.assertFalse(result['linguisticEquivalenceEstablished'])
+        for invalid in ['', valid + valid, valid.replace('requests=25', 'requests=24', 1),
+                        valid.replace('growths=0', 'growths=1'), valid.replace('bytes=4352', 'bytes=1024'),
+                        valid.replace('resets=25', 'resets=0'), valid.replace('resets=25', 'resets=1'), valid.replace('error 0,', 'error 0.00002,', 1),
+                        valid.replace('error 0.001,', 'error 1e999,'),
+                        valid.replace('Gemma-SWA', 'Llama'), valid.replace('equal=1', 'equal=0')]:
+            with self.subTest(invalid=invalid), self.assertRaises(RuntimeError):
+                runner.parse_optimization_evidence(invalid)
+
     def test_compact_swa_requires_wrap_recompute_short_reuse_and_bounded_finite_errors(self):
         valid = ('Compact SWA: requests=6, safe_recompute=1, short_reuse=1, '
                  'cached-vs-fresh maximum error 0, compact-vs-full maximum error 2.69338e-05, '

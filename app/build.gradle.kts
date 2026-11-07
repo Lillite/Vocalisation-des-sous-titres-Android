@@ -78,6 +78,17 @@ val generateTranslationChatTestModel = tasks.register<Exec>("generateTranslation
     commandLine("python3", generator.absolutePath, translationChatTestModel.get().asFile.absolutePath,
         "--terminating", "--roundtrip", "--chat-template", "controls")
 }
+// Dedicated synthetic head-size-32 fixture for quantized K/V JNI tests only.
+val translationQ8TestModel = translationTestAssets.map { it.file("translation_q8_test_model.gguf") }
+val generateTranslationQ8TestModel = tasks.register<Exec>("generateTranslationQ8TestModel") {
+    val generator = file("src/main/cpp/tests/make_tiny_gguf.py")
+    inputs.file(generator)
+    inputs.property("cacheQ8", true)
+    outputs.file(translationQ8TestModel)
+    doFirst { translationQ8TestModel.get().asFile.parentFile.mkdirs() }
+    commandLine("python3", generator.absolutePath, translationQ8TestModel.get().asFile.absolutePath,
+        "--terminating", "--roundtrip", "--cache-q8")
+}
 android {
     namespace = "fr.soustitresvoix.player"
     compileSdk = 36
@@ -87,8 +98,8 @@ android {
         applicationId = "fr.soustitresvoix.player.translation"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
-        versionName = "0.5.12-runtime"
+        versionCode = 20
+        versionName = "0.5.13-memory"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild { cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" } }
@@ -141,6 +152,7 @@ tasks.configureEach {
     if (name.contains("AndroidTest")) {
         dependsOn(generateTranslationTestModel)
         dependsOn(generateTranslationChatTestModel)
+        dependsOn(generateTranslationQ8TestModel)
     }
 }
 kotlin { jvmToolchain(17) }

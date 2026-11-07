@@ -30,7 +30,18 @@ data class LocalTranslationPerformance(
     val compactSwa: Boolean? = null,
     val requestedGpuLayers: Int? = null,
     val actualGpuLayers: Int? = null,
-    val attemptReport: String = ""
+    val attemptReport: String = "",
+    val processId: Int = 0,
+    val progress: LocalGgufProgress? = null,
+    val cacheTypeK: String = "",
+    val cacheTypeV: String = "",
+    val flashAttentionPolicy: String = "",
+    val startResidentBytes: Long = -1,
+    val prefillResidentBytes: Long = -1,
+    val cacheResetReason: String = "",
+    val cacheResets: Long = 0,
+    val workspaceGrowths: Long = 0,
+    val workspaceBytes: Long = 0
 ) {
     /** Throughput of the last native call, not an aggregate of split/retried fragments. */
     val tokensPerSecond: Double get() = if (generationMs > 0) generatedTokens * 1000.0 / generationMs else 0.0
@@ -68,6 +79,27 @@ data class LocalTranslationPerformance(
             if (generationMs > 0) { append(" ; "); append(String.format(Locale.FRANCE, "%.2f tokens/s", tokensPerSecond)) }
             append(".\nTemps écoulé depuis le début de l’occurrence, essais compris : "); append(endToEndMs); append(" ms")
         }
+        if (cacheTypeK.isNotEmpty() && cacheTypeV.isNotEmpty()) {
+            append("\nTypes du cache K/V : "); append(cacheTypeK); append('/'); append(cacheTypeV)
+            if (flashAttentionPolicy.isNotEmpty()) {
+                append(" ; politique Flash Attention : "); append(flashAttentionPolicy)
+                append(" (la politique demandée ne prouve pas son exécution effective)")
+            }
+        }
+        if (phase == "generation" && cacheResetReason.isNotEmpty()) {
+            append("\nÉtat du préfixe : "); append(cacheResetReason)
+            append(" ; réinitialisations cumulées : "); append(cacheResets)
+            append(". Buffers texte/tokens réutilisables : "); append(workspaceBytes)
+            append(" octets ; agrandissements cumulés : "); append(workspaceGrowths)
+            append(". Ces buffers ne représentent pas toute la mémoire du moteur.")
+        }
+        if (phase == "generation" && startResidentBytes >= 0 && prefillResidentBytes >= 0) {
+            append("\nRSS au début de l’appel : ")
+            append(String.format(Locale.FRANCE, "%.2f Gio", startResidentBytes / 1_073_741_824.0))
+            append(" ; après traitement de l’entrée : ")
+            append(String.format(Locale.FRANCE, "%.2f Gio", prefillResidentBytes / 1_073_741_824.0))
+        }
+        progress?.let { append('\n'); append(it.render()) }
         if (currentRssBytes > 0) {
             append(".\nMémoire résidente du processus : ")
             append(String.format(Locale.FRANCE, "%.2f Gio", currentRssBytes / 1_073_741_824.0))

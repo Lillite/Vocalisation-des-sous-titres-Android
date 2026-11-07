@@ -61,19 +61,22 @@ internal class LocalGgufModelControls(
     private var profileSpinner: Spinner? = null
     private var storedLoadSettings = runCatching {
         LocalGgufLoadSettings(preferences.getInt("local-gpu-layers", -1), preferences.getInt("local-batch-tokens", 512),
-            preferences.getInt("local-micro-batch-tokens", 128), preferences.getBoolean("local-compact-swa", false))
+            preferences.getInt("local-micro-batch-tokens", 128), preferences.getBoolean("local-compact-swa", false),
+            preferences.getString("local-kv-cache-type", "F16")?.takeIf { it == "F16" || it == "Q8_0" } ?: "F16")
             .also { it.validate() }
     }.getOrDefault(LocalGgufLoadSettings())
     private var gpuLayersField: EditText? = null
     private var batchField: EditText? = null
     private var microBatchField: EditText? = null
     private var compactSwaChoice: CheckBox? = null
+    private var quantizedKvChoice: CheckBox? = null
     private val loadingControls = mutableListOf<View>()
     val loadSettings: LocalGgufLoadSettings get() {
         fun value(field: EditText?, fallback: Int): Int = if (field == null) fallback else field.text.toString().toIntOrNull() ?: 0
         return LocalGgufLoadSettings(value(gpuLayersField, storedLoadSettings.gpuLayers),
             value(batchField, storedLoadSettings.batchTokens), value(microBatchField, storedLoadSettings.microBatchTokens),
-            compactSwaChoice?.isChecked ?: storedLoadSettings.compactSwa)
+            compactSwaChoice?.isChecked ?: storedLoadSettings.compactSwa,
+            quantizedKvChoice?.let { if (it.isChecked) "Q8_0" else "F16" } ?: storedLoadSettings.kvCacheType)
     }
 
     private fun dp(value: Int) = (value * activity.resources.displayMetrics.density).toInt()
@@ -146,6 +149,14 @@ internal class LocalGgufModelControls(
                 textSize = 18f; minimumHeight = dp(64); minHeight = dp(64); isChecked = storedLoadSettings.compactSwa
                 isSingleLine = false; maxLines = Int.MAX_VALUE; ellipsize = null
             }.also { addView(it); loadingControls.add(it) }
+            quantizedKvChoice = CheckBox(activity).apply {
+                id = View.generateViewId()
+                text = "Cache d’attention K/V en 8 bits — expérimental ; F16 si désactivé"
+                textSize = 18f; minimumHeight = dp(64); minHeight = dp(64)
+                isChecked = storedLoadSettings.kvCacheType == "Q8_0"
+                isSingleLine = false; maxLines = Int.MAX_VALUE; ellipsize = null
+            }.also { addView(it); loadingControls.add(it) }
+            addView(label("Le cache K/V reste en F16 par défaut. L’option 8 bits conserve les poids du modèle mais réduit la précision des états d’attention ; sa compatibilité et la fidélité de ses traductions doivent être comparées. Un moteur incompatible doit signaler une erreur, sans changer silencieusement cette précision."))
             fun preset(title: String, batch: Int, micro: Int) {
                 action(title) {
                     batchField?.setText(batch.toString()); microBatchField?.setText(micro.toString())
@@ -212,7 +223,8 @@ internal class LocalGgufModelControls(
             .putString("local-context-policy", selectedContextPolicy.name)
             .putInt("local-gpu-layers", selectedLoadSettings.gpuLayers).putInt("local-batch-tokens", selectedLoadSettings.batchTokens)
             .putInt("local-micro-batch-tokens", selectedLoadSettings.microBatchTokens)
-            .putBoolean("local-compact-swa", selectedLoadSettings.compactSwa).apply()
+            .putBoolean("local-compact-swa", selectedLoadSettings.compactSwa)
+            .putString("local-kv-cache-type", selectedLoadSettings.kvCacheType).apply()
     }
     fun setActive(value: Boolean) {
         active = value
@@ -308,7 +320,8 @@ internal class LocalGgufModelControls(
         worker.shutdownNow(); main.removeCallbacksAndMessages(null)
         status = null; chooseButton = null; existingButton = null; cancelButton = null
         executionSpinner = null; profileSpinner = null; contextPolicySpinner = null
-        gpuLayersField = null; batchField = null; microBatchField = null; compactSwaChoice = null; loadingControls.clear()
+        gpuLayersField = null; batchField = null; microBatchField = null; compactSwaChoice = null; quantizedKvChoice = null
+        loadingControls.clear()
     }
     companion object {
         private val CONTEXT_POLICIES = LocalGgufContextPolicy.entries

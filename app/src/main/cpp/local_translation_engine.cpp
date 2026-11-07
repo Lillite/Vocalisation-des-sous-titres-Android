@@ -115,6 +115,7 @@ long long resident_bytes() {
         return static_cast<long long>(resident_pages * static_cast<unsigned long long>(page_size));
     return -1;
 }
+long long resident_sample() noexcept { try { return resident_bytes(); } catch (...) { return -1; } }
 long long available_ram_bytes() {
     std::ifstream stream("/proc/meminfo");
     std::string line;
@@ -128,10 +129,13 @@ long long file_bytes(const std::string & path) {
     struct stat status{};
     return stat(path.c_str(), &status) == 0 && status.st_size > 0 ? status.st_size : -1;
 }
-void measure_memory(Response & value) {
+void measure_memory(Response & value) noexcept {
+    // Diagnostics must still return a useful MEMORY failure under allocation
+    // pressure. iostream construction can itself allocate; each missing sample
+    // stays explicitly unknown instead of hiding the original failure.
     value.peak_rss_bytes = peak_rss();
-    value.resident_bytes = resident_bytes();
-    value.available_ram_bytes = available_ram_bytes();
+    value.resident_bytes = resident_sample();
+    try { value.available_ram_bytes = available_ram_bytes(); } catch (...) { value.available_ram_bytes = -1; }
 }
 ggml_backend_dev_t opencl_device() {
     for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
@@ -151,6 +155,13 @@ struct Session::State {
     // Exact tokens actually evaluated in this context, including successful
     // generated tokens. An EOS sampled but not decoded never belongs here.
     std::vector<llama_token> decoded_tokens;
+    // The operation mutex serializes all requests. Two bounded token vectors
+    // rotate ownership at commit, keeping both their allocations between cues.
+    std::vector<llama_token> input_tokens;
+    std::vector<char> token_piece;
+    Sampler sampler{nullptr, llama_sampler_free};
+    long long workspace_growths = 0;
+    long long cache_resets = 0;
     Response info;
     bool gpu_selected = false;
     // The embedded source is only used by llama.cpp's bounded set of builtin
@@ -158,6 +169,19 @@ struct Session::State {
     std::string chat_template;
     std::string chat_bos;
     std::vector<std::string> chat_controls;
+    void prepare_workspace(size_t tokens) {
+        if (decoded_tokens.capacity() < tokens) { decoded_tokens.reserve(tokens); ++workspace_growths; }
+        if (input_tokens.capacity() < tokens) { input_tokens.reserve(tokens); ++workspace_growths; }
+        if (token_piece.capacity() < 256) { token_piece.reserve(256); ++workspace_growths; }
+        token_piece.resize(256);
+        sampler = greedy_sampler();
+        if (!sampler) throw std::bad_alloc();
+    }
+    void measure_workspace(Response & result) const {
+        result.workspace_growths = workspace_growths;
+        result.workspace_bytes = static_cast<long long>((decoded_tokens.capacity() + input_tokens.capacity()) * sizeof(llama_token) + token_piece.capacity());
+        result.cache_resets = cache_resets;
+    }
     void clear_chat() {
         chat_template.clear(); chat_bos.clear(); chat_controls.clear();
     }
@@ -241,9 +265,23 @@ struct Session::State {
     }
     void clear_cache() {
         decoded_tokens.clear();
-        if (context) llama_memory_clear(llama_get_memory(context.get()), true);
+        if (context) {
+            // Invalidating sequence positions suffices: the next request
+            // evaluates every needed position before it can be attended to.
+            // Zeroing the physical KV buffers here wastes memory bandwidth
+            // (and GPU fills) whenever the two-turn prefix window slides.
+            llama_memory_clear(llama_get_memory(context.get()), false);
+            ++cache_resets;
+        }
     }
-    void clear_model() { clear_cache(); clear_chat(); context.reset(); model.reset(); }
+    void clear_model() {
+        // Never clear/zero the attention allocation immediately before
+        // freeing it. The context owns all of its sequence state and buffers.
+        context.reset(); model.reset(); sampler.reset(); clear_chat();
+        std::vector<llama_token>().swap(decoded_tokens);
+        std::vector<llama_token>().swap(input_tokens);
+        std::vector<char>().swap(token_piece);
+    }
 };
 Session::Session() : state_(std::make_unique<State>()) { }
 Session::~Session() { cancel(); std::lock_guard<std::mutex> lock(operation_); state_.reset(); }
@@ -258,6 +296,11 @@ std::string Response::json() const {
         << ",\"processId\":" << process_id << ",\"contextTokens\":" << context_tokens
         << ",\"batchTokens\":" << batch_tokens << ",\"microBatchTokens\":" << micro_batch_tokens
         << ",\"compactSwa\":" << (compact_swa ? "true" : "false") << ",\"promptTokens\":" << prompt_tokens
+        << ",\"cacheTypeK\":" << quote(cache_type_k) << ",\"cacheTypeV\":" << quote(cache_type_v)
+        << ",\"flashAttentionPolicy\":" << quote(flash_attention_policy)
+        << ",\"cacheResetReason\":" << quote(cache_reset_reason) << ",\"cacheResets\":" << cache_resets
+        << ",\"workspaceGrowths\":" << workspace_growths << ",\"workspaceBytes\":" << workspace_bytes
+        << ",\"startResidentBytes\":" << start_resident_bytes << ",\"prefillResidentBytes\":" << prefill_resident_bytes
         << ",\"generatedTokens\":" << generated_tokens << ",\"backend\":" << quote(backend) << ",\"device\":" << quote(device)
         << ",\"openClTransport\":" << quote(opencl_transport)
         << ",\"requestedMode\":" << quote(requested_mode) << ",\"fallbackReason\":" << quote(fallback_reason)
@@ -289,7 +332,8 @@ std::string Response::json() const {
 }
 Response Session::open(const std::string & path, int threads, int context_tokens, const std::string & execution,
         int gpu_layers, const std::string & cache_path, int batch_tokens, int micro_batch_tokens,
-        bool compact_swa, const std::function<void(const char *, int)> & on_progress) {
+        bool compact_swa, const std::function<void(const char *, int)> & on_progress,
+        const std::string & kv_cache_type) {
     std::lock_guard<std::mutex> lock(operation_);
     const auto open_start = Clock::now();
     Response result;
@@ -297,6 +341,12 @@ Response Session::open(const std::string & path, int threads, int context_tokens
     result.requested_mode = execution;
     result.requested_gpu_layers = execution == "CPU" ? 0 : gpu_layers;
     result.compact_swa = compact_swa;
+    if (kv_cache_type == "Q8_0") {
+        result.cache_type_k = result.cache_type_v = "Q8_0";
+        // A quantized V cache requires Flash Attention. Explicit selection
+        // either creates this exact context or fails, never silently reverts.
+        result.flash_attention_policy = "ENABLED";
+    }
     OpenProgress report{cancelled_, on_progress};
     if (cancelled_.load()) { result.code = "CANCELLED"; return result; }
     if (state_->model || context_tokens < 128 || context_tokens > 2048 || threads < 1 || threads > 8 || path.empty() ||
@@ -304,7 +354,9 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         (execution != "CPU" && execution != "AUTO" && execution != "OPENCL" && execution != "VULKAN") ||
         gpu_layers < -1 || gpu_layers > 1024 || (execution != "CPU" && gpu_layers == 0) ||
         batch_tokens < 16 || batch_tokens > 512 || micro_batch_tokens < 16 || micro_batch_tokens > 128 ||
-        micro_batch_tokens > batch_tokens) { result.code = "CONTEXT"; return result; }
+        micro_batch_tokens > batch_tokens || (kv_cache_type != "F16" && kv_cache_type != "Q8_0")) {
+        result.code = "CONTEXT"; return result;
+    }
     state_->lease = std::make_unique<subtitle_native::ModelLease>();
     if (!*state_->lease) { state_->lease.reset(); result.code = "BUSY"; return result; }
     auto release_on_error = [&]() { state_->clear_model(); state_->lease.reset(); };
@@ -384,6 +436,10 @@ Response Session::open(const std::string & path, int threads, int context_tokens
             auto cp = llama_context_default_params();
             cp.n_ctx = context_tokens; cp.n_batch = std::min(context_tokens, batch_tokens); cp.n_ubatch = micro_batch_tokens;
             cp.swa_full = !compact_swa;
+            if (kv_cache_type == "Q8_0") {
+                cp.type_k = GGML_TYPE_Q8_0; cp.type_v = GGML_TYPE_Q8_0;
+                cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+            }
             cp.n_threads = threads; cp.n_threads_batch = threads; cp.offload_kqv = use_gpu; cp.op_offload = use_gpu;
             cp.abort_callback = abort; cp.abort_callback_data = &cancelled_;
             phase = "CONTEXT_INIT";
@@ -417,6 +473,8 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         result.context_tokens = llama_n_ctx(state_->context.get());
         result.batch_tokens = llama_n_batch(state_->context.get());
         result.micro_batch_tokens = llama_n_ubatch(state_->context.get());
+        state_->prepare_workspace(static_cast<size_t>(result.context_tokens));
+        state_->measure_workspace(result);
         phase = "CHAT_TEMPLATE";
         report.notify(phase);
         state_->prepare_chat(cancelled_);
@@ -437,18 +495,26 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         release_on_error(); result.code = "MODEL"; return result;
     }
 }
-Response Session::generate(const std::string & prompt, int output_tokens, bool add_special, bool use_model_template) {
+Response Session::generate(const std::string & prompt, int output_tokens, bool add_special, bool use_model_template,
+        const std::function<void(const char *, int)> & on_progress) {
     std::lock_guard<std::mutex> lock(operation_);
     const auto generate_start = Clock::now();
     Response result = state_->info;
     result.code = "MODEL";
     result.process_id = static_cast<int>(getpid());
+    result.start_resident_bytes = resident_sample();
+    OpenProgress report{cancelled_, on_progress};
     auto failed = [&](const char * code, const char * reason = "error") {
         const std::string failure_code = code;
         if (failure_code == "MEMORY") diagnose(result, "GENERATION", "ALLOCATION_FAILED", generate_start);
         else if (failure_code == "RESPONSE") diagnose(result, "GENERATION", "UNEXPECTED_FAILURE", generate_start);
         result.code = code; result.stop_reason = reason; result.output.clear();
-        state_->clear_cache(); measure_memory(result); return result;
+        // decode may have queued GPU work before returning an error, or a
+        // cancellation can arrive between successful prefill batches. Drain it
+        // before invalidating/reusing sequence state; clear(false) is no barrier.
+        if (state_->context) llama_synchronize(state_->context.get());
+        state_->clear_cache(); result.cache_reset_reason = "FAILURE";
+        state_->measure_workspace(result); measure_memory(result); return result;
     };
     if (cancelled_.load()) return failed("CANCELLED", "cancelled");
     if (!state_->context || !state_->model) return failed("MODEL");
@@ -462,39 +528,54 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
     } else if (prompt.empty() || prompt.size() > 65536 || !utf8(prompt)) return failed("INPUT_TOO_LONG");
     const auto & input = use_model_template ? rendered : prompt;
     try {
+        report.notify("TOKENIZE");
         const auto * vocab = llama_model_get_vocab(state_->model.get());
-        const int needed = -llama_tokenize(vocab, input.data(), static_cast<int>(input.size()), nullptr, 0, add_special, true);
-        if (needed <= 0 || needed + output_tokens >= result.context_tokens) return failed("INPUT_TOO_LONG");
-        std::vector<llama_token> tokens(static_cast<size_t>(needed));
-        const int count = llama_tokenize(vocab, input.data(), static_cast<int>(input.size()), tokens.data(), needed, add_special, true);
-        if (count <= 0 || count != needed) return failed("RESPONSE");
+        auto & tokens = state_->input_tokens;
+        // The context is a hard bound. Tokenize once into its preallocated
+        // capacity rather than repeating the whole tokenizer sizing pass.
+        tokens.resize(static_cast<size_t>(result.context_tokens));
+        const int count = llama_tokenize(vocab, input.data(), static_cast<int>(input.size()),
+            tokens.data(), result.context_tokens, add_special, true);
+        if (count <= 0 || count + output_tokens >= result.context_tokens) return failed("INPUT_TOO_LONG");
+        tokens.resize(static_cast<size_t>(count));
         result.prompt_tokens = count;
         auto memory = llama_get_memory(state_->context.get());
         size_t shared = 0;
         const auto previous_size = state_->decoded_tokens.size();
+        report.notify("CACHE_REUSE");
         // Evaluate at least one token again: cached KV entries alone do not
         // provide the final logits for this new request.
         while (shared < tokens.size() - 1 && shared < previous_size && state_->decoded_tokens[shared] == tokens[shared]) ++shared;
         // SWA/recurrent memories can have discarded earlier positions. Only the
         // actual contiguous [min,max] range from llama.cpp proves availability.
-        if (shared > 0 && (llama_memory_seq_pos_min(memory, 0) != 0 ||
-            llama_memory_seq_pos_max(memory, 0) < static_cast<llama_pos>(shared - 1) ||
-            !llama_memory_seq_rm(memory, 0, static_cast<llama_pos>(shared), -1))) shared = 0;
+        result.cache_reset_reason = previous_size == 0 ? "EMPTY" : "PREFIX_CHANGED";
+        if (shared > 0) {
+            if (llama_memory_seq_pos_min(memory, 0) != 0 ||
+                llama_memory_seq_pos_max(memory, 0) < static_cast<llama_pos>(shared - 1)) {
+                shared = 0; result.cache_reset_reason = "WINDOW_EXPIRED";
+            } else if (!llama_memory_seq_rm(memory, 0, static_cast<llama_pos>(shared), -1)) {
+                shared = 0; result.cache_reset_reason = "REMOVE_FAILED";
+            } else result.cache_reset_reason = "REUSED";
+        }
         if (shared == 0) state_->clear_cache();
         result.cached_prompt_tokens = static_cast<int>(shared);
         result.prompt_evaluated_tokens = count - result.cached_prompt_tokens;
         subtitle_native::reset_gpu_graph_observation();
         const auto prompt_start = Clock::now();
         const int batch_size = static_cast<int>(llama_n_batch(state_->context.get()));
+        report.notify("PREFILL", 0);
         for (int offset = static_cast<int>(shared); offset < count; offset += batch_size) {
             if (cancelled_.load()) return failed("CANCELLED", "cancelled");
             if (llama_decode(state_->context.get(), llama_batch_get_one(tokens.data() + offset, std::min(batch_size, count - offset))) != 0)
                 return failed(cancelled_.load() ? "CANCELLED" : "RESPONSE");
+            report.notify("PREFILL", static_cast<int>(100LL * (std::min(count, offset + batch_size) - shared) / (count - shared)));
         }
         llama_synchronize(state_->context.get());
         result.prompt_ms = elapsed(prompt_start);
-        auto sampler = greedy_sampler();
+        result.prefill_resident_bytes = resident_sample();
+        auto & sampler = state_->sampler;
         if (!sampler) return failed("RESPONSE");
+        llama_sampler_reset(sampler.get());
 #ifdef SUBTITLE_NATIVE_TESTING
         // The host smoke compares every real selection, including EOS, with
         // the previous direct sampler on the identical computed logits. This
@@ -503,8 +584,8 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
         if (!reference) return failed("RESPONSE");
 #endif
         const auto generation_start = Clock::now();
-        tokens.reserve(tokens.size() + static_cast<size_t>(output_tokens));
-        std::vector<char> piece(256);
+        auto & piece = state_->token_piece;
+        report.notify("DECODE", 0);
         result.code = "OUTPUT_LIMIT"; result.stop_reason = "token_limit";
         for (int i = 0; i <= output_tokens; ++i) {
             if (cancelled_.load()) return failed("CANCELLED", "cancelled");
@@ -516,13 +597,20 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
             if (llama_vocab_is_eog(vocab, id)) { result.code = "OK"; result.stop_reason = "end_of_generation"; break; }
             if (i == output_tokens) break;
             int length = llama_token_to_piece(vocab, id, piece.data(), static_cast<int>(piece.size()), 0, false);
-            if (length < 0 && -length <= 65536) { piece.resize(static_cast<size_t>(-length)); length = llama_token_to_piece(vocab, id, piece.data(), static_cast<int>(piece.size()), 0, false); }
+            if (length < 0 && -static_cast<long long>(length) <= 65536) {
+                const auto needed_piece = static_cast<size_t>(-static_cast<long long>(length));
+                if (piece.capacity() < needed_piece) { piece.reserve(needed_piece); ++state_->workspace_growths; }
+                piece.resize(needed_piece);
+                length = llama_token_to_piece(vocab, id, piece.data(), static_cast<int>(piece.size()), 0, false);
+            }
             if (length < 0 || result.output.size() + static_cast<size_t>(length) > 65536) return failed("OUTPUT_LIMIT", "byte_limit");
             result.output.append(piece.data(), static_cast<size_t>(length)); ++result.generated_tokens;
             auto next = id;
             if (llama_decode(state_->context.get(), llama_batch_get_one(&next, 1)) != 0)
                 return failed(cancelled_.load() ? "CANCELLED" : "RESPONSE");
             tokens.push_back(id);
+            if ((result.generated_tokens & 15) == 0)
+                report.notify("DECODE", static_cast<int>(100LL * result.generated_tokens / output_tokens));
         }
         llama_synchronize(state_->context.get());
         result.generation_ms = elapsed(generation_start);
@@ -539,8 +627,11 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
         }
         // Only a completed request publishes reusable tokens. Every failure
         // above clears both this record and the real llama.cpp memory.
-        state_->decoded_tokens = std::move(tokens);
+        state_->decoded_tokens.swap(tokens);
+        tokens.clear();
+        state_->measure_workspace(result);
         measure_memory(result);
+        report.notify("COMPLETE", 100);
         return result;
     } catch (const std::bad_alloc &) { return failed("MEMORY"); }
       catch (...) { return failed(cancelled_.load() ? "CANCELLED" : "RESPONSE"); }
