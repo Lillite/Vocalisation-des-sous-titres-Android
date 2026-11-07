@@ -54,16 +54,21 @@ class LocalSrtTranslationJob(
     }
     private class Task {
         val cancelled = AtomicBoolean(false)
+        val acceptMeasurements = AtomicBoolean(true)
+        val startedAtMs = System.currentTimeMillis()
         @Volatile var indexer: SubtitleIndexer? = null
         @Volatile var engine: TranslationEngine? = null
         @Volatile var performance: String? = null
         var reportHeader: String = ""
+        var pendingReportHeader: Boolean = true
+        var journalEntry: LocalSrtAttemptJournal.Entry? = null
     }
     private class ReplacedModelSelection : IOException()
     private val application = context.applicationContext
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private val sourceDirectory = File(application.filesDir, "local-srt-source-v1")
+    private val attemptJournal = LocalSrtAttemptJournal(File(application.filesDir, "local-srt-attempt-v1"))
     private val runner = TranslationRunner(File(application.cacheDir, "local-srt-translations-v1"),
         File(application.filesDir, "local-srt-progress-v1"), File(application.filesDir, "local-srt-results-v1"))
     @Volatile private var closed = false
@@ -84,14 +89,21 @@ class LocalSrtTranslationJob(
                 val recordExists = File(sourceDirectory, RECORD).exists() || File(sourceDirectory, "$RECORD.bak").exists()
                 val restored = readSource()
                 if (restored != null) removeOrphanSources(restored.file)
+                val attempt = restored?.let { LocalSrtAttemptJournal.sourceKey(it.file) }?.let(attemptJournal::read)
+                val recoveredReport = attempt?.render(application)
                 main.post {
                     if (!closed && sequence == ticket) {
                         source = restored
                         update(State(status = when {
+                            restored != null && attempt?.state == "RUNNING" ->
+                                "La dernière préparation a été interrompue (${attempt.done} / ${attempt.total} occurrences validées au dernier enregistrement). Consulte le diagnostic, puis relance explicitement pour reprendre."
+                            restored != null && attempt?.state == "FAILED" ->
+                                "La dernière préparation s’est arrêtée sur une erreur. Son diagnostic est conservé ; relance explicitement avec les mêmes réglages pour reprendre."
                             restored != null -> "Fichier conservé prêt. Choisis le modèle et lance ou reprends la traduction."
                             recordExists -> "Le fichier de sous-titres conservé ne peut pas être restauré. Sélectionne-le à nouveau."
                             else -> "Choisis un fichier de sous-titres, puis un modèle local."
-                        }, busy = false, sourceName = restored?.name))
+                        }, busy = false, sourceName = restored?.name,
+                            done = attempt?.done ?: 0, total = attempt?.total ?: 0, performance = recoveredReport))
                     }
                 }
             }
@@ -142,6 +154,7 @@ class LocalSrtTranslationJob(
                     require(normalized.size in 1..SubtitleImport.MAX_BYTES)
                     ensureActive(current)
                     val imported = commitSource(name, decoded.kind, decoded.charset, normalized)
+                    attemptJournal.clear()
                     // The commit is atomic. A cancellation arriving after this
                     // point cannot truthfully be reported as an undone import.
                     main.post {
@@ -175,7 +188,7 @@ class LocalSrtTranslationJob(
             update(state.copy(status = "Choisis le moteur GGUF local pour cette préparation hors ligne.")); return
         }
         val current = Task(); active = current
-        current.reportHeader = LocalGgufAttemptReport.initial(config)
+        current.reportHeader = LocalGgufAttemptReport.initial(config, current.startedAtMs)
         current.performance = current.reportHeader
         val ticket = ++sequence
         completed = null; completedExports = emptyMap(); completedReviewReport = null
@@ -190,6 +203,12 @@ class LocalSrtTranslationJob(
                 var cleanupWarning: String? = null
                 try {
                     ensureActive(current)
+                    attemptJournal.beginAttempt()
+                    LocalSrtAttemptJournal.sourceKey(selected.file)?.let { key ->
+                        current.journalEntry = LocalSrtAttemptJournal.begin(key, config, current.startedAtMs,
+                            sourceLanguage = sourceLanguage)
+                        saveAttempt(current, force = true)
+                    }
                     // A panel can retain the descriptor of a model that was
                     // replaced through another panel. Do not expose its old
                     // cached translation as if it belonged to the new model.
@@ -199,6 +218,7 @@ class LocalSrtTranslationJob(
                         selectedModel.sha256 != preparedModel.sha256) throw ReplacedModelSelection()
                     TranslationEngines.validateForRequest(config, sourceLanguage, "fr")
                     val identity = TranslationEngines.translationIdentity(config)
+                    current.journalEntry = current.journalEntry?.copy(configurationId = identity)
                     // Media3 remains the timing/parser authority, but it can
                     // skip a malformed SubRip block without marking its index
                     // truncated. Refuse a partial source before any inference.
@@ -219,9 +239,27 @@ class LocalSrtTranslationJob(
                     if (expectedOccurrences != null) SrtSourceIntegrity.checkCount(expectedOccurrences, cues.size)
                     val plan = TranslationPlan.create(cues, sourceLanguage, "fr", identity)
                     reviewPlan = plan
+                    current.journalEntry = current.journalEntry?.copy(total = plan.cues.size,
+                        updatedAtMs = System.currentTimeMillis())
+                    saveAttempt(current, force = true)
                     ensureActive(current)
                     val engine = engineFactory(config); current.engine = engine
                     (engine as? LocalTranslationPerformanceSource)?.setPerformanceListener { performance ->
+                        if (!current.acceptMeasurements.get() || current.cancelled.get() || closed)
+                            return@setPerformanceListener
+                        val previousStage = current.journalEntry?.progress?.stage
+                        current.journalEntry = current.journalEntry?.measured(performance, System.currentTimeMillis())
+                        if (performance.phase != "generation" && performance.phase != "cache") {
+                            val criticalStage = performance.progress?.stage in JOURNAL_CRITICAL_STAGES
+                            saveAttempt(current, force = criticalStage && performance.progress?.stage != previousStage ||
+                                performance.phase == "load")
+                        }
+                        // The initial pending sentence is obsolete as soon as a
+                        // stage or measurement exists, even if loading still fails.
+                        if (current.pendingReportHeader) {
+                            current.reportHeader = LocalGgufAttemptReport.initial(config, current.startedAtMs, pendingStatus = false)
+                            current.pendingReportHeader = false
+                        }
                         val rendered = current.reportHeader + "\n\n" + performance.render()
                         current.performance = rendered
                         main.post {
@@ -231,6 +269,11 @@ class LocalSrtTranslationJob(
                     }
                     ensureActive(current)
                     val result = runner.run(plan, engine, { current.cancelled.get() || closed }, { done, total ->
+                        current.journalEntry = current.journalEntry?.copy(done = done, total = total,
+                            updatedAtMs = System.currentTimeMillis())
+                        // The runner has already committed this prefix. Record it
+                        // before the next inference, off the UI thread.
+                        saveAttempt(current, force = true)
                         publish(current, ticket, State("Traduction locale : $done / $total occurrences validées.",
                             busy = true, sourceName = selected.name, done = done, total = total, performance = current.performance))
                     }, TranslationRunPolicy(requestMayConsumeRemoteQuota = false))
@@ -255,6 +298,7 @@ class LocalSrtTranslationJob(
                         "Traduction arrêtée. Les occurrences validées sont conservées ; relance avec le même fichier, modèle et réglages pour reprendre.",
                         busy = false, complete = false)
                 } catch (error: TranslationFailure) {
+                    current.journalEntry = current.journalEntry?.copy(failureCode = error.reason.name)
                     val diagnostic = error.localDiagnostic?.render()
                     val details = listOfNotNull(diagnostic, error.localAttemptReport)
                     current.performance = (listOfNotNull(current.performance) +
@@ -269,6 +313,7 @@ class LocalSrtTranslationJob(
                         else "Préparation locale interrompue : vérifie le fichier, la langue et le modèle. Les occurrences validées restent conservées.",
                         busy = false, complete = false)
                 } finally {
+                    current.acceptMeasurements.set(false)
                     current.indexer = null
                     (current.engine as? LocalTranslationPerformanceSource)?.setPerformanceListener(null)
                     current.engine?.let { cleanupWarning = closeTranslationEngineOnWorker(it) }
@@ -277,7 +322,17 @@ class LocalSrtTranslationJob(
                 // Only the worker can confirm that the old native owner is no
                 // longer pending. Publish availability after its bounded ACK,
                 // including a visible warning when it could not be established.
-                val finished = terminal ?: return@execute
+                val finished = (terminal ?: return@execute).let { value ->
+                    // UI progress may still be queued when the next call fails.
+                    // The worker's checkpoint counter is the authoritative one.
+                    current.journalEntry?.let { value.copy(done = it.done, total = it.total) } ?: value
+                }
+                current.journalEntry = current.journalEntry?.copy(state = when {
+                    current.cancelled.get() || closed -> "CANCELLED"
+                    finished.complete -> "COMPLETED"
+                    else -> "FAILED"
+                }, updatedAtMs = System.currentTimeMillis())
+                saveAttempt(current, force = true)
                 // Review is fallible and optional. Release model resources first;
                 // a failed review must never discard a completed durable result.
                 val review = if (finished.complete && !current.cancelled.get() && !closed) {
@@ -297,6 +352,8 @@ class LocalSrtTranslationJob(
                             completedReviewReport = review
                         }
                         cleanupWarning?.let { result = result.copy(status = result.status + "\n$it") }
+                        if (attemptJournal.failedWrite)
+                            result = result.copy(status = result.status + "\n" + LocalSrtAttemptJournal.WRITE_WARNING)
                         update(result)
                     }
                 }
@@ -335,6 +392,9 @@ class LocalSrtTranslationJob(
 
     private fun ensureActive(task: Task) {
         if (closed || task.cancelled.get() || Thread.currentThread().isInterrupted) throw TranslationCancelledException()
+    }
+    private fun saveAttempt(task: Task, force: Boolean) {
+        task.journalEntry?.let { attemptJournal.save(it, force) }
     }
     private fun isCurrent(task: Task, ticket: Long) = !closed && sequence == ticket && active === task
     private fun update(value: State) {
@@ -391,6 +451,7 @@ class LocalSrtTranslationJob(
         // An old Activity worker may still be stopping while the next owner is
         // created. Serialize private source/checkpoint commits across owners.
         private val WORK_LOCK = Any()
+        private val JOURNAL_CRITICAL_STAGES = setOf("SERVICE", "MODEL_LOAD", "CONTEXT_INIT", "READY", "PREFILL", "DECODE")
         private const val RECORD = "selection.json"
         private val SOURCE_FILE = Regex("source-[0-9a-f]{64}\\.(srt|vtt|ass)")
         private val EXAMPLE_SRT = """

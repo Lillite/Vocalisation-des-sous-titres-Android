@@ -62,6 +62,31 @@ def parse_swa_comparison(log):
             'compactVsFullRelativeLogitError': relative_error}
 
 
+def parse_optimization_evidence(log):
+    moving = re.findall(r'^Moving two-turn window: requests=25, post-warmup workspace growths=0, workspace bytes=(\d+), '
+                        r'cache resets=(\d+), cached-vs-fresh maximum error (' + NUMBER +
+                        r'), elapsed including load us=(\d+)\.[ \t]*$', log, re.MULTILINE)
+    quantized = re.findall(r'^Quantized cache (Llama|Gemma-SWA): requests=25, cached-vs-fresh maximum error (' + NUMBER +
+                          r'), Q8-vs-F16 maximum error (' + NUMBER +
+                          r'), synthetic output tokens equal=1\.[ \t]*$', log, re.MULTILINE)
+    if len(moving) != 1 or len(quantized) != 2 or {item[0] for item in quantized} != {'Llama', 'Gemma-SWA'}:
+        raise RuntimeError('The complete moving-window and quantized-cache inference evidence is missing')
+    workspace, resets, delta, elapsed = moving[0]
+    if int(workspace) < 4352 or int(resets) < 2 or not math.isfinite(float(delta)) or not 0 <= float(delta) < 0.00002:
+        raise RuntimeError('Moving-window workspace or numerical validation failed')
+    variants = {}
+    for label, cache_delta, f16_delta in quantized:
+        cached, f16 = float(cache_delta), float(f16_delta)
+        if not math.isfinite(cached) or not 0 <= cached < 0.00002 or not math.isfinite(f16) or f16 < 0:
+            raise RuntimeError('Quantized-cache fresh-context validation failed')
+        variants[label] = {'requests': 25, 'cachedVsFreshMaxLogitError': cached,
+                           'q8VsF16MaxLogitError': f16, 'syntheticOutputTokensEqual': True}
+    return {'movingWindow': {'requests': 25, 'workspaceGrowthsAfterWarmup': 0, 'workspaceBytes': int(workspace),
+                            'cacheResets': int(resets), 'cachedVsFreshMaxLogitError': float(delta),
+                            'elapsedIncludingLoadMicroseconds': int(elapsed)},
+            'quantizedCache': variants, 'phoneSpeedupMeasured': False, 'linguisticEquivalenceEstablished': False}
+
+
 def unique_dependency(name):
     matches = list((ROOT / 'app/.cxx/Debug').glob('*/arm64-v8a/_deps/' + name))
     if len(matches) != 1:
@@ -117,16 +142,21 @@ def main():
         run('fixture-chat-formats', ['python3', generator, chat_fixtures, '--chat-template-fixtures'], 30)
         swa = work / 'gemma-swa.gguf'
         run('fixture-gemma-swa', ['python3', generator, swa, '--terminating', '--context-sensitive', '--roundtrip', '--gemma-swa'], 30)
-        translation_log = run('translation', [work / 'build/local-translation-smoke', eos, repeat, context, chat_fixtures, swa], 120)
+        q8 = work / 'cache-q8.gguf'
+        run('fixture-cache-q8', ['python3', generator, q8, '--terminating', '--context-sensitive', '--roundtrip', '--cache-q8'], 30)
+        q8_swa = work / 'gemma-cache-q8.gguf'
+        run('fixture-gemma-cache-q8', ['python3', generator, q8_swa, '--terminating', '--context-sensitive', '--roundtrip', '--gemma-swa', '--cache-q8'], 30)
+        translation_log = run('translation', [work / 'build/local-translation-smoke', eos, repeat, context, chat_fixtures, swa, q8, q8_swa], 180)
         run('probe', [work / 'build/model-probe-smoke', repeat], 60)
         run('diagnostic', [work / 'build/optional-opencl-diagnostic-smoke'], 60)
         error, delta = parse_logit_comparison(translation_log)
         chat_counts = parse_chat_format_evidence(translation_log)
         swa_evidence = parse_swa_comparison(translation_log)
+        optimization_evidence = parse_optimization_evidence(translation_log)
         summary.update(status='passed', cachedVsFreshMaxLogitError=error, changedContextDelta=delta,
                        builtinChatFormatValidation=chat_counts, chatTemplateMode='BUILTIN_FORMAT',
                        embeddedJinjaExecuted=False,
-                       compactSwaValidation=swa_evidence)
+                       compactSwaValidation=swa_evidence, runtimeOptimizationValidation=optimization_evidence)
     except BaseException as error:
         summary.update(status='failed', failureType=type(error).__name__)
         raise

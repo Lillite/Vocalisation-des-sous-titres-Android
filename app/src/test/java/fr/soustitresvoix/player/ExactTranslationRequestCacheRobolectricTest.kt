@@ -2,8 +2,11 @@ package fr.soustitresvoix.player
 
 import fr.soustitresvoix.core.TranslationCue
 import fr.soustitresvoix.core.TranslationPlan
+import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
 import java.io.File
 import java.io.RandomAccessFile
+import java.security.MessageDigest
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -177,5 +180,91 @@ class ExactTranslationRequestCacheRobolectricTest {
         assertEquals("Unrelated suffix", lookalike.readText())
         assertEquals(setOf(unrelated.name, lookalike.name), directory.listFiles()!!.map { it.name }.toSet())
         assertNull(requests.read(key))
+    }
+
+    @Test fun optimizedKeysAndSerializedEntriesRemainByteCompatibleWithVersionOne() {
+        val directory = temporary.newFolder(); val requests = ExactTranslationRequestCache(directory)
+        val key = requests.key("engine-a", "en", "fr", listOf("ab", "c"), listOf("past"), listOf("passé"))
+        // Independently generated using length-prefixed UTF-8 and big-endian
+        // int32 counts. Existing request-cache files must keep the same names.
+        assertEquals("09a55b22916ea2878edc3dc33c13aa8391cf74330527317432e176e1597b8d45", key)
+        val values = listOf("Bonjour 😀", "東京 — l’œil", "Encore\nune fois")
+        val legacy = versionOneBytes(key, values)
+        val entry = File(directory, "$key.request")
+        entry.writeBytes(legacy)
+        assertEquals(values, requests.read(key))
+        requests.write(key, values)
+        assertArrayEquals(legacy, entry.readBytes())
+        assertEquals(setOf(entry.name), directory.listFiles()!!.map { it.name }.toSet())
+    }
+
+    @Test fun everyTruncatedEntryAndAnOversizedFileAreCacheMisses() {
+        val directory = temporary.newFolder(); val requests = ExactTranslationRequestCache(directory)
+        val key = "a".repeat(64); val entry = File(directory, "$key.request")
+        val valid = versionOneBytes(key, listOf("Résultat 😀"))
+        for (end in valid.indices) {
+            entry.writeBytes(valid.copyOf(end))
+            assertNull("A truncated entry at byte $end cannot be reused", requests.read(key))
+        }
+        entry.writeBytes(valid + 0)
+        assertNull(requests.read(key))
+        RandomAccessFile(entry, "rw").use { it.setLength(1024 * 1024L + 1) }
+        assertNull(requests.read(key))
+        entry.writeBytes(valid)
+        assertEquals(listOf("Résultat 😀"), requests.read(key))
+    }
+
+    @Test fun signedButMalformedBodyCannotBypassStructureUnicodeOrExactEndChecks() {
+        val directory = temporary.newFolder(); val requests = ExactTranslationRequestCache(directory)
+        val key = "b".repeat(64); val entry = File(directory, "$key.request")
+        val wrongVersion = versionOneBytes(key, listOf("Valide")).dropLast(32).toByteArray().apply { this[7] = 2 }
+        val wrongCount = versionOneBytes(key, listOf("Valide")).dropLast(32).toByteArray().apply { this[77] = 2 }
+        val badUnicode = versionOneBytes(key, listOf("Valide")).dropLast(32).toByteArray().apply { this[82] = 0xff.toByte() }
+        val trailingBody = versionOneBytes(key, listOf("Valide")).dropLast(32).toByteArray() + 0
+        for (body in listOf(wrongVersion, wrongCount, badUnicode, trailingBody)) {
+            entry.writeBytes(body + MessageDigest.getInstance("SHA-256").digest(body))
+            assertNull(requests.read(key))
+        }
+        entry.writeBytes(versionOneBytes("c".repeat(64), listOf("Autre requête")))
+        assertNull(requests.read(key))
+    }
+
+    @Test fun rejectedOversizedOrInvalidReplacementLeavesItsExistingEntryIntact() {
+        val directory = temporary.newFolder(); val requests = ExactTranslationRequestCache(directory)
+        val key = "d".repeat(64)
+        requests.write(key, listOf("À conserver"))
+        val saved = File(directory, "$key.request").readBytes()
+        for (values in listOf(List(20) { "漢".repeat(TranslationPlan.MAX_CUE_CHARACTERS) },
+            listOf("\uD800"), listOf("\u0000"), emptyList())) {
+            requests.write(key, values)
+            assertArrayEquals(saved, File(directory, "$key.request").readBytes())
+        }
+        assertEquals(listOf("À conserver"), requests.read(key))
+        assertEquals(1, directory.listFiles()!!.size)
+    }
+
+    @Test fun anotherInstanceAndNewOrphanFilesAreInventoriedAfterEarlierWrites() {
+        val directory = temporary.newFolder(); val first = ExactTranslationRequestCache(directory)
+        first.write("1".repeat(64), listOf("Premier"))
+        ExactTranslationRequestCache(directory).write("2".repeat(64), listOf("Deuxième"))
+        val orphan = File(directory, "${"3".repeat(64)}.request.new")
+        RandomAccessFile(orphan, "rw").use { it.setLength(ExactTranslationRequestCache.MAX_BYTES) }
+        orphan.setLastModified(1)
+        val unrelated = File(directory, "source.srt").apply { writeText("À conserver") }
+        first.write("4".repeat(64), listOf("Dernier"))
+        assertFalse(orphan.exists())
+        assertEquals(listOf("Dernier"), first.read("4".repeat(64)))
+        assertEquals("À conserver", unrelated.readText())
+        assertTrue(directory.listFiles()!!.filter { it != unrelated }.sumOf { it.length() } <= ExactTranslationRequestCache.MAX_BYTES)
+    }
+
+    private fun versionOneBytes(key: String, values: List<String>): ByteArray {
+        val body = ByteArrayOutputStream().also { bytes ->
+            DataOutputStream(bytes).use { output ->
+                output.writeInt(0x53545652); output.writeInt(1); output.writeUTF(key); output.writeInt(values.size)
+                values.forEach { text -> val encoded = text.toByteArray(Charsets.UTF_8); output.writeInt(encoded.size); output.write(encoded) }
+            }
+        }.toByteArray()
+        return body + MessageDigest.getInstance("SHA-256").digest(body)
     }
 }

@@ -371,7 +371,8 @@ class LocalSrtTranslationControlsRobolectricTest {
                     assertTrue(input.textSize >= 18 * density)
                 }
                 val actions = descendants(scroll).filterIsInstance<Button>().toList()
-                assertEquals(17, actions.size)
+                assertEquals(18, actions.size)
+                assertEquals(1, actions.count { it.text.toString() == "Cache d’attention K/V en 8 bits — expérimental ; F16 si désactivé" })
                 for (action in actions) {
                     assertNull(action.ellipsize)
                     assertTrue(action.maxLines > 1)

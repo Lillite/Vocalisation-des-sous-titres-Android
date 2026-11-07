@@ -60,6 +60,15 @@ struct Response {
     int batch_tokens = 0;
     int micro_batch_tokens = 0;
     bool compact_swa = false;
+    std::string cache_type_k = "F16";
+    std::string cache_type_v = "F16";
+    std::string flash_attention_policy = "AUTO";
+    std::string cache_reset_reason;
+    long long cache_resets = 0;
+    long long workspace_growths = 0;
+    long long workspace_bytes = 0;
+    long long start_resident_bytes = -1;
+    long long prefill_resident_bytes = -1;
     int prompt_tokens = 0;
     int generated_tokens = 0;
     std::string json() const;
@@ -71,9 +80,11 @@ public:
     Response open(const std::string & path, int threads, int context_tokens, const std::string & execution = "CPU",
         int gpu_layers = -1, const std::string & cache_path = "", int batch_tokens = 512,
         int micro_batch_tokens = 128, bool compact_swa = false,
-        const std::function<void(const char *, int)> & on_progress = {});
+        const std::function<void(const char *, int)> & on_progress = {},
+        const std::string & kv_cache_type = "F16");
     Response generate(const std::string & prompt, int output_tokens, bool add_special,
-        bool use_model_template = false);
+        bool use_model_template = false,
+        const std::function<void(const char *, int)> & on_progress = {});
     void cancel();
 #ifdef SUBTITLE_NATIVE_TESTING
     std::vector<float> test_logits();

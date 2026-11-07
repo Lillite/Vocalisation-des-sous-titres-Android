@@ -2,6 +2,55 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Essais sur téléphone](docs/TESTS_TELEPHONE.md) · [Contribution](CONTRIBUTING.md)
 
+## Candidate 0.5.13-memory — préparation et vérifications à établir
+
+Les sources préparent **0.5.13-memory / code 20**. Le [guide](docs/TRADUCTION_RUNTIME_0513.md) et les [notes](docs/releases/0.5.13-memory.md) distinguent les optimisations sans changement volontaire des calculs, le cache K/V quantifié expérimental et les mesures qui restent nécessaires sur le téléphone. La 0.5.2 reste la stable recommandée. La publication de la 0.5.12 au commit `9f19792656b6a274297a3e23c2d142ddfdb33acc` est une référence historique distincte ; sa réussite ne valide pas les présentes modifications.
+
+### Régressions de cette candidate
+
+- **Natif F16** : comparer cache exact et calcul frais, changement de préfixe, passage au-delà de la fenêtre d’attention locale, invalidation logique sans effacement physique et réinitialisation du sélecteur greedy. Les buffers réutilisés doivent rester bornés ; leurs compteurs ne mesurent pas toute la mémoire de llama.cpp ou du GPU.
+- **Cache K/V Q8_0** : vérifier sélection explicite, types rapportés, refus d’une configuration non prise en charge et identité distincte des résultats F16. Le cache V quantifié exige la politique Flash Attention activée ; une politique demandée ne constitue pas une mesure de son exécution. La comparaison aux sorties F16 doit conserver les écarts éventuels sans les présenter comme une équivalence bit à bit ou une qualité certifiée.
+- **Diagnostic et reprise SRT** : conserver un journal structuré borné, atomique et dépourvu de texte, titre, chemin ou description Android libre ; vérifier interruption, lecture corrompue, ancienne tentative, PID/UID/temps non corrélés, marqueur du limiteur mémoire et réouverture sans calcul ni export automatique. Les résultats de traduction durables demeurent distincts du diagnostic.
+- **Cache exact de requêtes** : préserver le format des entrées historiques, leur empreinte, les limites de taille, la détection des corruptions et l’inventaire réel pour les quotas. Mesurer les allocations et accès aux métadonnées du chemin sous quota ; ne pas extrapoler ces résultats aux gigaoctets d’un modèle de production.
+- **Android et lecture** : conserver Pause, déplacement, callback périmé, annulation, libération confirmée, reprise et chaque occurrence textuelle. Vérifier la nouvelle option mémoire accessible, persistée et désactivée par défaut, avec grande police et dans les parcours vidéo, SRT et comparatif concernés.
+
+Les contrôles documentaires hors réseau exécutés pendant cette préparation ont réussi : **23 tests de synchronisation de l’historique** et **10 tests de nettoyage documentaire**, soit **33 réussites**, sans modification de ces suites. Les liens locaux des pages modifiées, l’unicité des tags du manifeste et `git diff --check` ont également été vérifiés. Ces contrôles ne constituent ni une compilation Android, ni une instrumentation, ni une mesure de performance du téléphone.
+
+### Preuve native hôte de la préparation
+
+Le résumé local `build/verification/native-optimization-local/summary.json`, SHA-256 **c4d04d2af94447d9792077b680fdd318bf302e35531219dfd2f5d3949b292a81**, enregistre une construction puis une reconstruction incrémentale et les trois exécutables natifs réels de traduction, de sonde et de diagnostic, tous terminés avec le code **0**. La suite complète a été réexécutée après le dernier contrôle d’annulation de génération et l’ajustement du libellé métrique. Les **10 méthodes Python** de `tools/test-native-translation-results.py` ont réussi, sans échec ; elles contrôlent le contrat du lecteur de preuves, notamment l’absence, l’ambiguïté, les écarts non finis ou hors bornes et la séparation Q8/F16.
+
+| Observation sur les fixtures miniatures | Résultat enregistré |
+| --- | --- |
+| Fenêtre glissante de deux échanges sur 25 requêtes | **0** agrandissement des buffers suivis après amorçage ; **4 352 octets** réservés dans ces buffers ; **23** invalidations ; écart maximal cache/recalcul frais **0**. |
+| Cache Q8_0 sur 25 requêtes de type Llama | Écart maximal cache/recalcul frais **0** ; écart maximal Q8/F16 **0,00262184** ; tokens synthétiques produits identiques. |
+| Cache Q8_0 sur 25 requêtes de type Gemma avec attention locale | Écart maximal cache/recalcul frais **0** ; écart maximal Q8/F16 **0,00023362** ; tokens synthétiques produits identiques. |
+| Attention locale compacte, 6 requêtes | Recalcul après débordement et réutilisation d’un préfixe court vérifiés ; écart maximal cache/recalcul frais **0** ; écarts compact/complet **2,69338 × 10⁻⁵** absolu et **1,68453 × 10⁻⁶** relatif. |
+| Formats de conversation intégrés | **14** fixtures, **3** familles de prompts exacts, **3** contrôles d’entrée littérale, **55** générations terminées, **18** refus attendus et **5** contrôles de bornes. |
+| Greedy réutilisé | **21** sélections finies, égalités, valeurs non finies et remises à zéro conformes à la règle directe antérieure ; les générations hôte comparent aussi chaque token choisi, EOS compris. |
+
+Les sept empreintes ci-dessous ont été rapprochées des fichiers présents après cette campagne et étaient identiques au manifeste du résumé. Elles identifient précisément les sources couvertes par cette preuve locale, distinctement de toute future campagne CI ou modification ultérieure.
+
+| Source native ou outil de preuve | SHA-256 validé |
+| --- | --- |
+| `app/src/main/cpp/local_translation_engine.cpp` | `70d2ac27951d56df011c88bcba78ff007dbd181ee2cf6ae319c804890c021912` |
+| `app/src/main/cpp/local_translation_engine.h` | `44b19b7162a738733dcafda8565160f973999e028e7e87d6e101dd0b32627a47` |
+| `app/src/main/cpp/local_translation_jni.cpp` | `b6cb48488755c8294988fe4386a5fbe176ddcfbcaba1e5a63e53ce095aaa7b98` |
+| `app/src/main/cpp/tests/local_translation_smoke.cpp` | `2b226456edee909941c358c36979717c9b8d9e13fc7584f7bfcc306a683816c0` |
+| `app/src/main/cpp/tests/make_tiny_gguf.py` | `58c2b75526fcad7c49e00ac1aeb782390ebd2c37b7762b5ce4cfa20ca5030e24` |
+| `tools/run-native-translation-tests.py` | `bf30708396b13ff890639ae2b0ddc73969287cfba82c8645d15b2f4c2cfa8ba2` |
+| `tools/test-native-translation-results.py` | `a69d866cdde834b30e61d7bde47f55c68fa70e63fb2bb0364c5bab05fc5fabc5` |
+
+Les **4 352 octets** concernent uniquement les petits buffers texte/tokens du wrapper, sans les poids, le cache K/V ni les allocations du moteur ou du pilote. Le chronométrage brut du résumé inclut un chargement hôte ; il ne compare pas deux implémentations et n’établit aucun gain, même à la microseconde. Les écarts Q8/F16 sont non nuls malgré l’égalité des tokens sur ces fixtures : aucune équivalence linguistique n’est établie. Ce résumé déclare explicitement **aucune validation GPU, aucune mesure de performance sur téléphone et aucune validation de qualité linguistique**.
+
+### Campagne applicative à établir
+
+L’inventaire source attendu de la proposition contient **196 méthodes noyau, 576 méthodes JVM application et 114 méthodes Android**, soit **886 méthodes**. Il doit être rapproché des identités des XML frais du commit testé, sans méthode manquante, ignorée, inattendue ou dupliquée. Cet inventaire ne constitue pas un résultat d’exécution. Aucune réussite JVM ou Android de cette candidate n’est annoncée à ce stade.
+
+La campagne finale doit construire puis instrumenter l’APK release sur Android 17 / API 37 avant fusion. Les suites déjà réussies de la proposition finale ne doivent pas être rejouées après fusion : la reconstruction vérifie arbre, parents et contenu applicatif identiques hors métadonnées de signature autorisées, puis la signature durable et la publication. Aucune durée gagnée ni baisse de mémoire sur téléphone n’est déclarée.
+
+Une réussite sur de petites fixtures synthétiques ne certifie ni stabilité prolongée de TranslateGemma 12B Q6_K sur le OnePlus, ni fidélité linguistique, ni chauffe, autonomie, GPU physique ou accessibilité vocale réelle. Une interruption sans motif corrélé garde une cause indéterminée. Les sections suivantes conservent les étapes et preuves des versions antérieures.
+
 ## Candidate 0.5.12-runtime — validation à établir
 
 Les sources préparent **0.5.12-runtime / code 19**, avec la même identité Android et le même certificat durable. Le [guide](docs/TRADUCTION_RUNTIME_0512.md) et les [notes](docs/releases/0.5.12-runtime.md) décrivent Qwen3.5 sans raisonnement, Vulkan facultatif, les réglages mémoire et le diagnostic disponible après un échec de chargement. Les vérifications ciblées réellement exécutées figurent ci-dessous ; elles ne remplacent pas la campagne complète sur la proposition finale.

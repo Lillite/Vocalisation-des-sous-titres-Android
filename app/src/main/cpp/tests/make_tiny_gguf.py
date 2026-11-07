@@ -74,7 +74,7 @@ def string(value):
     return struct.pack('<Q', len(data)) + data
 
 
-def generate(destination, terminating=False, context_sensitive=False, roundtrip=False, chat_template=None, controls=(), gemma_swa=False):
+def generate(destination, terminating=False, context_sensitive=False, roundtrip=False, chat_template=None, controls=(), gemma_swa=False, cache_q8=False):
     # GGUF types: UINT32=4, FLOAT32=6, BOOL=7, STRING=8, ARRAY=9.
     tokens = ['<unk>', '<s>', '</s>'] + [f'<0x{i:02X}>' for i in range(256)]
     if roundtrip:
@@ -85,7 +85,11 @@ def generate(destination, terminating=False, context_sensitive=False, roundtrip=
     tokens += [token for token, _ in controls] + ['▁probe']
     token_types = [2, 3, 3] + [6] * 256
     token_types += [1] * (4 if roundtrip else 0) + [kind for _, kind in controls] + [1]
-    n_vocab, embedding, hidden = len(tokens), 16, 32
+    # Q8 caches require complete 32-value head blocks. Historical fixtures stay
+    # byte-identical; the separate variant widens the heads, not the precision
+    # of these synthetic F32 model weights.
+    n_vocab, embedding, hidden = len(tokens), 64 if cache_q8 else 16, 128 if cache_q8 else 32
+    head_dim = embedding // 2
     def kv(key, kind, value):
         if kind == 4: data = struct.pack('<I', value)
         elif kind == 6: data = struct.pack('<f', value)
@@ -107,7 +111,7 @@ def generate(destination, terminating=False, context_sensitive=False, roundtrip=
         kv(architecture + '.embedding_length', 4, embedding),
         kv(architecture + '.block_count', 4, 2 if gemma_swa else 1),
         kv(architecture + '.feed_forward_length', 4, hidden),
-        kv(architecture + '.rope.dimension_count', 4, 8),
+        kv(architecture + '.rope.dimension_count', 4, head_dim),
         kv(architecture + '.attention.head_count', 4, 2),
         kv(architecture + '.attention.head_count_kv', 4, 2),
         kv(architecture + '.attention.layer_norm_rms_epsilon', 6, 1e-5),
@@ -177,8 +181,8 @@ def generate(destination, terminating=False, context_sensitive=False, roundtrip=
             if layer:
                 tensors += [(name.replace('blk.0.', 'blk.1.'), dims, data)
                             for name, dims, data in first_layer]
-            for suffix, size in [('post_attention_norm', embedding), ('attn_k_norm', 8),
-                                 ('attn_q_norm', 8), ('post_ffw_norm', embedding)]:
+            for suffix, size in [('post_attention_norm', embedding), ('attn_k_norm', head_dim),
+                                 ('attn_q_norm', head_dim), ('post_ffw_norm', embedding)]:
                 tensors.append((f'blk.{layer}.{suffix}.weight', [size], values([1.0] * size)))
     offsets, payload = [], bytearray()
     for _, _, data in tensors:
@@ -202,17 +206,18 @@ if __name__ == '__main__':
     parser.add_argument('--context-sensitive', action='store_true')
     parser.add_argument('--roundtrip', action='store_true')
     parser.add_argument('--gemma-swa', action='store_true', help='synthetic Gemma3 with local and global attention')
+    parser.add_argument('--cache-q8', action='store_true', help='32-value attention heads for quantized cache inference')
     parser.add_argument('--chat-template', choices=CHAT_TEMPLATES)
     parser.add_argument('--chat-template-fixtures', action='store_true',
                         help='write all embedded-template metadata variants into destination directory')
     args = parser.parse_args()
     if args.chat_template_fixtures:
-        if args.chat_template is not None or args.gemma_swa:
-            parser.error('--chat-template-fixtures excludes --chat-template and --gemma-swa')
+        if args.chat_template is not None or args.gemma_swa or args.cache_q8:
+            parser.error('--chat-template-fixtures excludes --chat-template, --gemma-swa and --cache-q8')
         for name, template in CHAT_TEMPLATES.items():
             size = generate(args.destination / (name + '.gguf'), terminating=True,
                             roundtrip=True, chat_template=template, controls=fixture_controls(name))
             print(f'Synthetic embedded-template GGUF {name}: {size} bytes')
     else:
         template = CHAT_TEMPLATES[args.chat_template] if args.chat_template is not None else None
-        print(f'Synthetic GGUF: {generate(args.destination, args.terminating, args.context_sensitive, args.roundtrip, template, fixture_controls(args.chat_template), args.gemma_swa)} bytes')
+        print(f'Synthetic GGUF: {generate(args.destination, args.terminating, args.context_sensitive, args.roundtrip, template, fixture_controls(args.chat_template), args.gemma_swa, args.cache_q8)} bytes')

@@ -14,7 +14,10 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
 
@@ -356,4 +359,171 @@ class LocalGgufRuntimeRobolectricTest {
             assertNull(privateGgufFile(context, File(context.filesDir, "../outside.gguf").path))
         } finally { link.delete(); outside.delete(); privateFile.delete() }
     }
+    @Test fun cachePrecisionIsExplicitAndOldResponsesKeepTheirHistoricalMeaning() {
+        val legacy = LocalGgufRuntime.generation(generation())
+        assertEquals("", legacy.cacheTypeK)
+        assertEquals("", legacy.flashAttentionPolicy)
+        val f16 = JSONObject(generation()).put("cacheTypeK", "F16").put("cacheTypeV", "F16")
+            .put("flashAttentionPolicy", "AUTO")
+        assertEquals("F16", LocalGgufRuntime.generation(f16.toString()).cacheTypeV)
+        val q8 = JSONObject(generation()).put("cacheTypeK", "Q8_0").put("cacheTypeV", "Q8_0")
+            .put("flashAttentionPolicy", "ENABLED")
+        val measured = LocalGgufRuntime.generation(q8.toString())
+        assertEquals("Q8_0", measured.cacheTypeK)
+        assertEquals("Q8_0", measured.cacheTypeV)
+        assertEquals("ENABLED", measured.flashAttentionPolicy)
+        assertFalse(measured.gpuObserved)
+    }
+    @Test fun malformedOrMixedPrecisionCannotPretendToBeTheRequestedCache() {
+        val q8 = JSONObject(generation()).put("cacheTypeK", "Q8_0").put("cacheTypeV", "Q8_0")
+            .put("flashAttentionPolicy", "ENABLED")
+        val cases = listOf(
+            JSONObject(q8.toString()).put("cacheTypeV", "F16"),
+            JSONObject(q8.toString()).put("flashAttentionPolicy", "AUTO"),
+            JSONObject(q8.toString()).put("flashAttentionPolicy", "ACTUALLY_OBSERVED"),
+            JSONObject(q8.toString()).put("cacheTypeK", 8),
+            JSONObject(q8.toString()).put("cacheTypeV", JSONObject.NULL),
+            JSONObject(q8.toString()).apply { remove("cacheTypeV") },
+            JSONObject(generation()).put("cacheTypeK", "F16"))
+        cases.forEach {
+            try { LocalGgufRuntime.generation(it.toString()); fail("Malformed or partial precision accepted") }
+            catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.RESPONSE, failure.code) }
+        }
+    }
+    @Test fun generationMemoryAndWorkspaceCountersAreBoundedTypedObservations() {
+        val valid = JSONObject(generation()).put("processId", 123).put("startResidentBytes", 100)
+            .put("prefillResidentBytes", 200).put("cacheResetReason", "PREFIX_CHANGED")
+            .put("cacheResets", 2).put("workspaceGrowths", 3).put("workspaceBytes", 4096)
+        val observation = LocalGgufRuntime.generation(valid.toString())
+        assertEquals(123, observation.processId)
+        assertEquals(100L, observation.startResidentBytes)
+        assertEquals(200L, observation.prefillResidentBytes)
+        assertEquals("PREFIX_CHANGED", observation.cacheResetReason)
+        assertEquals(2L, observation.cacheResets)
+        assertEquals(4096L, observation.workspaceBytes)
+        val invalid = mutableListOf<JSONObject>()
+        for (key in listOf("startResidentBytes", "prefillResidentBytes", "cacheResets", "workspaceGrowths", "workspaceBytes")) {
+            invalid += JSONObject(valid.toString()).put(key, "123")
+            invalid += JSONObject(valid.toString()).put(key, -2)
+            invalid += JSONObject(valid.toString()).put(key, 1.5)
+        }
+        invalid += JSONObject(valid.toString()).put("processId", -1)
+        invalid += JSONObject(valid.toString()).put("processId", "123")
+        invalid += JSONObject(valid.toString()).put("cacheResetReason", "/private/personal-path")
+        invalid.forEach {
+            try { LocalGgufRuntime.generation(it.toString()); fail("Invalid observation accepted") }
+            catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.RESPONSE, failure.code) }
+        }
+    }
+
+    @Test fun clientOpenRequiresExplicitQ8EvidenceAndRejectsAnotherPrecisionBeforeOpening() {
+        for ((requested, reported) in listOf("Q8_0" to null, "Q8_0" to "F16", "F16" to "Q8_0")) {
+            withRuntimeResponses(reported, emptyList()) { client, file, _ ->
+                onRuntimeWorker {
+                    try { client.open(file, kvCacheType = requested); fail("Unproven or changed precision opened a session") }
+                    catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.RESPONSE, failure.code) }
+                    try { client.generate("Synthetic request"); fail("A rejected open must not enable generation") }
+                    catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.MODEL, failure.code) }
+                }
+            }
+        }
+    }
+
+    @Test fun legacyF16OpenCanUseLegacyAndExplicitResponsesOnBothGenerationPaths() {
+        withRuntimeResponses(null, listOf(null, "F16", "F16", null)) { client, file, templates ->
+            onRuntimeWorker {
+                assertEquals("", client.open(file, kvCacheType = "F16").cacheTypeK)
+                assertEquals("", client.generate("Synthetic raw request").cacheTypeK)
+                assertEquals("F16", client.generateChat("Synthetic chat request").cacheTypeK)
+                assertEquals("F16", client.generate("Another synthetic raw request").cacheTypeK)
+                assertEquals("", client.generateChat("Another synthetic chat request").cacheTypeK)
+            }
+            assertEquals(listOf(false, true, false, true), templates)
+        }
+    }
+
+    @Test fun rawAndTemplateGenerationMustKeepTheOpenedSessionsPrecision() {
+        for (requested in listOf("F16", "Q8_0")) for (reported in listOf(null, "F16", "Q8_0")) {
+            withRuntimeResponses(requested, listOf(reported, reported)) { client, file, templates ->
+                onRuntimeWorker {
+                    assertEquals(requested, client.open(file, kvCacheType = requested).cacheTypeK)
+                    for (chat in listOf(false, true)) {
+                        val accepted = reported == requested || requested == "F16" && reported == null
+                        try {
+                            val result = if (chat) client.generateChat("Synthetic chat request")
+                                else client.generate("Synthetic raw request")
+                            assertTrue("$requested session accepted $reported precision", accepted)
+                            assertEquals(reported.orEmpty(), result.cacheTypeK)
+                        } catch (failure: LocalGgufRuntime.Failure) {
+                            assertFalse("$requested session rejected its valid $reported response", accepted)
+                            assertEquals(LocalGgufRuntime.Code.RESPONSE, failure.code)
+                        }
+                    }
+                }
+                assertEquals(listOf(false, true), templates)
+            }
+        }
+    }
+
+    /** Exercise Client's real worker/Messenger request path without loading native weights. */
+    private fun <T> withRuntimeResponses(openPrecision: String?, generationPrecisions: List<String?>,
+        action: (LocalGgufRuntime.Client, File, MutableList<Boolean>) -> T): T {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val file = File.createTempFile("precision-fixture-", ".gguf", context.filesDir).apply { writeBytes(ByteArray(24)) }
+        val client = LocalGgufRuntime.Client(context)
+        val replies = ArrayDeque(generationPrecisions)
+        val templates = mutableListOf<Boolean>()
+        fun precision(json: JSONObject, type: String?): String = json.apply {
+            if (type != null) put("cacheTypeK", type).put("cacheTypeV", type)
+                .put("flashAttentionPolicy", if (type == "Q8_0") "ENABLED" else "AUTO")
+        }.toString()
+        val info = precision(JSONObject().put("code", "OK").put("name", "Synthetic model")
+            .put("architecture", "llama").put("fileType", "Q4_0").put("contextTokens", 512)
+            .put("modelBytes", 1024).put("modelParameters", 100).put("loadMs", 5).put("peakRssBytes", 1000), openPrecision)
+        val remote = Messenger(Handler(Looper.getMainLooper()) { message ->
+            val json = when (message.what) {
+                GgufMessages.OPEN -> info
+                GgufMessages.GENERATE -> {
+                    templates += message.data.getBoolean(GgufMessages.MODEL_TEMPLATE, false)
+                    precision(JSONObject(generation()), replies.removeFirst())
+                }
+                GgufMessages.CLOSE -> "{\"code\":\"OK\"}"
+                else -> null
+            }
+            if (json != null) message.replyTo.send(android.os.Message.obtain(null, GgufMessages.RESULT).apply {
+                data = android.os.Bundle().apply {
+                    putLong(GgufMessages.SESSION, message.data.getLong(GgufMessages.SESSION))
+                    putLong(GgufMessages.REQUEST, message.data.getLong(GgufMessages.REQUEST))
+                    putString(GgufMessages.JSON, json)
+                }
+            })
+            true
+        })
+        client.javaClass.getDeclaredField("remote").apply { isAccessible = true }.set(client, remote)
+        try { return action(client, file, templates) }
+        finally { client.close(); shadowOf(Looper.getMainLooper()).idle(); file.delete() }
+    }
+
+    private fun <T> onRuntimeWorker(action: () -> T): T {
+        val result = AtomicReference<T>()
+        val error = AtomicReference<Throwable>()
+        val done = CountDownLatch(1)
+        val worker = Thread {
+            try { result.set(action()) }
+            catch (failure: Throwable) { error.set(failure) }
+            finally { done.countDown() }
+        }.apply { isDaemon = true; start() }
+        try {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            while (!done.await(1, TimeUnit.MILLISECONDS)) {
+                shadowOf(Looper.getMainLooper()).idle()
+                assertTrue("Synthetic runtime worker did not complete", System.nanoTime() < deadline)
+            }
+            error.get()?.let { throw it }
+            return result.get()
+        } finally {
+            if (done.count > 0) { worker.interrupt(); worker.join(1000) }
+        }
+    }
+
 }

@@ -510,4 +510,57 @@ class LocalSrtTranslationJobRobolectricTest {
         assertTrue(restored.state.status.contains("restauré"))
         assertNull(restored.completedExport())
     }
+
+    @Test fun interruptedPreparationRestoresOnlyItsDiagnosticAndWaitsForAnExplicitStart() {
+        var constructions = 0
+        val first = job({ Engine(it).also { constructions++ } })
+        import(first)
+        first.close()
+        val sourceFile = requireNotNull(File(application.filesDir, "local-srt-source-v1").listFiles())
+            .single { it.name.startsWith("source-") && it.extension == "srt" }
+        val journal = LocalSrtAttemptJournal(File(application.filesDir, "local-srt-attempt-v1"))
+        val key = requireNotNull(LocalSrtAttemptJournal.sourceKey(sourceFile))
+        assertTrue(journal.save(LocalSrtAttemptJournal.begin(key, configuration(), sourceLanguage = "en")
+            .copy(done = 2, total = 4), force = true))
+        val restored = job({ Engine(it).also { constructions++ } })
+        assertEquals(0, constructions)
+        assertFalse(restored.state.busy)
+        assertFalse(restored.state.complete)
+        assertEquals(2, restored.state.done)
+        assertEquals(4, restored.state.total)
+        assertTrue(restored.state.status.contains("interrompue"))
+        assertTrue(requireNotNull(restored.state.performance).contains("occurrence suivante à vérifier : 3"))
+        assertFalse(requireNotNull(restored.state.performance).contains("Hello Élodie"))
+        assertFalse(requireNotNull(restored.state.performance).contains("fixture.srt"))
+        assertNull(restored.completedExport())
+        restored.importExample()
+        await { !restored.state.busy }
+        assertNull(restored.state.performance)
+        assertNull(journal.read(key))
+        assertEquals(0, constructions)
+    }
+
+    @Test fun aFailedPreparationKeepsItsCounterAndReportAcrossOwnerRecreationAndResumesItsDurablePrefix() {
+        val first = job({ config -> Engine(config) { call, texts ->
+            if (call == 2) throw TranslationFailure(TranslationFailure.Reason.LOCAL_PROCESS_DIED)
+            texts.map { "FR $it" }
+        } })
+        import(first)
+        first.start("en", configuration())
+        await { !first.state.busy }
+        assertEquals(1, first.state.done)
+        first.close()
+        lateinit var resumedEngine: Engine
+        val restored = job({ Engine(it).also { value -> resumedEngine = value } })
+        assertEquals(1, restored.state.done)
+        assertEquals(4, restored.state.total)
+        assertTrue(restored.state.status.contains("erreur"))
+        assertTrue(requireNotNull(restored.state.performance).contains("Erreur enregistrée"))
+        assertFalse(restored.state.complete)
+        restored.start("en", configuration())
+        await { !restored.state.busy }
+        assertTrue(restored.state.status, restored.state.complete)
+        assertEquals(3, resumedEngine.inputs.size)
+        assertEquals(4, Regex(" --> ").findAll(requireNotNull(restored.completedExport())).count())
+    }
 }

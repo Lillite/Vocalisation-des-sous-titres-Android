@@ -62,8 +62,36 @@ class LocalGgufRuntimeAndroidTest {
             assertEquals(64, generated.batchTokens)
             assertEquals(16, generated.microBatchTokens)
             assertFalse(generated.gpuObserved)
-            assertEquals("GENERATION", stages.last().stage)
+            assertEquals("COMPLETE", stages.last().stage)
+            for (stage in listOf("TOKENIZE", "CACHE_REUSE", "PREFILL", "DECODE", "COMPLETE"))
+                assertTrue("Generation milestone must cross JNI and IPC: $stage", stages.any { it.stage == stage })
+            assertEquals(info.processId, generated.processId)
+            assertEquals("F16", generated.cacheTypeK)
+            assertEquals("F16", generated.cacheTypeV)
         } finally { client.setProgressListener(null); client.closeAndAwait(); file.delete() }
+    }
+
+    @Test fun explicitQ8CacheCrossesRealJniAndIpcWithoutChangingModelWeights() {
+        val file = File(context.cacheDir, "translation-q8-kv.gguf")
+        instrumentation.context.assets.open("translation_q8_test_model.gguf").use { input ->
+            file.outputStream().use(input::copyTo)
+        }
+        val client = LocalGgufRuntime.Client(context)
+        try {
+            val info = client.open(file, threads = 1, contextTokens = 512, executionMode = "CPU",
+                batchTokens = 64, microBatchTokens = 16, kvCacheType = "Q8_0")
+            assertEquals("Q8_0", info.cacheTypeK)
+            assertEquals("Q8_0", info.cacheTypeV)
+            assertEquals("ENABLED", info.flashAttentionPolicy)
+            assertFalse(info.gpuObserved)
+            val result = client.generate("A complete synthetic input.", 1, true)
+            assertEquals("end_of_generation", result.stopReason)
+            assertEquals("Q8_0", result.cacheTypeK)
+            assertEquals("Q8_0", result.cacheTypeV)
+            assertEquals(info.processId, result.processId)
+            assertTrue(result.workspaceBytes > 0)
+            assertFalse(result.gpuObserved)
+        } finally { client.closeAndAwait(); file.delete() }
     }
 
     @Test fun builtinTemplateUsesRealJniAndIpcAndRejectsControlsWithoutRawFallback() {

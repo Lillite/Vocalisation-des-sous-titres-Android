@@ -314,18 +314,36 @@
       },
       "id": 428415208,
       "source_commit": "5b7071d717308d8f97a7daaae909ec20bf633c70"
+    },
+    {
+      "tag": "v0.5.12-runtime",
+      "title": "Sous-titres en voix 0.5.12 — Calcul local, Qwen3.5 et diagnostic de chargement (préversion)",
+      "prerelease": true,
+      "latest": false,
+      "notes": "docs/releases/0.5.12-runtime.md",
+      "asset": {
+        "name": "SousTitresVoix-0.5.12-runtime.apk",
+        "version_name": "0.5.12-runtime",
+        "version_code": 19,
+        "application_id": "fr.soustitresvoix.player.translation",
+        "id": 690655343,
+        "size": 74067323,
+        "sha256": "7c545a143950acf7d893a2ec65df2c1587cf7e588801d462f7391e5cd9c97e56"
+      },
+      "id": 428590886,
+      "source_commit": "9f19792656b6a274297a3e23c2d142ddfdb33acc"
     }
   ],
   "next_release": {
-    "tag": "v0.5.12-runtime",
-    "title": "Sous-titres en voix 0.5.12 — Calcul local, Qwen3.5 et diagnostic de chargement (préversion)",
+    "tag": "v0.5.13-memory",
+    "title": "Sous-titres en voix 0.5.13 — Mémoire, suivi et reprise du calcul local (préversion)",
     "prerelease": true,
     "latest": false,
-    "notes": "docs/releases/0.5.12-runtime.md",
+    "notes": "docs/releases/0.5.13-memory.md",
     "asset": {
-      "name": "SousTitresVoix-0.5.12-runtime.apk",
-      "version_name": "0.5.12-runtime",
-      "version_code": 19,
+      "name": "SousTitresVoix-0.5.13-memory.apk",
+      "version_name": "0.5.13-memory",
+      "version_code": 20,
       "application_id": "fr.soustitresvoix.player.translation"
     }
   }

@@ -39,14 +39,16 @@ private class NativeTranslationBackend(context: Context) : LocalGgufBackend {
         executionMode: String, settings: LocalGgufLoadSettings): LocalGgufBackend.Info =
         client.open(file, threads, contextTokens, cancelled, executionMode = executionMode,
             gpuLayers = settings.gpuLayers, batchTokens = settings.batchTokens,
-            microBatchTokens = settings.microBatchTokens, compactSwa = settings.compactSwa).let {
+            microBatchTokens = settings.microBatchTokens, compactSwa = settings.compactSwa, kvCacheType = settings.kvCacheType).let {
             LocalGgufBackend.Info(it.name, it.architecture, LocalTranslationPerformance(phase = "load",
                 requestedMode = it.requestedMode, backend = it.backend, device = it.device,
                 gpuObserved = false, loadMs = it.loadMs, peakRssBytes = it.peakRssBytes,
                 currentRssBytes = it.residentBytes, availableRamBytes = it.availableRamBytes, fallbackReason = it.fallbackReason,
                 diagnostic = it.diagnostic, openClTransport = it.openClTransport, loadProfile = it.loadProfile,
                 batchTokens = it.batchTokens, microBatchTokens = it.microBatchTokens, compactSwa = it.compactSwa,
-                requestedGpuLayers = it.requestedGpuLayers, actualGpuLayers = it.actualGpuLayers),
+                requestedGpuLayers = it.requestedGpuLayers, actualGpuLayers = it.actualGpuLayers,
+                processId = it.processId, cacheTypeK = it.cacheTypeK, cacheTypeV = it.cacheTypeV,
+                flashAttentionPolicy = it.flashAttentionPolicy),
                 chatTemplateAvailable = it.chatTemplateAvailable)
         }
     override fun generate(prompt: String, maxOutputTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Generation =
@@ -62,7 +64,11 @@ private class NativeTranslationBackend(context: Context) : LocalGgufBackend {
             currentRssBytes = residentBytes, availableRamBytes = availableRamBytes,
             gpuGraphNodes = gpuGraphNodes, fallbackReason = fallbackReason, diagnostic = diagnostic,
             openClTransport = openClTransport, batchTokens = batchTokens, microBatchTokens = microBatchTokens,
-            compactSwa = compactSwa, requestedGpuLayers = requestedGpuLayers, actualGpuLayers = actualGpuLayers))
+            compactSwa = compactSwa, requestedGpuLayers = requestedGpuLayers, actualGpuLayers = actualGpuLayers,
+            processId = processId, cacheTypeK = cacheTypeK, cacheTypeV = cacheTypeV, flashAttentionPolicy = flashAttentionPolicy,
+            startResidentBytes = startResidentBytes, prefillResidentBytes = prefillResidentBytes,
+            cacheResetReason = cacheResetReason, cacheResets = cacheResets, workspaceGrowths = workspaceGrowths,
+            workspaceBytes = workspaceBytes))
     }
     override fun cancel() = client.cancel()
     override fun close() = client.close()
@@ -274,8 +280,8 @@ class LocalGgufTranslationEngine internal constructor(
         try {
             created.setProgressListener { progress ->
                 if (!closed.get() && !cancelled() && synchronized(state) { backend === created })
-                    measured(LocalTranslationPerformance(phase = "loading", requestedMode = executionMode,
-                        attemptReport = progress.render()))
+                    measured(LocalTranslationPerformance(phase = "progress", requestedMode = executionMode,
+                        processId = progress.processId, progress = progress))
             }
             val metadata = created.openConfigured(model.file, threads, CONTEXT_TOKENS,
                 { closed.get() || cancelled() }, runningMode, loadSettings)

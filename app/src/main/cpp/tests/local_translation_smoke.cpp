@@ -5,6 +5,7 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -250,10 +251,103 @@ void check_gguf_chat_templates(const std::string & fixtures, const std::string &
               << ", rejected_requests=" << evidence.rejected_requests
               << ", boundary_checks=" << evidence.boundary_checks << ".\n";
 }
+
+std::vector<std::string> moving_two_turn_prompts() {
+    std::vector<std::string> prompts;
+    for (int current = 0; current < 25; ++current) {
+        std::string prompt = "Translate exactly.\n";
+        for (int previous = std::max(0, current - 2); previous < current; ++previous)
+            prompt += "User " + std::to_string(previous) + ": " + std::string(80, 'a' + previous % 20) + ".\nModel: probe\n";
+        prompt += "User " + std::to_string(current) + ": " + std::string(80, 'a' + current % 20) + ".\nModel:";
+        prompts.push_back(std::move(prompt));
+    }
+    return prompts;
+}
+
+void check_moving_window_workspace(const std::string & model) {
+    const auto prompts = moving_two_turn_prompts();
+    std::vector<std::vector<float>> logits;
+    long long growths = -1, bytes = -1, resets = 0;
+    const auto started = std::chrono::steady_clock::now();
+    {
+        subtitle_local::Session warm;
+        assert(warm.open(model, 1, 512, "CPU", -1, "", 64, 32, true).code == "OK");
+        for (const auto & prompt : prompts) {
+            std::vector<std::pair<std::string, int>> events;
+            const auto response = warm.generate(prompt, 1, true, false,
+                [&](const char * phase, int percent) { events.emplace_back(phase, percent); });
+            check_output(response);
+            assert(response.cache_type_k == "F16" && response.cache_type_v == "F16");
+            assert(response.flash_attention_policy == "AUTO");
+            assert(events.size() >= 5 && events.front().first == "TOKENIZE");
+            assert(events.back() == std::make_pair(std::string("COMPLETE"), 100));
+            for (const auto & event : events) assert(event.second >= -1 && event.second <= 100);
+            if (growths < 0) { growths = response.workspace_growths; bytes = response.workspace_bytes; }
+            assert(response.workspace_growths == growths && response.workspace_bytes == bytes);
+            assert(response.workspace_bytes >= 512 * 2 * static_cast<long long>(sizeof(llama_token)) + 256);
+            assert(response.start_resident_bytes >= -1 && response.prefill_resident_bytes >= -1);
+            resets = response.cache_resets;
+            logits.push_back(warm.test_logits());
+        }
+    }
+    const auto warm_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
+    float error = 0;
+    for (size_t index = 0; index < prompts.size(); ++index) {
+        subtitle_local::Session fresh;
+        assert(fresh.open(model, 1, 512, "CPU", -1, "", 64, 32, true).code == "OK");
+        check_output(fresh.generate(prompts[index], 1, true));
+        error = std::max(error, difference(logits[index], fresh.test_logits()));
+    }
+    assert(error < 0.00002f && resets > 1);
+    std::cout << "Moving two-turn window: requests=25, post-warmup workspace growths=0, workspace bytes="
+              << bytes << ", cache resets=" << resets << ", cached-vs-fresh maximum error " << error
+              << ", elapsed including load us=" << warm_us << ".\n";
+}
+
+void check_quantized_cache(const std::string & model, const std::string & label, bool compact) {
+    const auto prompts = moving_two_turn_prompts();
+    std::vector<std::vector<float>> logits;
+    {
+        subtitle_local::Session warm;
+        const auto info = warm.open(model, 1, 512, "CPU", -1, "", 64, 32, compact, {}, "Q8_0");
+        if (info.code != "OK") std::cerr << info.json() << '\n';
+        assert(info.code == "OK" && info.cache_type_k == "Q8_0" && info.cache_type_v == "Q8_0");
+        assert(info.flash_attention_policy == "ENABLED");
+        assert(info.json().find("\"cacheTypeK\":\"Q8_0\"") != std::string::npos);
+        for (const auto & prompt : prompts) {
+            const auto result = warm.generate(prompt, 1, true);
+            check_output(result);
+            assert(result.cache_type_k == "Q8_0" && result.cache_type_v == "Q8_0");
+            logits.push_back(warm.test_logits());
+        }
+    }
+    float cached_error = 0, f16_error = 0;
+    for (size_t index = 0; index < prompts.size(); ++index) {
+        {
+            subtitle_local::Session fresh;
+            assert(fresh.open(model, 1, 512, "CPU", -1, "", 64, 32, compact, {}, "Q8_0").code == "OK");
+            check_output(fresh.generate(prompts[index], 1, true));
+            cached_error = std::max(cached_error, difference(logits[index], fresh.test_logits()));
+        }
+        {
+            subtitle_local::Session f16;
+            const auto info = f16.open(model, 1, 512, "CPU", -1, "", 64, 32, compact);
+            assert(info.code == "OK" && info.cache_type_k == "F16" && info.cache_type_v == "F16");
+            check_output(f16.generate(prompts[index], 1, true));
+            // Quantization changes attention states. Record its actual finite
+            // logit delta; matching synthetic probe tokens is not a universal
+            // equivalence or a linguistic-quality certification.
+            f16_error = std::max(f16_error, difference(logits[index], f16.test_logits()));
+        }
+    }
+    assert(cached_error < 0.00002f && std::isfinite(f16_error));
+    std::cout << "Quantized cache " << label << ": requests=25, cached-vs-fresh maximum error " << cached_error
+              << ", Q8-vs-F16 maximum error " << f16_error << ", synthetic output tokens equal=1.\n";
+}
 #endif
 }
 int main(int argc, char ** argv) {
-    assert(argc >= 3 && argc <= 6);
+    assert(argc >= 3 && argc <= 8);
     check_greedy_chain_equivalence();
     {
         // Bounds must fail before a backend is initialized or a model lease is
@@ -269,6 +363,11 @@ int main(int argc, char ** argv) {
                 [&](const char *, int) { progress_called = true; });
             assert(result.code == "CONTEXT" && !progress_called);
         }
+        subtitle_local::Session invalid_cache;
+        bool invalid_cache_progress = false;
+        assert(invalid_cache.open(argv[1], 1, 512, "CPU", -1, "", 64, 32, false,
+            [&](const char *, int) { invalid_cache_progress = true; }, "unknown").code == "CONTEXT");
+        assert(!invalid_cache_progress);
         std::vector<std::pair<std::string, int>> progress_events;
         subtitle_local::Session small;
         const auto info = small.open(argv[1], 1, 512, "CPU", -1, "", 64, 32, false,
@@ -303,6 +402,8 @@ int main(int argc, char ** argv) {
             [](const char *, int) { throw std::runtime_error("synthetic telemetry failure"); });
         assert(info.code == "OK");
         check_output(listener_failure.generate("Telemetry must not own inference.", 1, true));
+        check_output(listener_failure.generate("Nor may a generation listener own inference.", 1, true, false,
+            [](const char *, int) { throw std::runtime_error("synthetic telemetry failure"); }));
     }
     {
         subtitle_local::Session cancelled_during_load;
@@ -313,6 +414,16 @@ int main(int argc, char ** argv) {
         assert(result.code == "CANCELLED");
         subtitle_local::Session next;
         assert(next.open(argv[1], 1, 512).code == "OK");
+    }
+    {
+        subtitle_local::Session cancelled_during_prefill;
+        assert(cancelled_during_prefill.open(argv[1], 1, 512).code == "OK");
+        const auto result = cancelled_during_prefill.generate("Cancel before evaluating this complete input.", 1, true, false,
+            [&](const char * stage, int) {
+                if (std::string(stage) == "PREFILL") cancelled_during_prefill.cancel();
+            });
+        assert(result.code == "CANCELLED" && result.output.empty());
+        assert(result.cache_reset_reason == "FAILURE");
     }
     {
         subtitle_local::Session first;
@@ -461,7 +572,7 @@ int main(int argc, char ** argv) {
                   << ", changed-context delta " << context_difference << ".\n";
     }
     if (argc >= 5) check_gguf_chat_templates(argv[4], argv[1]);
-    if (argc == 6) {
+    if (argc >= 6) {
         const std::string introduction = "Original context " + std::string(300, 'a');
         const std::vector<std::string> prompts = {
             introduction, introduction + " Another request.",
@@ -515,7 +626,10 @@ int main(int argc, char ** argv) {
         std::cout << "Compact SWA: requests=6, safe_recompute=1, short_reuse=1, cached-vs-fresh maximum error "
                   << compact_error << ", compact-vs-full maximum error " << full_error
                   << ", compact-vs-full relative error " << full_relative_error << ".\n";
+        check_moving_window_workspace(argv[5]);
     }
+    if (argc >= 7) check_quantized_cache(argv[6], "Llama", false);
+    if (argc >= 8) check_quantized_cache(argv[7], "Gemma-SWA", true);
 #endif
     std::cout << "Persistent native session: EOS, exact evaluated input/output prefix reuse, context isolation, failure reset, cancellation, CPU fallback, strict GPU rejection, probe exclusion and measured load-phase accounting passed.\n";
     return 0;
