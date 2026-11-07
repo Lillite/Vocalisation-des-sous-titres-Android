@@ -28,15 +28,19 @@ internal class LocalGgufBenchmark(
         if (engine is LocalGgufTranslationEngine) engine.closeAndAwait(timeoutMs = 10_000)
         else engine.close()
     },
-    private val playbackSnapshot: () -> PlaybackObservation? = { null }
+    private val playbackSnapshot: () -> PlaybackObservation? = { null },
+    private val restartModelProcess: (() -> Boolean) -> Unit = { cancelled ->
+        LocalGgufRuntime.restartIdleProcess(context.applicationContext, cancelled)
+    }
 ) : AutoCloseable {
-    enum class Scenario { SHORT, VARIED, CONTEXT_POLICIES }
+    enum class Scenario { SHORT, VARIED, CONTEXT_POLICIES, PROFILES }
     enum class Order { CPU_THEN_GPU, GPU_THEN_CPU }
     data class Options(val scenario: Scenario = Scenario.SHORT,
         val order: Order = Order.CPU_THEN_GPU, val reopenForLoad: Boolean = false,
         val contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO,
         val qualityCorpus: Boolean = false, val gpuMode: String = "OPENCL",
-        val loadSettings: LocalGgufLoadSettings = LocalGgufLoadSettings())
+        val loadSettings: LocalGgufLoadSettings = LocalGgufLoadSettings(),
+        val includeCompatibility: Boolean = false)
     /** Immutable, read-only observations supplied by the player's application thread. */
     data class PlaybackObservation(val observedAtMs: Long = 0, val mediaGeneration: Long = 0,
         val mediaOpened: Boolean = false, val playing: Boolean = false, val positionMs: Long = 0,
@@ -116,7 +120,9 @@ internal class LocalGgufBenchmark(
         val loadPerformance: LocalTranslationPerformance? = null, val plannedSamples: Int = 2,
         val playbackBefore: PlaybackObservation? = null, val playbackAfter: PlaybackObservation? = null,
         val startedAtMs: Long = 0, val finishedAtMs: Long = 0,
-        val contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO)
+        val contextPolicy: LocalGgufContextPolicy = LocalGgufContextPolicy.RECENT_TWO,
+        val loadSettings: LocalGgufLoadSettings = LocalGgufLoadSettings(), val profileLabel: String = "",
+        val processRestarted: Boolean = false)
     data class State(val status: String = "Prêt. Aucun essai comparatif lancé.", val busy: Boolean = false,
         val modelSha256: String = "", val modelBytes: Long = 0, val threads: Int = 4,
         val profile: LocalGgufProfile = LocalGgufProfile.AUTO, val runs: List<Run> = emptyList(),
@@ -138,7 +144,7 @@ internal class LocalGgufBenchmark(
         if (threads !in 1..8) {
             publish(state.copy(status = "Nombre de threads invalide : indique un entier de 1 à 8.")); return
         }
-        if (options.gpuMode !in setOf("OPENCL", "VULKAN")) {
+        if (options.gpuMode !in setOf("OPENCL", "VULKAN", "HEXAGON")) {
             publish(state.copy(status = "Moteur GPU invalide : choisis OpenCL ou Vulkan.")); return
         }
         try { options.loadSettings.validate() }
@@ -154,13 +160,13 @@ internal class LocalGgufBenchmark(
             var fatal = false
             try {
                 LocalGgufModelStore(app).acquire(model).use {
-                    val modes = if (options.order == Order.CPU_THEN_GPU) listOf("CPU", options.gpuMode) else listOf(options.gpuMode, "CPU")
                     val contextComparison = options.scenario == Scenario.CONTEXT_POLICIES
-                    val executions = if (contextComparison) LocalGgufContextPolicy.entries.map { options.gpuMode to it }
-                        else modes.map { it to options.contextPolicy }
-                    sessions@ for ((mode, policy) in executions) {
-                        val runLabel = if (contextComparison) "GPU $mode — ${policy.label}" else "Mode $mode"
-                        for (reopening in if (options.reopenForLoad && !contextComparison) listOf(false, true) else listOf(false)) {
+                    val executions = executionPlans(options)
+                    sessions@ for (plan in executions) {
+                        val mode = plan.mode; val policy = plan.policy
+                        val runLabel = if (plan.label.isNotEmpty()) plan.label
+                            else if (contextComparison) "Accélérateur $mode — ${policy.label}" else "Mode $mode"
+                        for (reopening in if (options.reopenForLoad && !contextComparison && options.scenario != Scenario.PROFILES) listOf(false, true) else listOf(false)) {
                             if (token.get() || closed) break@sessions
                             val planned = if (reopening) cues(options).take(1) else cues(options)
                             val before = snapshot()
@@ -175,11 +181,18 @@ internal class LocalGgufBenchmark(
                             var loadMs = 0L
                             var activeFrames: MutableList<LocalTranslationPerformance>? = null
                             var tooManyFrames = false
+                            var processRestarted = false
                             try {
+                                if (plan.restartBefore) {
+                                    post(owner) { it.copy(status = "$runLabel : renouvellement du processus de calcul inactif…") }
+                                    restartModelProcess { token.get() || closed }
+                                    processRestarted = true
+                                    if (token.get() || closed) throw TranslationCancelledException()
+                                }
                                 val config = TranslationProviderConfig(TranslationProvider.LOCAL_GGUF,
                                     localModel = model, localThreads = threads, localContext = "",
                                     localExecution = mode, localProfile = profile, localContextPolicy = policy,
-                                    localLoadSettings = options.loadSettings)
+                                    localLoadSettings = plan.settings)
                                 val activeEngine = engineFactory(config).also { engine = it }
                                 (activeEngine as? LocalTranslationPerformanceSource)?.setPerformanceListener { performance ->
                                     latest = performance
@@ -256,7 +269,7 @@ internal class LocalGgufBenchmark(
                             val playbackReadAt = clock()
                             results += Run(mode, samples.toList(), before, environmentAfter, (finished - started).coerceAtLeast(0),
                                 failure, clean, loadMs, latest, reopening, loadPerformance, planned.size,
-                                playbackBefore, playbackAfter, started, playbackReadAt, policy)
+                                playbackBefore, playbackAfter, started, playbackReadAt, policy, plan.settings, plan.label, processRestarted)
                             val copy = results.toList()
                             post(owner) { it.copy(runs = copy, currentPerformance = null,
                                 status = if (failure == null) "$runLabel${if (reopening) ", réouverture" else ""} terminé." else "$runLabel : $failure") }
@@ -272,7 +285,8 @@ internal class LocalGgufBenchmark(
                 post(owner) { it.copy(status = "Le modèle a changé ou n’est plus disponible. Prépare le modèle actuel avant de relancer le comparatif.") }
             } finally {
                 val copy = results.toList()
-                val expected = if (options.scenario == Scenario.CONTEXT_POLICIES) LocalGgufContextPolicy.entries.size
+                val expected = if (options.scenario == Scenario.PROFILES) executionPlans(options).size
+                    else if (options.scenario == Scenario.CONTEXT_POLICIES) LocalGgufContextPolicy.entries.size
                     else if (options.reopenForLoad) 4 else 2
                 post(owner) {
                     it.copy(busy = false, runs = copy, currentPerformance = null, status = when {
@@ -281,6 +295,7 @@ internal class LocalGgufBenchmark(
                         copy.size == expected && copy.all { run -> run.failure == null } ->
                             if (options.scenario == Scenario.CONTEXT_POLICIES)
                                 "Comparatif des stratégies terminé. Compare chaque source et traduction ; aucun classement automatique de fidélité."
+                            else if (options.scenario == Scenario.PROFILES) "Comparatif de profils terminé. Aucun profil n’est sélectionné ou enregistré automatiquement ; compare mémoire, temps et fidélité."
                             else "Comparatif terminé. Compare les temps, les moteurs observés et les sorties synthétiques."
                         copy.any { run -> run.failure != null } -> "Comparatif interrompu après un échec. Consulte le résultat du mode concerné."
                         else -> "Comparatif terminé sans exécution GPU validée."
@@ -296,13 +311,19 @@ internal class LocalGgufBenchmark(
         if (value.requestedMode != mode) throw BenchmarkFailure("Les mesures ne correspondent pas au mode demandé ; ce passage n’est pas validé.")
         if (value.phase != "generation" || value.promptMs < 0 || value.generationMs < 0 || value.generatedTokens < 0 ||
             value.promptTokens < 1 || value.cachedPromptTokens < 0 || value.promptEvaluatedTokens < 1 ||
-            value.cachedPromptTokens.toLong() + value.promptEvaluatedTokens != value.promptTokens.toLong() || value.gpuGraphNodes < 0)
+            value.cachedPromptTokens.toLong() + value.promptEvaluatedTokens != value.promptTokens.toLong() ||
+            value.gpuGraphNodes < 0 || value.npuGraphNodes < 0 ||
+            value.npuObserved != (value.backend == "HEXAGON" && value.npuGraphNodes > 0) ||
+            value.npuGraphNodes > 0 && value.backend != "HEXAGON")
             throw BenchmarkFailure("Les mesures natives de cette occurrence sont incohérentes ; ce passage n’est pas validé.")
-        if (mode == "CPU" && (value.backend != "CPU" || value.gpuObserved || value.gpuGraphNodes > 0 || value.openClTransport.isNotEmpty()))
+        if (mode == "CPU" && (value.backend != "CPU" || value.gpuObserved || value.gpuGraphNodes > 0 || value.npuObserved || value.npuGraphNodes > 0 || value.openClTransport.isNotEmpty()))
             throw BenchmarkFailure("Le passage CPU n’a pas confirmé une exécution CPU seule ; ce passage n’est pas validé.")
         if (mode == "OPENCL" && (value.backend != "OPENCL" || value.openClTransport != "DIRECT" || !value.gpuObserved || value.gpuGraphNodes <= 0))
             throw TranslationFailure(TranslationFailure.Reason.LOCAL_BACKEND)
         if (mode == "VULKAN" && (value.backend != "VULKAN" || value.openClTransport.isNotEmpty() || !value.gpuObserved || value.gpuGraphNodes <= 0))
+            throw TranslationFailure(TranslationFailure.Reason.LOCAL_BACKEND)
+        if (mode == "HEXAGON" && (value.backend != "HEXAGON" || value.openClTransport.isNotEmpty() ||
+                value.gpuObserved || value.gpuGraphNodes > 0 || !value.npuObserved || value.npuGraphNodes <= 0))
             throw TranslationFailure(TranslationFailure.Reason.LOCAL_BACKEND)
     }
     fun cancel() {
@@ -318,7 +339,30 @@ internal class LocalGgufBenchmark(
         if (closed) return
         closed = true; sequence++; cancelled.set(true); worker.shutdownNow(); main.removeCallbacksAndMessages(null)
     }
+    data class ExecutionPlan(val mode: String, val policy: LocalGgufContextPolicy,
+        val settings: LocalGgufLoadSettings, val label: String = "", val restartBefore: Boolean = false)
     companion object {
+        internal fun executionPlans(options: Options): List<ExecutionPlan> {
+            if (options.scenario == Scenario.PROFILES) {
+                val base = options.loadSettings.copy(qualcommCompatibility = false)
+                return buildList {
+                    add(ExecutionPlan(options.gpuMode, options.contextPolicy, base.copy(batchTokens = 128, microBatchTokens = 32),
+                        "Accélérateur ${options.gpuMode} — lots 128/32", restartBefore = true))
+                    add(ExecutionPlan(options.gpuMode, options.contextPolicy, base.copy(batchTokens = 64, microBatchTokens = 16),
+                        "Accélérateur ${options.gpuMode} — lots 64/16"))
+                    add(ExecutionPlan("CPU", options.contextPolicy, base.copy(batchTokens = 64, microBatchTokens = 16, nativeCpuWeights = true),
+                        "CPU — poids natifs, lots 64/16"))
+                    if (options.includeCompatibility && options.gpuMode == "VULKAN")
+                        add(ExecutionPlan("VULKAN", options.contextPolicy,
+                            base.copy(batchTokens = 64, microBatchTokens = 16, qualcommCompatibility = true),
+                            "Vulkan Qualcomm — compatibilité expérimentale, lots 64/16", restartBefore = true))
+                }
+            }
+            if (options.scenario == Scenario.CONTEXT_POLICIES)
+                return LocalGgufContextPolicy.entries.map { ExecutionPlan(options.gpuMode, it, options.loadSettings) }
+            val modes = if (options.order == Order.CPU_THEN_GPU) listOf("CPU", options.gpuMode) else listOf(options.gpuMode, "CPU")
+            return modes.map { ExecutionPlan(it, options.contextPolicy, options.loadSettings) }
+        }
         const val SOURCE = "The train leaves at 07:30. Please keep the blue door closed."
         private const val MAX_PERFORMANCE_FRAMES = 256
         // A fixed synthetic cue has a bounded response, keeping a complete report copyable.
@@ -328,6 +372,7 @@ internal class LocalGgufBenchmark(
             else cues(options.scenario)
         fun cues(scenario: Scenario): List<LocalGgufBenchmarkCue> = when (scenario) {
             Scenario.VARIED, Scenario.CONTEXT_POLICIES -> LocalGgufBenchmarkCorpus.cues
+            Scenario.PROFILES -> LocalGgufBenchmarkCorpus.cues.take(8)
             Scenario.SHORT -> listOf(LocalGgufBenchmarkCue("short-01", 0, 3_000, SOURCE, "dialogue"),
                 LocalGgufBenchmarkCue("short-02", 4_000, 7_000, SOURCE, "dialogue"))
         }

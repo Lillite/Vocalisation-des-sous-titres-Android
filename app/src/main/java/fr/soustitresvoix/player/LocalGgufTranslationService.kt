@@ -24,6 +24,7 @@ class LocalGgufTranslationService : Service() {
     private val destroyed = AtomicBoolean(false)
     private val running = AtomicBoolean(false)
     private val closing = AtomicBoolean(false)
+    private val progressMemory by lazy { LocalGgufProgressMemory(this) }
     @Volatile private var nativeSession: LocalGgufRuntime.NativeSession? = null
     @Volatile private var ownerCancelled = AtomicBoolean(false)
     private var owner: Long? = null
@@ -33,6 +34,7 @@ class LocalGgufTranslationService : Service() {
         if (destroyed.get()) return@Handler true
         val session = message.data.getLong(GgufMessages.SESSION)
         when (message.what) {
+            GgufMessages.RESTART_IDLE -> restartIdle(message, session)
             GgufMessages.OPEN -> open(message, session)
             GgufMessages.GENERATE -> generate(message, session)
             GgufMessages.CANCEL -> if (owner == session) endSession()
@@ -59,6 +61,7 @@ class LocalGgufTranslationService : Service() {
             getSystemService(ActivityManager::class.java)?.setProcessStateSummary(
                 "s=$session;r=$request;stage=$stage;p=$percent".toByteArray(Charsets.UTF_8))
         }
+        val memory = progressMemory.sample(stage)
         try { reply.send(Message.obtain(null, GgufMessages.PROGRESS).apply {
             data = Bundle().apply {
                 putLong(GgufMessages.SESSION, session); putLong(GgufMessages.REQUEST, request)
@@ -66,6 +69,7 @@ class LocalGgufTranslationService : Service() {
                 putInt(GgufMessages.PROCESS_ID, android.os.Process.myPid())
                 putLong(GgufMessages.STARTED_AT, startedAtMs)
                 putLong(GgufMessages.ELAPSED, ((System.nanoTime() - startedAtNanos) / 1_000_000).coerceAtLeast(0))
+                memory?.let { putLong(GgufMessages.RESIDENT_BYTES, it.residentBytes); putLong(GgufMessages.AVAILABLE_RAM_BYTES, it.availableRamBytes) }
             }
         }) } catch (_: RemoteException) { if (owner == session) ownerCancelled.set(true) }
     }
@@ -85,6 +89,26 @@ class LocalGgufTranslationService : Service() {
         try { deathRecipient?.let { replyBinder?.unlinkToDeath(it, 0) } } catch (_: RuntimeException) { }
         deathRecipient = null; replyBinder = null; owner = null
     }
+    private fun restartIdle(message: Message, session: Long) {
+        val reply = message.replyTo ?: return
+        val request = message.data.getLong(GgufMessages.REQUEST)
+        val processName = if (Build.VERSION.SDK_INT >= 28) Application.getProcessName()
+            else getSystemService(ActivityManager::class.java)?.runningAppProcesses
+                ?.firstOrNull { it.pid == android.os.Process.myPid() }?.processName
+        if (owner != null || running.get() || closing.get() || nativeSession != null) {
+            respond(reply, request, session, error(LocalGgufRuntime.Code.BUSY)); return
+        }
+        if (processName != "$packageName:model_diagnostic") {
+            respond(reply, request, session, error(LocalGgufRuntime.Code.BACKEND)); return
+        }
+        val reserved = try { LocalGgufRuntime.reserveProcessRestart() }
+            catch (_: LinkageError) { false } catch (_: Exception) { false }
+        // The native lease also excludes a diagnostic running in the other service.
+        if (!reserved) { respond(reply, request, session, error(LocalGgufRuntime.Code.BUSY)); return }
+        respond(reply, request, session, "{\"code\":\"OK\",\"restartScheduled\":true}")
+        destroyed.set(true)
+        main.postDelayed({ android.os.Process.killProcess(android.os.Process.myPid()) }, 50)
+    }
     private fun open(message: Message, session: Long) {
         val reply = message.replyTo ?: return
         val request = message.data.getLong(GgufMessages.REQUEST)
@@ -98,12 +122,18 @@ class LocalGgufTranslationService : Service() {
         val microBatch = message.data.getInt(GgufMessages.MICRO_BATCH, 128)
         val compactSwa = message.data.getBoolean(GgufMessages.COMPACT_SWA, false)
         val kvCacheType = message.data.getString(GgufMessages.KV_CACHE_TYPE) ?: "F16"
+        val flashAttentionPolicy = message.data.getString(GgufMessages.FLASH_ATTENTION) ?: "AUTO"
+        val qualcommCompatibility = message.data.getBoolean(GgufMessages.QUALCOMM_COMPAT, false)
+        val nativeCpuWeights = message.data.getBoolean(GgufMessages.NATIVE_CPU_WEIGHTS, false)
         val malformedSettings = listOf(GgufMessages.LAYERS, GgufMessages.BATCH, GgufMessages.MICRO_BATCH)
             .any { message.data.containsKey(it) && message.data.get(it) !is Int } ||
             message.data.containsKey(GgufMessages.COMPACT_SWA) && message.data.get(GgufMessages.COMPACT_SWA) !is Boolean ||
-            message.data.containsKey(GgufMessages.KV_CACHE_TYPE) && message.data.get(GgufMessages.KV_CACHE_TYPE) !is String
-        if (malformedSettings || file == null || threads !in 1..8 || context !in 128..2048 || execution !in setOf("AUTO", "CPU", "OPENCL", "VULKAN") ||
-            layers !in -1..1024 || layers == 0 && execution != "CPU" || batch !in 16..512 || microBatch !in 16..128 || microBatch > batch || kvCacheType !in setOf("F16", "Q8_0")) { respond(reply, request, session, error(LocalGgufRuntime.Code.MODEL)); return }
+            message.data.containsKey(GgufMessages.KV_CACHE_TYPE) && message.data.get(GgufMessages.KV_CACHE_TYPE) !is String ||
+            message.data.containsKey(GgufMessages.FLASH_ATTENTION) && message.data.get(GgufMessages.FLASH_ATTENTION) !is String ||
+            listOf(GgufMessages.QUALCOMM_COMPAT, GgufMessages.NATIVE_CPU_WEIGHTS).any { message.data.containsKey(it) && message.data.get(it) !is Boolean }
+        if (malformedSettings || file == null || threads !in 1..8 || context !in 128..2048 || execution !in setOf("AUTO", "CPU", "OPENCL", "VULKAN", "HEXAGON") ||
+            layers !in -1..1024 || layers == 0 && execution != "CPU" || batch !in 16..512 || microBatch !in 16..128 || microBatch > batch || kvCacheType !in setOf("F16", "Q8_0") || flashAttentionPolicy !in setOf("AUTO", "ENABLED", "DISABLED") ||
+            kvCacheType == "Q8_0" && flashAttentionPolicy == "DISABLED") { respond(reply, request, session, error(LocalGgufRuntime.Code.MODEL)); return }
         registerOwner(reply, session)
         val cancelled = ownerCancelled
         running.set(true)
@@ -123,7 +153,8 @@ class LocalGgufTranslationService : Service() {
                 val cache = File(cacheRoot, "local-gguf-opencl-kernels").canonicalFile.takeIf {
                     it.path.startsWith(cacheRoot.path + File.separator) && (it.isDirectory || it.mkdirs())
                 }
-                opened.open(file, threads, context, execution, layers, cache, batch, microBatch, compactSwa, observer, kvCacheType).also { LocalGgufRuntime.info(it); succeeded = true }
+                opened.open(file, threads, context, execution, layers, cache, batch, microBatch, compactSwa, observer, kvCacheType,
+                    if (execution == "HEXAGON") HexagonRuntimeAssets.prepare(this, cancelled::get) else null, flashAttentionPolicy, qualcommCompatibility, nativeCpuWeights).also { LocalGgufRuntime.info(it); succeeded = true }
             } catch (failure: LocalGgufRuntime.Failure) { error(failure.code, failure.diagnostic) }
               catch (_: Exception) { error(LocalGgufRuntime.Code.MODEL) }
               catch (_: LinkageError) { error(LocalGgufRuntime.Code.BACKEND) }

@@ -62,7 +62,10 @@ internal class LocalGgufModelControls(
     private var storedLoadSettings = runCatching {
         LocalGgufLoadSettings(preferences.getInt("local-gpu-layers", -1), preferences.getInt("local-batch-tokens", 512),
             preferences.getInt("local-micro-batch-tokens", 128), preferences.getBoolean("local-compact-swa", false),
-            preferences.getString("local-kv-cache-type", "F16")?.takeIf { it == "F16" || it == "Q8_0" } ?: "F16")
+            preferences.getString("local-kv-cache-type", "F16")?.takeIf { it == "F16" || it == "Q8_0" } ?: "F16",
+            preferences.getString("local-flash-attention", "AUTO") ?: "AUTO",
+            preferences.getBoolean("local-qualcomm-compatibility", false),
+            preferences.getBoolean("local-native-cpu-weights", false))
             .also { it.validate() }
     }.getOrDefault(LocalGgufLoadSettings())
     private var gpuLayersField: EditText? = null
@@ -70,13 +73,20 @@ internal class LocalGgufModelControls(
     private var microBatchField: EditText? = null
     private var compactSwaChoice: CheckBox? = null
     private var quantizedKvChoice: CheckBox? = null
+    private var flashAttentionChoice: Spinner? = null
+    private var qualcommCompatibilityChoice: CheckBox? = null
+    private var nativeCpuWeightsChoice: CheckBox? = null
     private val loadingControls = mutableListOf<View>()
     val loadSettings: LocalGgufLoadSettings get() {
         fun value(field: EditText?, fallback: Int): Int = if (field == null) fallback else field.text.toString().toIntOrNull() ?: 0
         return LocalGgufLoadSettings(value(gpuLayersField, storedLoadSettings.gpuLayers),
             value(batchField, storedLoadSettings.batchTokens), value(microBatchField, storedLoadSettings.microBatchTokens),
             compactSwaChoice?.isChecked ?: storedLoadSettings.compactSwa,
-            quantizedKvChoice?.let { if (it.isChecked) "Q8_0" else "F16" } ?: storedLoadSettings.kvCacheType)
+            quantizedKvChoice?.let { if (it.isChecked) "Q8_0" else "F16" } ?: storedLoadSettings.kvCacheType,
+            flashAttentionChoice?.selectedItemPosition?.takeIf { it in FLASH_POLICIES.indices }?.let { FLASH_POLICIES[it] }
+                ?: storedLoadSettings.flashAttentionPolicy,
+            qualcommCompatibilityChoice?.isChecked ?: storedLoadSettings.qualcommCompatibility,
+            nativeCpuWeightsChoice?.isChecked ?: storedLoadSettings.nativeCpuWeights)
     }
 
     private fun dp(value: Int) = (value * activity.resources.displayMetrics.density).toInt()
@@ -115,7 +125,8 @@ internal class LocalGgufModelControls(
                 id = View.generateViewId(); contentDescription = "Exécution du modèle GGUF"
                 minimumHeight = dp(64)
                 adapter = choices(listOf("Automatique (recommandé)", "CPU uniquement", "GPU OpenCL uniquement — sans repli CPU",
-                    "GPU Vulkan uniquement — sans repli CPU"))
+                    "GPU Vulkan uniquement — sans repli CPU",
+                    "NPU Hexagon — expérimental ; sans repli CPU"))
                 setSelection(EXECUTION_MODES.indexOf(execution).coerceAtLeast(0))
                 onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                     override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -127,10 +138,11 @@ internal class LocalGgufModelControls(
                 addView(label("Exécution du modèle GGUF").apply { labelFor = spinner.id })
                 addView(spinner)
             }
-            addView(label("Automatique essaie le GPU OpenCL disponible et peut revenir au CPU avec une raison affichée. OpenCL seul et Vulkan seul refusent un GPU indisponible. Vulkan est une option de comparaison : aucun gain de vitesse ou de mémoire n’est garanti. Les mesures indiquent le moteur réellement utilisé ; choisir GPU ne prouve pas son exécution. Aucun calcul NPU n’est annoncé."))
+            addView(label("Automatique essaie le GPU OpenCL disponible et peut revenir au CPU avec une raison affichée. OpenCL seul et Vulkan seul refusent un GPU indisponible. Vulkan est une option de comparaison : aucun gain de vitesse ou de mémoire n’est garanti. Le mode NPU Hexagon est expérimental et refuse un accélérateur indisponible ; la participation de certains opérateurs CPU reste possible. Les mesures distinguent un calcul GPU et un calcul Hexagon réellement observés. Le choix d’un accélérateur ne prouve pas son exécution et n’ajoute pas de RAM au téléphone."))
         }
         if (showLoadChoices) {
             addView(label("Mémoire du calcul GGUF — réglages de chargement"))
+            addView(label("En mode Hexagon, le nombre de couches GPU ci-dessous règle les couches déportées vers le NPU. Les poids et la capacité de contexte restent ceux du modèle choisi."))
             fun number(title: String, initial: Int, signed: Boolean = false): EditText {
                 val input = EditText(activity).apply {
                     id = View.generateViewId(); textSize = 18f; minimumHeight = dp(64)
@@ -157,6 +169,28 @@ internal class LocalGgufModelControls(
                 isSingleLine = false; maxLines = Int.MAX_VALUE; ellipsize = null
             }.also { addView(it); loadingControls.add(it) }
             addView(label("Le cache K/V reste en F16 par défaut. L’option 8 bits conserve les poids du modèle mais réduit la précision des états d’attention ; sa compatibilité et la fidélité de ses traductions doivent être comparées. Un moteur incompatible doit signaler une erreur, sans changer silencieusement cette précision."))
+            flashAttentionChoice = Spinner(activity).apply {
+                id = View.generateViewId(); contentDescription = "Politique Flash Attention du modèle GGUF"
+                minimumHeight = dp(64)
+                adapter = choices(listOf("Flash Attention : automatique", "Flash Attention : activé explicitement",
+                    "Flash Attention : désactivé explicitement"))
+                setSelection(FLASH_POLICIES.indexOf(storedLoadSettings.flashAttentionPolicy).coerceAtLeast(0))
+            }.also { addView(label("Politique Flash Attention du modèle GGUF").apply { labelFor = it.id }); addView(it); loadingControls.add(it) }
+            addView(label("Ce choix est une politique demandée, pas une preuve d’exécution de Flash Attention. Le cache K/V 8 bits exige Flash Attention : Automatique demande alors son activation ; Désactivé est une configuration invalide. Une incompatibilité est signalée sans repli opaque de précision."))
+            qualcommCompatibilityChoice = CheckBox(activity).apply {
+                text = "Compatibilité Vulkan Qualcomm — expérimental ; nouveau processus requis après changement"
+                textSize = 18f; minimumHeight = dp(64); minHeight = dp(64)
+                isChecked = storedLoadSettings.qualcommCompatibility
+                isSingleLine = false; maxLines = Int.MAX_VALUE; ellipsize = null
+            }.also { addView(it); loadingControls.add(it) }
+            addView(label("Le profil de compatibilité concerne uniquement Vulkan sur pilote propriétaire Qualcomm. Il ajuste certains shaders ; il ne garantit ni stabilité ni gain de vitesse et ne change pas les poids. Son changement exige un nouveau processus de calcul, sinon une erreur explicite est présentée."))
+            nativeCpuWeightsChoice = CheckBox(activity).apply {
+                text = "Poids CPU natifs — éviter les conversions internes de quantification"
+                textSize = 18f; minimumHeight = dp(64); minHeight = dp(64)
+                isChecked = storedLoadSettings.nativeCpuWeights
+                isSingleLine = false; maxLines = Int.MAX_VALUE; ellipsize = null
+            }.also { addView(it); loadingControls.add(it) }
+            addView(label("Cette option conserve les poids CPU dans leur format natif et évite certains buffers de conversion accélérée. Elle peut ralentir le CPU et modifier les résultats numériques par rapport aux kernels accélérés. Le fichier GGUF n’est pas réécrit. Son bénéfice mémoire et sa fidélité doivent être mesurés."))
             fun preset(title: String, batch: Int, micro: Int) {
                 action(title) {
                     batchField?.setText(batch.toString()); microBatchField?.setText(micro.toString())
@@ -164,6 +198,7 @@ internal class LocalGgufModelControls(
             }
             preset("Lots standard : 512 et 128 tokens", 512, 128)
             preset("Réduire la mémoire temporaire : 128 et 32 tokens", 128, 32)
+            preset("Profil mémoire prudent : lot 64 et micro-lot 16 tokens", 64, 16)
             addView(label("Ces réglages conservent les poids, le texte complet, le contexte de 2048 tokens et la limite de sortie. Des lots plus petits peuvent ralentir l’entrée. Répartir les couches entre CPU et GPU ne crée pas de RAM supplémentaire. En mode CPU, le nombre de couches GPU est ignoré. Le cache compact peut demander un recalcul du contexte ; son bénéfice et la fidélité doivent être vérifiés. Aucune de ces commandes ne lance de calcul."))
         }
         profileSpinner = Spinner(activity).apply {
@@ -224,7 +259,10 @@ internal class LocalGgufModelControls(
             .putInt("local-gpu-layers", selectedLoadSettings.gpuLayers).putInt("local-batch-tokens", selectedLoadSettings.batchTokens)
             .putInt("local-micro-batch-tokens", selectedLoadSettings.microBatchTokens)
             .putBoolean("local-compact-swa", selectedLoadSettings.compactSwa)
-            .putString("local-kv-cache-type", selectedLoadSettings.kvCacheType).apply()
+            .putString("local-kv-cache-type", selectedLoadSettings.kvCacheType)
+            .putString("local-flash-attention", selectedLoadSettings.flashAttentionPolicy)
+            .putBoolean("local-qualcomm-compatibility", selectedLoadSettings.qualcommCompatibility)
+            .putBoolean("local-native-cpu-weights", selectedLoadSettings.nativeCpuWeights).apply()
     }
     fun setActive(value: Boolean) {
         active = value
@@ -325,7 +363,8 @@ internal class LocalGgufModelControls(
     }
     companion object {
         private val CONTEXT_POLICIES = LocalGgufContextPolicy.entries
-        private val EXECUTION_MODES = listOf("AUTO", "CPU", "OPENCL", "VULKAN")
+        private val FLASH_POLICIES = listOf("AUTO", "ENABLED", "DISABLED")
+        private val EXECUTION_MODES = listOf("AUTO", "CPU", "OPENCL", "VULKAN", "HEXAGON")
         private val PROFILES = LocalGgufProfile.entries
     }
 }

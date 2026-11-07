@@ -371,7 +371,9 @@ class LocalSrtTranslationControlsRobolectricTest {
                     assertTrue(input.textSize >= 18 * density)
                 }
                 val actions = descendants(scroll).filterIsInstance<Button>().toList()
-                assertEquals(18, actions.size)
+                assertEquals(21, actions.size)
+                for (label in listOf("Compatibilité Vulkan Qualcomm", "Poids CPU natifs", "Profil mémoire prudent"))
+                    assertEquals("New loading action remains accessible: $label", 1, actions.count { it.text.toString().startsWith(label) })
                 assertEquals(1, actions.count { it.text.toString() == "Cache d’attention K/V en 8 bits — expérimental ; F16 si désactivé" })
                 for (action in actions) {
                     assertNull(action.ellipsize)

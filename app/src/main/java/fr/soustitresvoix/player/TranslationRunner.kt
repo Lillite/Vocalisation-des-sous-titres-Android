@@ -82,7 +82,14 @@ class TranslationRunner(private val directory: File,
 
     @Synchronized fun run(plan: TranslationPlan, engine: TranslationEngine,
         cancelled: () -> Boolean, progress: (done: Int, total: Int) -> Unit,
-        policy: TranslationRunPolicy, validatedPrefix: (List<String>) -> Unit = NO_VALIDATED_PREFIX): TranslatedTrack {
+        policy: TranslationRunPolicy, validatedPrefix: (List<String>) -> Unit = NO_VALIDATED_PREFIX): TranslatedTrack =
+        runGuarded(plan, engine, cancelled, progress, policy, {}, validatedPrefix)
+
+    /** Local resource checks run only before an actual engine request, not a reusable result. */
+    @Synchronized fun runGuarded(plan: TranslationPlan, engine: TranslationEngine,
+        cancelled: () -> Boolean, progress: (done: Int, total: Int) -> Unit,
+        policy: TranslationRunPolicy, beforeRequest: () -> Unit,
+        validatedPrefix: (List<String>) -> Unit = NO_VALIDATED_PREFIX): TranslatedTrack {
         cacheWarning = null
         checkCancelled(cancelled)
         if (engine.id != plan.providerId) throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
@@ -98,7 +105,6 @@ class TranslationRunner(private val directory: File,
             return track
         }
         checkCancelled(cancelled)
-        progress(0, plan.cues.size)
         val restored = checkpoints?.read(plan)
         if (restored?.recoveredTail == true)
             cacheWarning = "Un journal interrompu ou endommagé a été récupéré jusqu’au dernier lot entièrement vérifié."
@@ -109,7 +115,7 @@ class TranslationRunner(private val directory: File,
         if (texts.isNotEmpty()) {
             progress(texts.size, plan.cues.size)
             if (validatedPrefix !== NO_VALIDATED_PREFIX) validatedPrefix(texts.toList())
-        }
+        } else progress(0, plan.cues.size)
         val remainingCharacters = plan.cues.drop(texts.size).sumOf { it.text.length.toLong() }
         if (remainingCharacters > policy.maximumNewCharacters) throw TranslationFailure(TranslationFailure.Reason.BUDGET)
         var translatedCharacters = texts.sumOf { it.length.toLong() }
@@ -149,9 +155,15 @@ class TranslationRunner(private val directory: File,
                             sources, translations, cancelled)
                     }?.takeIf { runCatching { part.complete(it) }.isSuccess }
                     if (cached != null) { exactHit = true; cached }
-                    else engine.translateWithContext(batch.texts, plan.sourceLanguage, plan.targetLanguage,
-                        sources, translations, cancelled).toList()
-                } else engine.translate(batch.texts, plan.sourceLanguage, plan.targetLanguage, cancelled).toList()
+                    else {
+                        beforeRequest(); checkCancelled(cancelled)
+                        engine.translateWithContext(batch.texts, plan.sourceLanguage, plan.targetLanguage,
+                            sources, translations, cancelled).toList()
+                    }
+                } else {
+                    beforeRequest(); checkCancelled(cancelled)
+                    engine.translate(batch.texts, plan.sourceLanguage, plan.targetLanguage, cancelled).toList()
+                }
             } catch (failure: TranslationFailure) {
                 // An explicit refusal did not produce a billable translation. Preserve
                 // the validated prefix without falsely marking the request as lost.

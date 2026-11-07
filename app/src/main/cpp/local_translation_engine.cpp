@@ -2,7 +2,10 @@
 #include "local_model_backend.h"
 #include "optional_opencl_loader.h"
 #include "optional_vulkan_backend.h"
+#include "optional_hexagon_backend.h"
+#include "model_memory_budget.h"
 #include "llama.h"
+#include "llama-ext.h" // One pinned internal API, contained in the helpers below.
 #include "ggml-backend.h"
 #include <algorithm>
 #include <chrono>
@@ -18,6 +21,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <cmath>
+#include <limits>
 
 namespace subtitle_local {
 namespace {
@@ -136,6 +140,83 @@ void measure_memory(Response & value) noexcept {
     value.peak_rss_bytes = peak_rss();
     value.resident_bytes = resident_sample();
     try { value.available_ram_bytes = available_ram_bytes(); } catch (...) { value.available_ram_bytes = -1; }
+    value.opencl_memory = subtitle_native::opencl_memory::snapshot();
+    value.vulkan_memory = subtitle_native::vulkan_memory_snapshot();
+}
+void memory_sample(Response & value, const char * stage) noexcept {
+    measure_memory(value);
+    try {
+        if (value.memory_samples.size() >= 8) value.memory_samples.erase(value.memory_samples.begin());
+        value.memory_samples.push_back({stage, value.resident_bytes, value.peak_rss_bytes, value.available_ram_bytes});
+    } catch (...) { } // Optional telemetry must not hide a low-memory failure.
+}
+long long bounded_sum(long long a, long long b) noexcept {
+    constexpr auto maximum = std::numeric_limits<long long>::max();
+    return a > maximum - b ? maximum : a + b;
+}
+long long bounded_bytes(size_t value) noexcept {
+    return value > static_cast<size_t>(std::numeric_limits<long long>::max()) ?
+        std::numeric_limits<long long>::max() : static_cast<long long>(value);
+}
+// This is the only consumer of llama-ext.h's pinned C++ buffer accounting.
+// Values describe backend buffers; never add them to RSS as separate physical
+// allocations, and do not treat the estimate as a device allocation guarantee.
+bool collect_memory(llama_context * context, std::vector<MemoryAllocation> & output) noexcept {
+    output.clear();
+    try {
+        const auto breakdown = llama_get_memory_breakdown(context);
+        for (const auto & entry : breakdown) {
+            const char * label = "OTHER";
+            if (ggml_backend_buft_is_host(entry.first)) label = "HOST";
+            else if (auto * device = ggml_backend_buft_get_device(entry.first)) {
+                auto * registration = ggml_backend_dev_backend_reg(device);
+                const char * name = registration ? ggml_backend_reg_name(registration) : "";
+                if (std::strcmp(name, "CPU") == 0) label = "CPU";
+                else if (std::strcmp(name, "OpenCL") == 0) label = "OPENCL";
+                else if (std::strcmp(name, "Vulkan") == 0) label = "VULKAN";
+                else if (std::strcmp(name, "HTP") == 0) label = "HEXAGON";
+            }
+            auto found = std::find_if(output.begin(), output.end(), [&](const auto & row) { return row.device == label; });
+            if (found == output.end()) { output.push_back({label}); found = output.end() - 1; }
+            found->model_bytes = bounded_sum(found->model_bytes, bounded_bytes(entry.second.model));
+            found->context_bytes = bounded_sum(found->context_bytes, bounded_bytes(entry.second.context));
+            found->compute_bytes = bounded_sum(found->compute_bytes, bounded_bytes(entry.second.compute));
+        }
+        return !output.empty();
+    } catch (...) { output.clear(); return false; }
+}
+long long allocation_total(const std::vector<MemoryAllocation> & rows) noexcept {
+    long long total = 0;
+    for (const auto & row : rows) total = bounded_sum(total, bounded_sum(row.model_bytes, bounded_sum(row.context_bytes, row.compute_bytes)));
+    return total;
+}
+long long device_allocation_total(const std::vector<MemoryAllocation> & rows, const char * device) noexcept {
+    long long total = 0;
+    for (const auto & row : rows) if (row.device == device)
+        total = bounded_sum(total, bounded_sum(row.model_bytes, bounded_sum(row.context_bytes, row.compute_bytes)));
+    return total;
+}
+bool vulkan_budget_short(const subtitle_native::VulkanMemorySnapshot & budget, long long required, long long reserve) noexcept {
+    // The legacy backend fallback reports heap capacity as "free". Only the
+    // separately captured EXT budget is admissible here; absence stays unknown.
+    return subtitle_native::device_memory_budget(budget.budget_observed, budget.budget_extension,
+        required, bounded_bytes(budget.budget_free_bytes), reserve) ==
+            subtitle_native::ModelMemoryBudget::HEADROOM_SHORT;
+}
+bool estimate_memory(const std::string & path, llama_model_params parameters, const llama_context_params & cp,
+        std::vector<MemoryAllocation> & output) noexcept {
+    output.clear(); // A failed retry must not retain rows from an earlier plan.
+    try {
+        parameters.no_alloc = true;
+        parameters.load_mode = LLAMA_LOAD_MODE_NONE;
+        parameters.check_tensors = false; // Metadata-only plan; real load still validates the tensors.
+        parameters.progress_callback = nullptr;
+        parameters.progress_callback_user_data = nullptr;
+        std::unique_ptr<llama_model, decltype(&llama_model_free)> model(llama_model_load_from_file(path.c_str(), parameters), llama_model_free);
+        if (!model) return false;
+        std::unique_ptr<llama_context, decltype(&llama_free)> context(llama_init_from_model(model.get(), cp), llama_free);
+        return context && collect_memory(context.get(), output);
+    } catch (...) { output.clear(); return false; }
 }
 ggml_backend_dev_t opencl_device() {
     for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
@@ -163,6 +244,10 @@ struct Session::State {
     long long workspace_growths = 0;
     long long cache_resets = 0;
     Response info;
+    long long observed_prefill_extra_bytes = 0;
+#ifdef SUBTITLE_NATIVE_TESTING
+    long long test_available_ram_bytes = -2; // -2 uses the real host sample.
+#endif
     bool gpu_selected = false;
     // The embedded source is only used by llama.cpp's bounded set of builtin
     // format recognizers. No Jinja program, macro or model-supplied code runs.
@@ -281,6 +366,7 @@ struct Session::State {
         std::vector<llama_token>().swap(decoded_tokens);
         std::vector<llama_token>().swap(input_tokens);
         std::vector<char>().swap(token_piece);
+        observed_prefill_extra_bytes = 0;
     }
 };
 Session::Session() : state_(std::make_unique<State>()) { }
@@ -298,6 +384,10 @@ std::string Response::json() const {
         << ",\"compactSwa\":" << (compact_swa ? "true" : "false") << ",\"promptTokens\":" << prompt_tokens
         << ",\"cacheTypeK\":" << quote(cache_type_k) << ",\"cacheTypeV\":" << quote(cache_type_v)
         << ",\"flashAttentionPolicy\":" << quote(flash_attention_policy)
+        << ",\"qualcommCompatibility\":" << (qualcomm_compatibility ? "true" : "false")
+        << ",\"nativeCpuWeights\":" << (native_cpu_weights ? "true" : "false")
+        << ",\"memoryReserveBytes\":" << memory_reserve_bytes
+        << ",\"observedPrefillExtraBytes\":" << observed_prefill_extra_bytes
         << ",\"cacheResetReason\":" << quote(cache_reset_reason) << ",\"cacheResets\":" << cache_resets
         << ",\"workspaceGrowths\":" << workspace_growths << ",\"workspaceBytes\":" << workspace_bytes
         << ",\"startResidentBytes\":" << start_resident_bytes << ",\"prefillResidentBytes\":" << prefill_resident_bytes
@@ -306,14 +396,53 @@ std::string Response::json() const {
         << ",\"requestedMode\":" << quote(requested_mode) << ",\"fallbackReason\":" << quote(fallback_reason)
         << ",\"requestedGpuLayers\":" << requested_gpu_layers << ",\"actualGpuLayers\":" << actual_gpu_layers
         << ",\"gpuObserved\":" << (gpu_observed ? "true" : "false") << ",\"gpuGraphNodes\":" << gpu_graph_nodes
+        << ",\"requestedNpuLayers\":" << requested_npu_layers << ",\"actualNpuLayers\":" << actual_npu_layers
+        << ",\"npuObserved\":" << (npu_observed ? "true" : "false") << ",\"npuGraphNodes\":" << npu_graph_nodes
         << ",\"chatTemplateAvailable\":" << (chat_template_available ? "true" : "false")
         << ",\"chatTemplateMode\":" << quote(chat_template_mode)
         << ",\"cachedPromptTokens\":" << cached_prompt_tokens << ",\"promptEvaluatedTokens\":" << prompt_evaluated_tokens
         << ",\"residentBytes\":" << resident_bytes << ",\"availableRamBytes\":" << available_ram_bytes;
+    out << ",\"memoryEstimateAvailable\":" << (memory_estimate_available ? "true" : "false")
+        << ",\"memoryBreakdownAvailable\":" << (memory_breakdown_available ? "true" : "false");
+    auto rows = [&](const char * key, const std::vector<MemoryAllocation> & values) {
+        out << ",\"" << key << "\":[";
+        bool first = true;
+        for (const auto & row : values) {
+            if (!first) out << ',';
+            first = false;
+            out << "{\"device\":" << quote(row.device) << ",\"modelBytes\":" << row.model_bytes
+                << ",\"contextBytes\":" << row.context_bytes << ",\"computeBytes\":" << row.compute_bytes << '}';
+        }
+        out << ']';
+    };
+    rows("memoryEstimate", memory_estimate);
+    rows("memoryBreakdown", memory_breakdown);
+    out << ",\"memorySamples\":[";
+    for (size_t i = 0; i < memory_samples.size(); ++i) {
+        if (i) out << ',';
+        const auto & sample = memory_samples[i];
+        out << "{\"stage\":" << quote(sample.stage) << ",\"residentBytes\":" << sample.resident_bytes
+            << ",\"peakRssBytes\":" << sample.peak_rss_bytes << ",\"availableRamBytes\":" << sample.available_ram_bytes << '}';
+    }
+    out << "],\"openClMemory\":{\"scratchCurrentBytes\":" << opencl_memory.scratch_current_bytes
+        << ",\"scratchPeakBytes\":" << opencl_memory.scratch_peak_bytes << ",\"uploadPeakBytes\":" << opencl_memory.upload_peak_bytes
+        << ",\"allocationFailures\":" << opencl_memory.allocation_failures << ",\"hostFallbacks\":" << opencl_memory.host_fallbacks
+        << ",\"poolEntries\":" << opencl_memory.pool_entries << ",\"poolBytes\":" << opencl_memory.pool_bytes
+        << ",\"skippedInitialBytes\":" << opencl_memory.skipped_initial_bytes << '}';
+    out << ",\"vulkanMemory\":{\"observed\":" << (vulkan_memory.observed ? "true" : "false")
+        << ",\"allocatedBytes\":" << vulkan_memory.allocated_bytes << ",\"peakAllocatedBytes\":" << vulkan_memory.peak_allocated_bytes
+        << ",\"allocations\":" << vulkan_memory.allocations << ",\"allocationFailures\":" << vulkan_memory.allocation_failures
+        << ",\"largestAllocationBytes\":" << vulkan_memory.largest_allocation_bytes << ",\"importedBytes\":" << vulkan_memory.imported_bytes
+        << ",\"hostVisibleBytes\":" << vulkan_memory.host_visible_bytes << '}';
+    out << ",\"vulkanBudget\":{\"observed\":" << (vulkan_memory.budget_observed ? "true" : "false")
+        << ",\"extension\":" << (vulkan_memory.budget_extension ? "true" : "false")
+        << ",\"budgetBytes\":" << vulkan_memory.budget_bytes << ",\"heapUsageBytes\":" << vulkan_memory.heap_usage_bytes
+        << ",\"freeBytes\":" << vulkan_memory.budget_free_bytes << ",\"heapCount\":" << vulkan_memory.budget_heap_count << '}';
     if (load_profile.present) {
         out << ",\"loadProfile\":{\"backendInitMs\":" << load_profile.backend_init_ms
             << ",\"openClPrepareMs\":" << load_profile.opencl_prepare_ms
             << ",\"vulkanPrepareMs\":" << load_profile.vulkan_prepare_ms
+            << ",\"hexagonPrepareMs\":" << load_profile.hexagon_prepare_ms
             << ",\"modelLoadMs\":" << load_profile.model_load_ms
             << ",\"contextInitMs\":" << load_profile.context_init_ms
             << ",\"openTotalMs\":" << load_profile.open_total_ms
@@ -333,14 +462,19 @@ std::string Response::json() const {
 Response Session::open(const std::string & path, int threads, int context_tokens, const std::string & execution,
         int gpu_layers, const std::string & cache_path, int batch_tokens, int micro_batch_tokens,
         bool compact_swa, const std::function<void(const char *, int)> & on_progress,
-        const std::string & kv_cache_type) {
+        const std::string & kv_cache_type, const std::string & hexagon_library_path,
+        const std::string & flash_attention_policy, bool qualcomm_compatibility, bool native_cpu_weights) {
     std::lock_guard<std::mutex> lock(operation_);
     const auto open_start = Clock::now();
     Response result;
     result.process_id = static_cast<int>(getpid());
     result.requested_mode = execution;
-    result.requested_gpu_layers = execution == "CPU" ? 0 : gpu_layers;
+    result.requested_gpu_layers = execution == "CPU" || execution == "HEXAGON" ? 0 : gpu_layers;
+    result.requested_npu_layers = execution == "HEXAGON" ? gpu_layers : 0;
     result.compact_swa = compact_swa;
+    result.qualcomm_compatibility = qualcomm_compatibility;
+    result.native_cpu_weights = native_cpu_weights;
+    result.flash_attention_policy = flash_attention_policy;
     if (kv_cache_type == "Q8_0") {
         result.cache_type_k = result.cache_type_v = "Q8_0";
         // A quantized V cache requires Flash Attention. Explicit selection
@@ -351,15 +485,18 @@ Response Session::open(const std::string & path, int threads, int context_tokens
     if (cancelled_.load()) { result.code = "CANCELLED"; return result; }
     if (state_->model || context_tokens < 128 || context_tokens > 2048 || threads < 1 || threads > 8 || path.empty() ||
         path.find('\0') != std::string::npos ||
-        (execution != "CPU" && execution != "AUTO" && execution != "OPENCL" && execution != "VULKAN") ||
+        (execution != "CPU" && execution != "AUTO" && execution != "OPENCL" && execution != "VULKAN" && execution != "HEXAGON") ||
         gpu_layers < -1 || gpu_layers > 1024 || (execution != "CPU" && gpu_layers == 0) ||
         batch_tokens < 16 || batch_tokens > 512 || micro_batch_tokens < 16 || micro_batch_tokens > 128 ||
-        micro_batch_tokens > batch_tokens || (kv_cache_type != "F16" && kv_cache_type != "Q8_0")) {
+        micro_batch_tokens > batch_tokens || (kv_cache_type != "F16" && kv_cache_type != "Q8_0") ||
+        (flash_attention_policy != "AUTO" && flash_attention_policy != "ENABLED" && flash_attention_policy != "DISABLED") ||
+        (kv_cache_type == "Q8_0" && flash_attention_policy == "DISABLED")) {
         result.code = "CONTEXT"; return result;
     }
     state_->lease = std::make_unique<subtitle_native::ModelLease>();
     if (!*state_->lease) { state_->lease.reset(); result.code = "BUSY"; return result; }
     auto release_on_error = [&]() { state_->clear_model(); state_->lease.reset(); };
+    subtitle_native::opencl_memory::reset_peaks();
     const char * phase = "BACKEND";
     try {
         report.notify(phase);
@@ -379,15 +516,39 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         // Android's OpenCL free-memory figure is only a total-memory upper bound.
         // AUTO avoids a full GPU allocation when the measured RAM cannot leave
         // 1 GiB for the context, staging buffers, player and other applications.
-        const bool budget_known = available >= 0 && bytes > 0;
-        const bool budget_short = budget_known && bytes > std::max(0LL, available - (1LL << 30));
+        const auto budget = subtitle_native::model_memory_budget(bytes, available, 1LL << 30);
+        const bool budget_known = budget != subtitle_native::ModelMemoryBudget::UNKNOWN;
+        const bool budget_short = budget == subtitle_native::ModelMemoryBudget::HEADROOM_SHORT;
+        if (execution != "AUTO" && budget_short) {
+            diagnose(result, "MODEL_LOAD", "RAM_BUDGET_INSUFFICIENT", open_start);
+            result.code = "MEMORY"; measure_memory(result); release_on_error(); return result;
+        }
         if (execution == "AUTO" && gpu_layers == -1 && (!budget_known || budget_short)) {
             result.fallback_reason = budget_known ? "OPENCL_RAM_BUDGET" : "OPENCL_RAM_UNKNOWN";
+        } else if (execution == "HEXAGON") {
+            phase = "HEXAGON";
+            report.notify(phase);
+            // This admission margin is an application heuristic, not Android's
+            // per-process limit or proof that an allocation will succeed. HTP
+            // mappings share physical RAM with host weights and the player.
+            if (budget_known && budget_short) {
+                diagnose(result, phase, "RAM_BUDGET_INSUFFICIENT", open_start);
+                result.code = "MEMORY"; measure_memory(result); release_on_error(); return result;
+            }
+            const auto hexagon_start = Clock::now();
+            const bool prepared = subtitle_native::prepare_hexagon(hexagon_library_path, &result.diagnostic);
+            if (prepared) gpu = subtitle_native::hexagon_device();
+            result.load_profile.hexagon_prepare_ms = profile_elapsed(hexagon_start);
+            if (!gpu) {
+                if (prepared) diagnose(result, "HEXAGON", "DEVICE_NOT_REGISTERED", open_start);
+                else result.diagnostic.elapsed_ms = profile_elapsed(open_start);
+                result.code = "BACKEND"; release_on_error(); return result;
+            }
         } else if (execution == "VULKAN") {
             phase = "VULKAN";
             report.notify(phase);
             const auto vulkan_start = Clock::now();
-            const bool prepared = subtitle_native::prepare_vulkan(&result.diagnostic);
+            const bool prepared = subtitle_native::prepare_vulkan(qualcomm_compatibility, &result.diagnostic);
             if (prepared) gpu = subtitle_native::vulkan_device();
             result.load_profile.vulkan_prepare_ms = profile_elapsed(vulkan_start);
             if (!gpu) {
@@ -412,6 +573,17 @@ Response Session::open(const std::string & path, int threads, int context_tokens
             }
         }
         bool use_gpu = gpu != nullptr;
+        auto context_parameters = [&]() {
+            auto cp = llama_context_default_params();
+            cp.n_ctx = context_tokens; cp.n_batch = std::min(context_tokens, batch_tokens); cp.n_ubatch = micro_batch_tokens;
+            cp.swa_full = !compact_swa;
+            if (kv_cache_type == "Q8_0") cp.type_k = cp.type_v = GGML_TYPE_Q8_0;
+            cp.flash_attn_type = result.flash_attention_policy == "ENABLED" ? LLAMA_FLASH_ATTN_TYPE_ENABLED :
+                result.flash_attention_policy == "DISABLED" ? LLAMA_FLASH_ATTN_TYPE_DISABLED : LLAMA_FLASH_ATTN_TYPE_AUTO;
+            cp.n_threads = threads; cp.n_threads_batch = threads; cp.offload_kqv = use_gpu; cp.op_offload = use_gpu;
+            cp.abort_callback = abort; cp.abort_callback_data = &cancelled_;
+            return cp;
+        };
         const auto load_start = Clock::now();
         for (int attempt = 0; attempt < 2; ++attempt) {
             state_->clear_model();
@@ -421,32 +593,41 @@ Response Session::open(const std::string & path, int threads, int context_tokens
             auto p = llama_model_default_params();
             ggml_backend_dev_t devices[] = {use_gpu ? gpu : cpu, nullptr};
             p.devices = devices; p.n_gpu_layers = use_gpu ? gpu_layers : 0; p.load_mode = LLAMA_LOAD_MODE_MMAP;
+            p.use_extra_bufts = !native_cpu_weights;
             p.progress_callback = progress; p.progress_callback_user_data = &report; p.check_tensors = true;
+            const auto cp = context_parameters();
+            result.memory_estimate_available = estimate_memory(path, p, cp, result.memory_estimate);
+            memory_sample(result, "BEFORE_MODEL_LOAD");
+            const auto estimate = allocation_total(result.memory_estimate);
+            if (execution != "AUTO" && result.memory_estimate_available &&
+                subtitle_native::model_memory_budget(estimate, result.available_ram_bytes, 1LL << 30) == subtitle_native::ModelMemoryBudget::HEADROOM_SHORT) {
+                diagnose(result, phase, "RAM_BUDGET_INSUFFICIENT", open_start);
+                result.code = "MEMORY"; release_on_error(); return result;
+            }
+            if (execution == "VULKAN" && result.memory_estimate_available &&
+                vulkan_budget_short(result.vulkan_memory, device_allocation_total(result.memory_estimate, "VULKAN"),
+                    subtitle_native::request_memory_reserve(0))) {
+                diagnose(result, phase, "RAM_BUDGET_INSUFFICIENT", open_start);
+                result.code = "MEMORY"; release_on_error(); return result;
+            }
             subtitle_native::reset_offload_observation();
             ++result.load_profile.load_attempts;
             const auto model_start = Clock::now();
             state_->model.reset(llama_model_load_from_file(path.c_str(), p));
             result.load_profile.model_load_ms += profile_elapsed(model_start);
+            memory_sample(result, "AFTER_MODEL_LOAD");
             if (cancelled_.load()) { result.code = "CANCELLED"; release_on_error(); return result; }
             if (!state_->model) {
                 diagnose(result, phase, "MODEL_LOAD_FAILED", open_start);
                 if (use_gpu && execution == "AUTO") { use_gpu = false; result.fallback_reason = "OPENCL_MODEL_LOAD_FAILED"; continue; }
                 result.code = use_gpu ? "BACKEND" : "MODEL"; release_on_error(); return result;
             }
-            auto cp = llama_context_default_params();
-            cp.n_ctx = context_tokens; cp.n_batch = std::min(context_tokens, batch_tokens); cp.n_ubatch = micro_batch_tokens;
-            cp.swa_full = !compact_swa;
-            if (kv_cache_type == "Q8_0") {
-                cp.type_k = GGML_TYPE_Q8_0; cp.type_v = GGML_TYPE_Q8_0;
-                cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
-            }
-            cp.n_threads = threads; cp.n_threads_batch = threads; cp.offload_kqv = use_gpu; cp.op_offload = use_gpu;
-            cp.abort_callback = abort; cp.abort_callback_data = &cancelled_;
             phase = "CONTEXT_INIT";
             report.notify(phase);
             const auto context_start = Clock::now();
             state_->context.reset(llama_init_from_model(state_->model.get(), cp));
             result.load_profile.context_init_ms += profile_elapsed(context_start);
+            memory_sample(result, "AFTER_CONTEXT_INIT");
             if (cancelled_.load()) { result.code = "CANCELLED"; release_on_error(); return result; }
             if (!state_->context) {
                 diagnose(result, phase, "CONTEXT_INIT_FAILED", open_start);
@@ -461,10 +642,11 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         }
         state_->gpu_selected = use_gpu;
         result.load_ms = elapsed(load_start);
-        result.backend = use_gpu ? (execution == "VULKAN" ? "VULKAN" : "OPENCL") : "CPU";
+        result.backend = use_gpu ? (execution == "HEXAGON" ? "HEXAGON" : execution == "VULKAN" ? "VULKAN" : "OPENCL") : "CPU";
         result.opencl_transport = result.backend == "OPENCL" ? "DIRECT" : "";
         result.device = use_gpu ? ggml_backend_dev_description(gpu) : cpu_description;
-        result.actual_gpu_layers = use_gpu ? subtitle_native::observed_offload_layers() : 0;
+        result.actual_gpu_layers = use_gpu && execution != "HEXAGON" ? subtitle_native::observed_offload_layers() : 0;
+        result.actual_npu_layers = use_gpu && execution == "HEXAGON" ? subtitle_native::observed_offload_layers() : 0;
         result.name = metadata(state_->model.get(), "general.name");
         result.architecture = metadata(state_->model.get(), "general.architecture");
         result.file_type = llama_ftype_name(llama_model_ftype(state_->model.get()));
@@ -473,6 +655,8 @@ Response Session::open(const std::string & path, int threads, int context_tokens
         result.context_tokens = llama_n_ctx(state_->context.get());
         result.batch_tokens = llama_n_batch(state_->context.get());
         result.micro_batch_tokens = llama_n_ubatch(state_->context.get());
+        result.memory_breakdown_available = collect_memory(state_->context.get(), result.memory_breakdown);
+        result.memory_reserve_bytes = subtitle_native::request_memory_reserve(state_->observed_prefill_extra_bytes);
         state_->prepare_workspace(static_cast<size_t>(result.context_tokens));
         state_->measure_workspace(result);
         phase = "CHAT_TEMPLATE";
@@ -503,10 +687,14 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
     result.code = "MODEL";
     result.process_id = static_cast<int>(getpid());
     result.start_resident_bytes = resident_sample();
+    result.observed_prefill_extra_bytes = state_->observed_prefill_extra_bytes;
+    result.memory_reserve_bytes = subtitle_native::request_memory_reserve(state_->observed_prefill_extra_bytes);
+    memory_sample(result, "BEFORE_REQUEST");
     OpenProgress report{cancelled_, on_progress};
     auto failed = [&](const char * code, const char * reason = "error") {
         const std::string failure_code = code;
-        if (failure_code == "MEMORY") diagnose(result, "GENERATION", "ALLOCATION_FAILED", generate_start);
+        if (failure_code == "MEMORY" && !(result.diagnostic.present() && std::strcmp(result.diagnostic.reason, "RESERVE_INSUFFICIENT") == 0))
+            diagnose(result, "GENERATION", "ALLOCATION_FAILED", generate_start);
         else if (failure_code == "RESPONSE") diagnose(result, "GENERATION", "UNEXPECTED_FAILURE", generate_start);
         result.code = code; result.stop_reason = reason; result.output.clear();
         // decode may have queued GPU work before returning an error, or a
@@ -518,6 +706,27 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
     };
     if (cancelled_.load()) return failed("CANCELLED", "cancelled");
     if (!state_->context || !state_->model) return failed("MODEL");
+    auto reserve_available = [&]() {
+        // This is a calibrated scheduling policy, not a claim that Android's
+        // limit has been reached. Unknown memory remains explicitly unknown.
+        measure_memory(result);
+#ifdef SUBTITLE_NATIVE_TESTING
+        if (state_->test_available_ram_bytes >= -1) result.available_ram_bytes = state_->test_available_ram_bytes;
+#endif
+        const bool system_short = result.available_ram_bytes >= 0 && result.available_ram_bytes < result.memory_reserve_bytes;
+        // Model allocations already exist at this point: compare remaining
+        // budget only with the calibrated request reserve, never with the
+        // model a second time or with RSS added to Vulkan allocations.
+        const bool device_short = result.backend == "VULKAN" &&
+            subtitle_native::device_memory_budget(result.vulkan_memory.budget_observed, result.vulkan_memory.budget_extension,
+                result.memory_reserve_bytes, bounded_bytes(result.vulkan_memory.budget_free_bytes), 0) ==
+                    subtitle_native::ModelMemoryBudget::HEADROOM_SHORT;
+        return !system_short && !device_short;
+    };
+    if (!reserve_available()) {
+        diagnose(result, "GENERATION", "RESERVE_INSUFFICIENT", generate_start);
+        return failed("MEMORY", "reserve_policy");
+    }
     if (output_tokens < 1 || output_tokens > 1024) return failed("INPUT_TOO_LONG");
     std::string rendered;
     if (use_model_template) {
@@ -561,8 +770,14 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
         result.cached_prompt_tokens = static_cast<int>(shared);
         result.prompt_evaluated_tokens = count - result.cached_prompt_tokens;
         subtitle_native::reset_gpu_graph_observation();
+        subtitle_native::reset_npu_graph_observation();
         const auto prompt_start = Clock::now();
         const int batch_size = static_cast<int>(llama_n_batch(state_->context.get()));
+        memory_sample(result, "BEFORE_PREFILL");
+        if (!reserve_available()) {
+            diagnose(result, "GENERATION", "RESERVE_INSUFFICIENT", generate_start);
+            return failed("MEMORY", "reserve_policy");
+        }
         report.notify("PREFILL", 0);
         for (int offset = static_cast<int>(shared); offset < count; offset += batch_size) {
             if (cancelled_.load()) return failed("CANCELLED", "cancelled");
@@ -573,6 +788,16 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
         llama_synchronize(state_->context.get());
         result.prompt_ms = elapsed(prompt_start);
         result.prefill_resident_bytes = resident_sample();
+        memory_sample(result, "AFTER_PREFILL");
+        if (result.start_resident_bytes >= 0 && result.prefill_resident_bytes > result.start_resident_bytes)
+            state_->observed_prefill_extra_bytes = std::max(state_->observed_prefill_extra_bytes,
+                result.prefill_resident_bytes - result.start_resident_bytes);
+        result.observed_prefill_extra_bytes = state_->observed_prefill_extra_bytes;
+        result.memory_reserve_bytes = subtitle_native::request_memory_reserve(state_->observed_prefill_extra_bytes);
+        if (!reserve_available()) {
+            diagnose(result, "GENERATION", "RESERVE_INSUFFICIENT", generate_start);
+            return failed("MEMORY", "reserve_policy");
+        }
         auto & sampler = state_->sampler;
         if (!sampler) return failed("RESPONSE");
         llama_sampler_reset(sampler.get());
@@ -616,9 +841,16 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
         result.generation_ms = elapsed(generation_start);
         if (result.code != "OK") return failed(result.code.c_str(), result.stop_reason.c_str());
         if (!utf8(result.output)) return failed("RESPONSE", "invalid_utf8");
-        result.gpu_graph_nodes = static_cast<long long>(subtitle_native::observed_gpu_graph_nodes());
-        result.gpu_observed = state_->gpu_selected && result.gpu_graph_nodes > 0;
-        if (state_->gpu_selected && !result.gpu_observed) {
+        const bool is_npu = result.backend == "HEXAGON";
+        result.gpu_graph_nodes = is_npu ? 0 : static_cast<long long>(subtitle_native::observed_gpu_graph_nodes());
+        result.gpu_observed = state_->gpu_selected && !is_npu && result.gpu_graph_nodes > 0;
+        result.npu_graph_nodes = is_npu ? static_cast<long long>(subtitle_native::observed_npu_graph_nodes()) : 0;
+        result.npu_observed = state_->gpu_selected && is_npu && result.npu_graph_nodes > 0;
+        if (state_->gpu_selected && is_npu && !result.npu_observed) {
+            diagnose(result, "GENERATION", "NO_NPU_EXECUTION", generate_start);
+            return failed("BACKEND", "no_npu_execution");
+        }
+        if (state_->gpu_selected && !is_npu && !result.gpu_observed) {
             diagnose(result, "GENERATION", "NO_GPU_EXECUTION", generate_start);
             if (result.requested_mode == "OPENCL" || result.requested_mode == "VULKAN")
                 return failed("BACKEND", "no_gpu_execution");
@@ -630,13 +862,23 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
         state_->decoded_tokens.swap(tokens);
         tokens.clear();
         state_->measure_workspace(result);
-        measure_memory(result);
+        memory_sample(result, "AFTER_GENERATION");
+        result.memory_breakdown_available = collect_memory(state_->context.get(), result.memory_breakdown);
         report.notify("COMPLETE", 100);
         return result;
     } catch (const std::bad_alloc &) { return failed("MEMORY"); }
       catch (...) { return failed(cancelled_.load() ? "CANCELLED" : "RESPONSE"); }
 }
 #ifdef SUBTITLE_NATIVE_TESTING
+bool Session::test_memory_estimate_failure_clears_rows() {
+    std::vector<MemoryAllocation> rows{{"HOST", 1, 2, 3}};
+    return !estimate_memory("/missing/subtitle-synthetic-memory-plan.gguf", llama_model_default_params(),
+        llama_context_default_params(), rows) && rows.empty();
+}
+void Session::test_set_available_ram_bytes(long long bytes) {
+    std::lock_guard<std::mutex> lock(operation_);
+    state_->test_available_ram_bytes = std::max(-2LL, bytes);
+}
 std::string Session::test_render_chat(const std::string & user_content) {
     std::lock_guard<std::mutex> lock(operation_);
     if (!state_->context || !state_->model) throw std::runtime_error("model");

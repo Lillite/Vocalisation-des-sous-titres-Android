@@ -34,7 +34,7 @@ Les secrets, mots de passe, vidéos personnelles et clés privées ne doivent pa
 ### Transport temporaire de l’APK déjà vérifié
 
 Le workflow `publish-apk.yml` reçoit les données sur la branche temporaire
-`release-upload/v0.5.13-memory`. Son commit doit avoir pour seul parent le commit
+`release-upload/v0.5.14-hexagon`. Son commit doit avoir pour seul parent le commit
 source validé sur `main` et ne modifier que les fichiers de transport prévus.
 Le commit source reste dépourvu de `release-upload`. L’APK a déjà été signé
 avec le certificat durable hors de ce transport ; aucune clé, aucun mot de
@@ -45,7 +45,7 @@ Deux formats sont acceptés par `tools/publish-verified-release.py` :
 
 | Format | Fichiers temporaires | Métadonnées |
 | --- | --- | --- |
-| APK unique | `release-upload/release.json`, `release-upload/notes.md` et `release-upload/SousTitresVoix-0.5.13-memory.apk` | Les sept champs `tag`, `source_sha`, `apk_sha256`, `signer_sha256`, `apk_file`, `notes_file` et `title`. Aucun répertoire `apk-parts` n’est accepté. |
+| APK unique | `release-upload/release.json`, `release-upload/notes.md` et `release-upload/SousTitresVoix-0.5.14-hexagon.apk` | Les sept champs `tag`, `source_sha`, `apk_sha256`, `signer_sha256`, `apk_file`, `notes_file` et `title`. Aucun répertoire `apk-parts` n’est accepté. |
 | Fragments binaires | `release-upload/release.json`, `release-upload/notes.md` et `release-upload/apk-parts/0000.part`, `0001.part`, etc. | Les mêmes sept champs, plus `apk_chunks`, liste ordonnée des SHA-256 de chaque partie. Le fichier APK complet est absent du checkout. |
 
 Le second format permet de transmettre les mêmes octets en plusieurs petits
@@ -56,7 +56,7 @@ de **1 048 576 octets** chacune ; la dernière contient **1 à 1 048 576 octets*
 La taille totale de l’APK reste limitée à **512 Mio**. Les empreintes sont
 hexadécimales minuscules de 64 caractères ; `apk_chunks` conserve leur ordre de
 concaténation. Les métadonnées sont bornées à **64 Kio**. Dans les deux formats,
-`apk_file` reste `release-upload/SousTitresVoix-0.5.13-memory.apk` et
+`apk_file` reste `release-upload/SousTitresVoix-0.5.14-hexagon.apk` et
 `apk_sha256` désigne l’empreinte de l’APK signé complet.
 
 Le format fragmenté refuse un mélange avec l’APK complet, les parties

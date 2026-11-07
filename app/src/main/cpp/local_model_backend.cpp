@@ -7,6 +7,7 @@
 
 namespace {
 std::atomic<uint64_t> executed_gpu_nodes{0};
+std::atomic<uint64_t> executed_npu_nodes{0};
 std::atomic<int> allocated_gpu_layers{-1};
 }
 // Called only by the pinned OpenCL graph implementation after successful graph
@@ -18,6 +19,11 @@ extern "C" void subtitle_opencl_graph_executed(uint64_t nodes) {
 // counter is reset per request and published only after llama_synchronize().
 extern "C" void subtitle_vulkan_graph_executed(uint64_t nodes) {
     executed_gpu_nodes.fetch_add(nodes, std::memory_order_relaxed);
+}
+// The HTP backend reports successful non-copy submissions. The request owner
+// must synchronize successfully before publishing them as NPU observations.
+extern "C" void subtitle_hexagon_graph_executed(uint64_t nodes) {
+    executed_npu_nodes.fetch_add(nodes, std::memory_order_relaxed);
 }
 namespace subtitle_native {
 namespace {
@@ -47,4 +53,6 @@ void reset_offload_observation() { allocated_gpu_layers.store(-1, std::memory_or
 int observed_offload_layers() { return allocated_gpu_layers.load(std::memory_order_relaxed); }
 void reset_gpu_graph_observation() { executed_gpu_nodes.store(0, std::memory_order_relaxed); }
 uint64_t observed_gpu_graph_nodes() { return executed_gpu_nodes.load(std::memory_order_relaxed); }
+void reset_npu_graph_observation() { executed_npu_nodes.store(0, std::memory_order_relaxed); }
+uint64_t observed_npu_graph_nodes() { return executed_npu_nodes.load(std::memory_order_relaxed); }
 }

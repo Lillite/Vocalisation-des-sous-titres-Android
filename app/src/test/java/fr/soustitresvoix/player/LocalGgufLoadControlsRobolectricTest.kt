@@ -3,6 +3,7 @@ package fr.soustitresvoix.player
 import android.app.Activity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.Spinner
@@ -140,4 +141,44 @@ class LocalGgufLoadControlsRobolectricTest {
             RuntimeEnvironment.setQualifiers(oldQualifiers)
         }
     }
+    @Test fun prudentPresetPreservesExplicitPrecisionCompatibilityAndNativeCpuChoices() {
+        val owner = Robolectric.buildActivity(Activity::class.java).setup()
+        val activity = owner.get()
+        val preferences = activity.getSharedPreferences("translation-choices-v1", Activity.MODE_PRIVATE)
+        preferences.edit().clear().commit()
+        var actions = 0
+        fun controls() = LocalGgufModelControls(activity, { false }, { actions++ }, { actions++ }, { actions++ })
+        val first = controls()
+        try {
+            val views = descendants(first.view())
+            views.filterIsInstance<EditText>().single { it.contentDescription.toString().startsWith("Couches GPU") }.setText("8")
+            for (prefix in listOf("Cache d’attention locale compact", "Cache d’attention K/V en 8 bits", "Compatibilité Vulkan Qualcomm", "Poids CPU natifs"))
+                views.filterIsInstance<CheckBox>().single { it.text.toString().startsWith(prefix) }.isChecked = true
+            views.filterIsInstance<Spinner>().single { it.contentDescription == "Politique Flash Attention du modèle GGUF" }.setSelection(1)
+            views.filterIsInstance<Button>().single { it.text == "Profil mémoire prudent : lot 64 et micro-lot 16 tokens" }.performClick()
+            val expected = LocalGgufLoadSettings(8, 64, 16, true, "Q8_0", "ENABLED", true, true)
+            assertEquals(expected, first.loadSettings)
+            first.saveChoices()
+            val restored = controls()
+            try { assertEquals(expected, restored.loadSettings); assertEquals(0, actions); assertNull(restored.model) }
+            finally { restored.close() }
+        } finally { first.close(); owner.pause().stop().destroy() }
+    }
+
+    @Test fun incompatibleVisibleFlashAndKvChoicesRemainVisibleAndCannotBeSaved() {
+        val owner = Robolectric.buildActivity(Activity::class.java).setup()
+        val activity = owner.get()
+        activity.getSharedPreferences("translation-choices-v1", Activity.MODE_PRIVATE).edit().clear().commit()
+        val controls = LocalGgufModelControls(activity, { false }, {}, {}, {})
+        try {
+            val views = descendants(controls.view())
+            views.filterIsInstance<CheckBox>().single { it.text.toString().startsWith("Cache d’attention K/V en 8 bits") }.isChecked = true
+            views.filterIsInstance<Spinner>().single { it.contentDescription == "Politique Flash Attention du modèle GGUF" }.setSelection(2)
+            assertEquals("Q8_0", controls.loadSettings.kvCacheType)
+            assertEquals("DISABLED", controls.loadSettings.flashAttentionPolicy)
+            try { controls.saveChoices(); fail("Incompatible visible choices were silently corrected") }
+            catch (failure: TranslationFailure) { assertEquals(TranslationFailure.Reason.CONFIGURATION, failure.reason) }
+        } finally { controls.close(); owner.pause().stop().destroy() }
+    }
+
 }

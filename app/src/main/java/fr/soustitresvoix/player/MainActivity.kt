@@ -1,5 +1,6 @@
 package fr.soustitresvoix.player
 
+import androidx.lifecycle.ViewModelProvider
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -168,6 +169,7 @@ class MainActivity : ComponentActivity() {
             },
             onExport = ::requestSubtitleExport)
         localSrtTranslationControls = LocalSrtTranslationControls(this,
+            retainedOwner = ViewModelProvider(this, LocalSrtTranslationOwner.Factory(applicationContext))[LocalSrtTranslationOwner::class.java],
             otherPreparationBusy = { session.isPreparing || (::localGgufBenchmarkControls.isInitialized && localGgufBenchmarkControls.busy) },
             launchSubtitlePicker = { localSrtPicker.launch(arrayOf("*/*")) },
             launchModelPicker = { localSrtModelPicker.launch(arrayOf("*/*")) },

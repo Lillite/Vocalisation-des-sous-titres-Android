@@ -84,7 +84,7 @@ class TranslationFailure(val reason: Reason, val localDiagnostic: LocalGgufDiagn
         LOCAL_PROFILE("Le profil de traduction de ce modèle GGUF n’a pas pu être reconnu. Vérifie sa famille : TranslateGemma, Hy-MT / Hy-MT2, Index-Translate ou Qwen3.5. Le mode Gabarit intégré au GGUF utilise les formats de conversation reconnus par le moteur ; l’architecture et le chargement restent à vérifier."),
         LOCAL_TEMPLATE("Le format de conversation intégré au GGUF est absent, non reconnu ou incompatible avec cette requête. Les gabarits personnalisés et les marqueurs réservés peuvent être refusés. Aucune traduction incomplète n’a été validée."),
         LOCAL_BACKEND("Le moteur de calcul local demandé n’est pas disponible ou n’a pas pu exécuter ce modèle. Consulte le diagnostic. Automatique peut autoriser un repli OpenCL vers CPU signalé ; les modes OpenCL et Vulkan stricts ne changent pas silencieusement de moteur."),
-        LOCAL_MEMORY("La mémoire nécessaire au modèle local n’a pas pu être allouée. Les occurrences validées restent conservées ; libère des ressources ou choisis un modèle moins volumineux avant de reprendre."),
+        LOCAL_MEMORY("Calcul local interrompu ou refusé pour préserver la mémoire ; consulte le diagnostic."),
         LOCAL_BUSY("Un autre calcul ou import de modèle local est en cours. Attends sa fin ou annule-le avant de reprendre cette traduction."),
         LOCAL_CONTEXT("Cette occurrence dépasse le contexte que le modèle peut traiter. Sa traduction n’a pas été validée ; aucune partie manquante n’est ignorée."),
         LOCAL_TRUNCATED("Le modèle a atteint sa limite de sortie avant de terminer cette occurrence. Le texte incomplet est refusé ; les occurrences déjà validées sont conservées."),

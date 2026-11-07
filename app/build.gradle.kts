@@ -89,6 +89,16 @@ val generateTranslationQ8TestModel = tasks.register<Exec>("generateTranslationQ8
     commandLine("python3", generator.absolutePath, translationQ8TestModel.get().asFile.absolutePath,
         "--terminating", "--roundtrip", "--cache-q8")
 }
+// DSP ELF files are assets, not ARM64 JNI libraries. The build-time SDK and
+// vendor FastRPC driver are never copied into the application.
+val hexagonAssets = providers.environmentVariable("SUBTITLE_HEXAGON_ASSETS_ROOT")
+    .map { file(it) }.orElse(layout.buildDirectory.dir("generated/hexagon-assets").map { it.asFile })
+val verifyHexagonAssets = tasks.register<Exec>("verifyHexagonAssets") {
+    inputs.dir(hexagonAssets)
+    inputs.file(rootProject.file("tools/prepare-hexagon.py"))
+    commandLine("python3", rootProject.file("tools/prepare-hexagon.py").absolutePath,
+        "--verify-only", "--assets", hexagonAssets.get().absolutePath)
+}
 android {
     namespace = "fr.soustitresvoix.player"
     compileSdk = 36
@@ -98,8 +108,8 @@ android {
         applicationId = "fr.soustitresvoix.player.translation"
         minSdk = 26
         targetSdk = 36
-        versionCode = 20
-        versionName = "0.5.13-memory"
+        versionCode = 21
+        versionName = "0.5.14-hexagon"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild { cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" } }
@@ -111,6 +121,7 @@ android {
         }
     }
     sourceSets.getByName("main").res.srcDir(demoResources)
+    sourceSets.getByName("main").assets.srcDir(hexagonAssets)
     sourceSets.getByName("androidTest").assets.srcDir(translationTestAssets)
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -144,7 +155,7 @@ android {
     testOptions { unitTests.isIncludeAndroidResources = true }
     lint { abortOnError = true; checkReleaseBuilds = true }
 }
-tasks.named("preBuild") { dependsOn(generateDemo); dependsOn(generateDiagnosticModel) }
+tasks.named("preBuild") { dependsOn(generateDemo); dependsOn(generateDiagnosticModel); dependsOn(verifyHexagonAssets) }
 // AGP's legacy AndroidTest asset source set does not preserve a mapped task
 // provider as its producer. All AndroidTest consumers, including lint model
 // generation, must depend on this small deterministic test-only asset.

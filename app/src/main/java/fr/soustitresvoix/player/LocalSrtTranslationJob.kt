@@ -20,11 +20,12 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * An explicitly selected subtitle file can be translated without a video or a
  * PlaybackSession. Leaving its panel does not touch playback and does not stop
- * the task; its Activity owner closes it when destroyed. Only a fully validated
+ * the task; a retained owner survives UI recreation and an explicit owner close stops it. Only a fully validated
  * track can be exported. Model execution and all disk work stay off the UI.
  */
 @UnstableApi
@@ -34,7 +35,8 @@ class LocalSrtTranslationJob(
     private val engineFactory: (TranslationProviderConfig) -> TranslationEngine = {
         TranslationEngines.create(it, context = context.applicationContext)
     },
-    private val indexerFactory: () -> SubtitleIndexer = { Media3SubtitleSource(context.applicationContext).createIndexer() }
+    private val indexerFactory: () -> SubtitleIndexer = { Media3SubtitleSource(context.applicationContext).createIndexer() },
+    private val governorFactory: () -> LocalPreparationGovernor = { LocalPreparationGovernor.android(context.applicationContext) }
 ) : AutoCloseable {
     data class State(
         val status: String = "Restauration du dernier fichier de sous-titres…",
@@ -56,6 +58,14 @@ class LocalSrtTranslationJob(
         val cancelled = AtomicBoolean(false)
         val acceptMeasurements = AtomicBoolean(true)
         val startedAtMs = System.currentTimeMillis()
+        val primaryCause = AtomicReference("")
+        val requestedStop = AtomicReference("")
+        var engineGeneration = 0L
+        fun requestStop(cause: String) {
+            requestedStop.compareAndSet("", cause)
+            primaryCause.compareAndSet("", cause)
+            cancelled.set(true)
+        }
         @Volatile var indexer: SubtitleIndexer? = null
         @Volatile var engine: TranslationEngine? = null
         @Volatile var performance: String? = null
@@ -97,6 +107,10 @@ class LocalSrtTranslationJob(
                         update(State(status = when {
                             restored != null && attempt?.state == "RUNNING" ->
                                 "La dernière préparation a été interrompue (${attempt.done} / ${attempt.total} occurrences validées au dernier enregistrement). Consulte le diagnostic, puis relance explicitement pour reprendre."
+                            restored != null && attempt?.state == "WAITING" ->
+                                "La préparation a été suspendue pour préserver les ressources. Son diagnostic et ses occurrences validées sont conservés ; relance explicitement après amélioration des conditions."
+                            restored != null && attempt?.state == "CANCELLED" && attempt.cause != "USER_CANCEL" ->
+                                "La dernière préparation a été interrompue. Consulte le diagnostic et les motifs Android éventuels, puis relance explicitement pour reprendre."
                             restored != null && attempt?.state == "FAILED" ->
                                 "La dernière préparation s’est arrêtée sur une erreur. Son diagnostic est conservé ; relance explicitement avec les mêmes réglages pour reprendre."
                             restored != null -> "Fichier conservé prêt. Choisis le modèle et lance ou reprends la traduction."
@@ -201,6 +215,7 @@ class LocalSrtTranslationJob(
                 var reviewPlan: TranslationPlan? = null
                 var exports: Map<SubtitleExportFormat, String> = emptyMap()
                 var cleanupWarning: String? = null
+                var resourceWaitExpired = false
                 try {
                     ensureActive(current)
                     attemptJournal.beginAttempt()
@@ -243,9 +258,12 @@ class LocalSrtTranslationJob(
                         updatedAtMs = System.currentTimeMillis())
                     saveAttempt(current, force = true)
                     ensureActive(current)
+                    fun createEngine(): TranslationEngine {
                     val engine = engineFactory(config); current.engine = engine
+                    val generation = ++current.engineGeneration
                     (engine as? LocalTranslationPerformanceSource)?.setPerformanceListener { performance ->
-                        if (!current.acceptMeasurements.get() || current.cancelled.get() || closed)
+                        if (!current.acceptMeasurements.get() || current.cancelled.get() || closed ||
+                            current.engine !== engine || current.engineGeneration != generation)
                             return@setPerformanceListener
                         val previousStage = current.journalEntry?.progress?.stage
                         current.journalEntry = current.journalEntry?.measured(performance, System.currentTimeMillis())
@@ -267,8 +285,36 @@ class LocalSrtTranslationJob(
                                 update(state.copy(performance = rendered))
                         }
                     }
+                    return engine
+                    }
+                    val governor = governorFactory()
+                    val restartedOccurrences = HashSet<Int>()
+                    var restarts = 0
+                    var profileRestarts = 0
+                    var resourceRestarts = 0
+                    fun releaseOwned(): Boolean {
+                        val owned = current.engine ?: return true
+                        (owned as? LocalTranslationPerformanceSource)?.setPerformanceListener(null)
+                        current.engine = null
+                        val warning = closeTranslationEngineOnWorker(owned)
+                        if (warning != null) cleanupWarning = warning
+                        return warning == null
+                    }
+                    fun noteFailure(error: TranslationFailure) {
+                        current.primaryCause.compareAndSet("", if (error.reason == TranslationFailure.Reason.LOCAL_PROCESS_DIED) "PROCESS_LOSS" else "ERROR")
+                        current.journalEntry = current.journalEntry?.let { entry ->
+                            if (entry.failureCode.isNotEmpty() || current.primaryCause.get() in setOf("USER_CANCEL", "HOST_DESTROYED")) entry else entry.copy(failureCode = error.reason.name,
+                                failedProcessId = entry.processId, failedRequestStartedAtMs = entry.progress?.startedAtMs ?: entry.startedAtMs,
+                                failedAtMs = System.currentTimeMillis())
+                        }
+                        saveAttempt(current, force = true)
+                    }
+                    fun runWithRecovery(): TranslatedTrack {
+                    while (true) {
                     ensureActive(current)
-                    val result = runner.run(plan, engine, { current.cancelled.get() || closed }, { done, total ->
+                    val engine = createEngine()
+                    try {
+                    return runner.runGuarded(plan, engine, { current.cancelled.get() || closed }, { done, total ->
                         current.journalEntry = current.journalEntry?.copy(done = done, total = total,
                             updatedAtMs = System.currentTimeMillis())
                         // The runner has already committed this prefix. Record it
@@ -276,7 +322,61 @@ class LocalSrtTranslationJob(
                         saveAttempt(current, force = true)
                         publish(current, ticket, State("Traduction locale : $done / $total occurrences validées.",
                             busy = true, sourceName = selected.name, done = done, total = total, performance = current.performance))
-                    }, TranslationRunPolicy(requestMayConsumeRemoteQuota = false))
+                    }, TranslationRunPolicy(requestMayConsumeRemoteQuota = false), beforeRequest = {
+                        governor.beforeRequest { current.cancelled.get() || closed }
+                    })
+                    } catch (pause: LocalPreparationGovernor.Pause) {
+                        current.primaryCause.compareAndSet("", if (pause.kind == LocalPreparationGovernor.Kind.MEMORY) "MEMORY_PRESSURE" else "THERMAL_PRESSURE")
+                        if (!releaseOwned() || resourceRestarts++ >= MAX_RESOURCE_RESTARTS)
+                            throw LocalPreparationGovernor.Expired(pause.kind)
+                        current.journalEntry = current.journalEntry?.copy(phase = pause.kind.phase,
+                            updatedAtMs = System.currentTimeMillis())
+                        saveAttempt(current, force = true)
+                        governor.awaitReady(pause.kind, { current.cancelled.get() || closed }) { kind ->
+                            publish(current, ticket, state.copy(status = kind.message, busy = true,
+                                done = current.journalEntry?.done ?: 0, total = current.journalEntry?.total ?: 0))
+                        }
+                        ensureActive(current)
+                    } catch (error: TranslationFailure) {
+                        if (error.localDiagnostic?.reason == LocalGgufDiagnostic.Reason.PROFILE_REQUIRES_RESTART &&
+                            engine is LocalGgufTranslationEngine && profileRestarts == 0 && !current.cancelled.get() && !closed) {
+                            if (!releaseOwned()) throw error
+                            ensureActive(current)
+                            try { LocalGgufRuntime.restartIdleProcess(application) { current.cancelled.get() || closed } }
+                            catch (failure: LocalGgufRuntime.Failure) {
+                                ensureActive(current)
+                                throw TranslationFailure(TranslationFailure.Reason.LOCAL_BACKEND, failure.diagnostic, failure.attemptReport)
+                            }
+                            ensureActive(current)
+                            profileRestarts++
+                            current.journalEntry = current.journalEntry?.copy(phase = "recovering", profileRestarts = profileRestarts,
+                                updatedAtMs = System.currentTimeMillis())
+                            saveAttempt(current, force = true)
+                            publish(current, ticket, state.copy(status = "Processus de calcul réinitialisé après libération confirmée pour appliquer le profil explicite. Reprise des résultats validés.", busy = true,
+                                done = current.journalEntry?.done ?: 0, total = current.journalEntry?.total ?: 0))
+                            continue
+                        }
+                        noteFailure(error)
+                        val occurrence = current.journalEntry?.done ?: 0
+                        // Only the native local engine has the release protocol needed
+                        // to safely construct a replacement owner. Never retry a factory
+                        // failure or a remote/unknown engine as local process recovery.
+                        val mayRetry = error.reason == TranslationFailure.Reason.LOCAL_PROCESS_DIED &&
+                            engine is LocalGgufTranslationEngine && !current.cancelled.get() && !closed &&
+                            restarts < MAX_PROCESS_RESTARTS && restartedOccurrences.add(occurrence)
+                        if (!mayRetry || !releaseOwned()) throw error
+                        ensureActive(current)
+                        restarts++
+                        current.journalEntry = current.journalEntry?.copy(phase = "recovering", recoveries = restarts,
+                            updatedAtMs = System.currentTimeMillis())
+                        saveAttempt(current, force = true)
+                        publish(current, ticket, state.copy(status =
+                            "Le processus de calcul a été perdu. Libération confirmée ; reprise bornée des occurrences restantes avec la même configuration ($restarts / $MAX_PROCESS_RESTARTS).", busy = true,
+                            done = current.journalEntry?.done ?: 0, total = current.journalEntry?.total ?: 0))
+                    }
+                    }
+                    }
+                    val result = runWithRecovery()
                     ensureActive(current)
                     exports = SubtitleExportFormat.values().associateWith { TranslatedSubtitleExport.encode(result.cues, it) }
                     ensureActive(current)
@@ -285,6 +385,11 @@ class LocalSrtTranslationJob(
                     terminal = State("Traduction complète : ${result.cues.size} occurrences. Export SRT disponible." +
                         (warning?.let { "\n$it" } ?: ""), busy = false, sourceName = selected.name,
                         done = result.cues.size, total = result.cues.size, complete = true, performance = current.performance)
+                } catch (pause: LocalPreparationGovernor.Expired) {
+                    resourceWaitExpired = true
+                    terminal = state.copy(status = pause.kind.message +
+                        " L’attente automatique est terminée ; relance explicitement après amélioration des conditions.",
+                        busy = false, complete = false)
                 } catch (_: ReplacedModelSelection) {
                     terminal = state.copy(status =
                         "Le modèle local a été remplacé depuis sa sélection. Prépare ou sélectionne le modèle actuel avant de relancer ; les traductions précédentes restent conservées avec leur propre identité.",
@@ -298,7 +403,12 @@ class LocalSrtTranslationJob(
                         "Traduction arrêtée. Les occurrences validées sont conservées ; relance avec le même fichier, modèle et réglages pour reprendre.",
                         busy = false, complete = false)
                 } catch (error: TranslationFailure) {
-                    current.journalEntry = current.journalEntry?.copy(failureCode = error.reason.name)
+                    current.primaryCause.compareAndSet("", if (error.reason == TranslationFailure.Reason.LOCAL_PROCESS_DIED) "PROCESS_LOSS" else "ERROR")
+                    current.journalEntry = current.journalEntry?.let { entry ->
+                        if (entry.failureCode.isNotEmpty() || current.primaryCause.get() in setOf("USER_CANCEL", "HOST_DESTROYED")) entry else entry.copy(failureCode = error.reason.name,
+                            failedProcessId = entry.processId, failedRequestStartedAtMs = entry.progress?.startedAtMs ?: entry.startedAtMs,
+                            failedAtMs = System.currentTimeMillis())
+                    }
                     val diagnostic = error.localDiagnostic?.render()
                     val details = listOfNotNull(diagnostic, error.localAttemptReport)
                     current.performance = (listOfNotNull(current.performance) +
@@ -327,11 +437,18 @@ class LocalSrtTranslationJob(
                     // The worker's checkpoint counter is the authoritative one.
                     current.journalEntry?.let { value.copy(done = it.done, total = it.total) } ?: value
                 }
-                current.journalEntry = current.journalEntry?.copy(state = when {
-                    current.cancelled.get() || closed -> "CANCELLED"
-                    finished.complete -> "COMPLETED"
-                    else -> "FAILED"
-                }, updatedAtMs = System.currentTimeMillis())
+                current.journalEntry = current.journalEntry?.let { entry ->
+                    val cause = current.primaryCause.get().ifEmpty {
+                        if (finished.complete) "" else if (current.requestedStop.get().isNotEmpty()) current.requestedStop.get() else "ERROR"
+                    }
+                    entry.copy(state = when {
+                        finished.complete && !current.cancelled.get() -> "COMPLETED"
+                        resourceWaitExpired && !current.cancelled.get() -> "WAITING"
+                        entry.failureCode.isNotEmpty() -> "FAILED"
+                        current.cancelled.get() || closed -> "CANCELLED"
+                        else -> "FAILED"
+                    }, cause = cause, stopCause = current.requestedStop.get(), updatedAtMs = System.currentTimeMillis())
+                }
                 saveAttempt(current, force = true)
                 // Review is fallible and optional. Release model resources first;
                 // a failed review must never discard a completed durable result.
@@ -343,7 +460,7 @@ class LocalSrtTranslationJob(
                 main.post {
                     if (isCurrent(current, ticket)) {
                         active = null
-                        var result = if (current.cancelled.get()) finished.copy(
+                        var result = if (current.cancelled.get() && current.journalEntry?.failureCode.isNullOrEmpty()) finished.copy(
                             status = "Traduction arrêtée. Les occurrences validées sont conservées pour la reprise.",
                             complete = false) else finished
                         if (result.complete) {
@@ -364,7 +481,7 @@ class LocalSrtTranslationJob(
     /** Cancels computation, never playback. Validated disk checkpoints remain. */
     fun cancel() {
         val current = active ?: return
-        current.cancelled.set(true)
+        current.requestStop("USER_CANCEL")
         current.indexer?.cancel()
         runCatching { current.engine?.close() }
         update(state.copy(status = "Arrêt demandé ; attente de la fin du calcul en cours…"))
@@ -385,7 +502,7 @@ class LocalSrtTranslationJob(
     override fun close() {
         if (closed) return
         closed = true; sequence++
-        active?.let { task -> task.cancelled.set(true); task.indexer?.cancel(); runCatching { task.engine?.close() } }
+        active?.let { task -> task.requestStop("HOST_DESTROYED"); task.indexer?.cancel(); runCatching { task.engine?.close() } }
         active = null
         worker.shutdownNow()
     }
@@ -394,7 +511,11 @@ class LocalSrtTranslationJob(
         if (closed || task.cancelled.get() || Thread.currentThread().isInterrupted) throw TranslationCancelledException()
     }
     private fun saveAttempt(task: Task, force: Boolean) {
-        task.journalEntry?.let { attemptJournal.save(it, force) }
+        task.journalEntry?.let { entry ->
+            val value = entry.copy(cause = task.primaryCause.get().ifEmpty { entry.cause }, stopCause = task.requestedStop.get())
+            task.journalEntry = value
+            attemptJournal.save(value, force)
+        }
     }
     private fun isCurrent(task: Task, ticket: Long) = !closed && sequence == ticket && active === task
     private fun update(value: State) {
@@ -448,6 +569,8 @@ class LocalSrtTranslationJob(
             ?.forEach { it.delete() }
     }
     companion object {
+        private const val MAX_PROCESS_RESTARTS = 2
+        private const val MAX_RESOURCE_RESTARTS = 2
         // An old Activity worker may still be stopping while the next owner is
         // created. Serialize private source/checkpoint commits across owners.
         private val WORK_LOCK = Any()

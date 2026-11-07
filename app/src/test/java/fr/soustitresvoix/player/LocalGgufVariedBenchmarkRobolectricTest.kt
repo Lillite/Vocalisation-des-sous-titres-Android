@@ -59,8 +59,8 @@ class LocalGgufVariedBenchmarkRobolectricTest {
             fun frame(extra: Boolean = false): LocalTranslationPerformance {
                 val actual = if (extra && calls == badFirstFragmentAt) "CPU" else mode
                 return LocalTranslationPerformance(requestedMode = mode, backend = actual,
-                    device = "synthetic measured device", gpuObserved = actual == "OPENCL",
-                    gpuGraphNodes = if (actual == "OPENCL") 7 else 0,
+                    device = "synthetic measured device", gpuObserved = actual in setOf("OPENCL", "VULKAN"),
+                    gpuGraphNodes = if (actual in setOf("OPENCL", "VULKAN")) 7 else 0,
                     openClTransport = if (actual == "OPENCL") "DIRECT" else "",
                     promptMs = 5, generationMs = if (extra) 7 else 11, promptTokens = 9,
                     promptEvaluatedTokens = 7, cachedPromptTokens = 2, generatedTokens = if (extra) 3 else 5)
@@ -359,6 +359,78 @@ class LocalGgufVariedBenchmarkRobolectricTest {
             assertEquals(2, engines.size)
             assertTrue(engines.flatMap { it.inputs }.all { it.previousSources.isEmpty() && it.previousOutputs.isEmpty() })
             assertTrue(benchmark.state.report().contains(LocalGgufContextPolicy.ISOLATED.label))
+        } finally { benchmark.close() }
+    }
+
+    @Test fun explicitProfilesUseBoundedOwnHistoriesAndNeverChooseOrPersistAWinner() {
+        val configurations = mutableListOf<TranslationProviderConfig>()
+        val engines = mutableListOf<MeasuredEngine>()
+        val events = mutableListOf<String>()
+        var restarts = 0
+        val benchmark = LocalGgufBenchmark(context, {}, engineFactory = { config ->
+            configurations += config
+            MeasuredEngine(config.localExecution, events, mutableListOf()).also { engines += it }
+        }, snapshot = probe, restartModelProcess = { cancelled ->
+            assertFalse(cancelled()); restarts++; events += "restart"
+        })
+        try {
+            val base = LocalGgufLoadSettings(kvCacheType = "Q8_0", flashAttentionPolicy = "ENABLED")
+            benchmark.start(model, 4, LocalGgufProfile.AUTO,
+                LocalGgufBenchmark.Options(LocalGgufBenchmark.Scenario.PROFILES, loadSettings = base))
+            await(benchmark)
+            assertEquals(listOf("OPENCL", "OPENCL", "CPU"), configurations.map { it.localExecution })
+            assertEquals(listOf(128, 64, 64), configurations.map { it.localLoadSettings.batchTokens })
+            assertEquals(listOf(32, 16, 16), configurations.map { it.localLoadSettings.microBatchTokens })
+            assertTrue(configurations.all { it.localLoadSettings.kvCacheType == "Q8_0" && it.localLoadSettings.flashAttentionPolicy == "ENABLED" })
+            assertEquals(listOf(false, false, true), configurations.map { it.localLoadSettings.nativeCpuWeights })
+            assertEquals(1, restarts)
+            assertEquals("restart", events.first())
+            assertEquals(listOf(8, 8, 8), benchmark.state.runs.map { it.samples.size })
+            assertTrue(benchmark.state.runs.all { it.failure == null && it.cleanupConfirmed })
+            assertTrue(engines.all { it.inputs.first().previousSources.isEmpty() })
+            assertTrue(benchmark.state.report().contains("aucun gagnant ni réglage automatique"))
+            assertTrue(benchmark.state.status.contains("Aucun profil n’est sélectionné ou enregistré automatiquement"))
+        } finally { benchmark.close() }
+    }
+
+    @Test fun vulkanCompatibilityProfileRequiresOptInAndConfirmedIdleRestartBeforeFourthPass() {
+        val configurations = mutableListOf<TranslationProviderConfig>()
+        val events = mutableListOf<String>()
+        var restarts = 0
+        val benchmark = LocalGgufBenchmark(context, {}, engineFactory = { config ->
+            configurations += config
+            MeasuredEngine(config.localExecution, events, mutableListOf())
+        }, snapshot = probe, restartModelProcess = { cancelled ->
+            assertFalse(cancelled())
+            if (restarts > 0) assertEquals("CPU:closed", events.last())
+            restarts++; events += "restart"
+        })
+        try {
+            val options = LocalGgufBenchmark.Options(LocalGgufBenchmark.Scenario.PROFILES, gpuMode = "VULKAN", includeCompatibility = true)
+            assertEquals(3, LocalGgufBenchmark.executionPlans(options.copy(includeCompatibility = false)).size)
+            benchmark.start(model, 4, LocalGgufProfile.AUTO, options); await(benchmark)
+            assertEquals(listOf("VULKAN", "VULKAN", "CPU", "VULKAN"), configurations.map { it.localExecution })
+            assertEquals(listOf(false, false, false, true), configurations.map { it.localLoadSettings.qualcommCompatibility })
+            assertEquals(2, restarts)
+            assertEquals(listOf(true, false, false, true), benchmark.state.runs.map { it.processRestarted })
+            assertTrue(benchmark.state.runs.all { it.samples.size == 8 && it.failure == null })
+        } finally { benchmark.close() }
+    }
+
+    @Test fun cancellingDuringProfileRestartNeverReopensAModel() {
+        var opens = 0
+        lateinit var benchmark: LocalGgufBenchmark
+        benchmark = LocalGgufBenchmark(context, {}, engineFactory = { config ->
+            opens++; MeasuredEngine(config.localExecution, mutableListOf(), mutableListOf())
+        }, snapshot = probe, restartModelProcess = { cancelled ->
+            benchmark.cancel(); assertTrue(cancelled())
+        })
+        try {
+            benchmark.start(model, 4, LocalGgufProfile.AUTO, LocalGgufBenchmark.Options(LocalGgufBenchmark.Scenario.PROFILES))
+            await(benchmark)
+            assertEquals(0, opens)
+            assertTrue(benchmark.state.status.contains("annulé"))
+            assertTrue(benchmark.state.runs.all { it.samples.isEmpty() })
         } finally { benchmark.close() }
     }
 

@@ -2,6 +2,26 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Essais sur téléphone](docs/TESTS_TELEPHONE.md) · [Contribution](CONTRIBUTING.md)
 
+## Candidate 0.5.14-hexagon — validation à établir
+
+Les sources préparent **0.5.14-hexagon / code 21**. Le [guide](docs/NPU_HEXAGON_0514.md) distingue l’intégration du backend, la preuve d’opérations HTP et un essai matériel. Aucun résultat des versions précédentes ne valide ce changement. Les résultats nouveaux seront ajoutés après exécution réelle.
+
+L’inventaire source courant attendu est de **196 méthodes noyau, 626 méthodes JVM application et 116 méthodes Android**, soit **938 méthodes**. Ce nombre est une attente de couverture, pas une réussite d’exécution. La campagne finale doit rapprocher les identités des XML frais de cet inventaire et refuser tout test manquant, inattendu, ignoré ou dupliqué.
+
+### Contrôles locaux de préparation réellement exécutés
+
+- Les cinq programmes Hexagon v73/v75/v79/v81/v85 ont réellement compilé avec le SDK épinglé ; le v73 reconstruit dans un second chemin est identique octet pour octet. Les 12 régressions de préparation, intégrité et provenance ont réussi.
+- Les conversions de chargement dense OpenCL Q6_K ont comparé 65 573 blocs dans deux dispositions, octet par octet, aux fonctions des kernels épinglés. Les contrôles de durées de vie et la syntaxe du backend complet ont réussi ; résumé `build/verification/opencl-optimization-final/summary.json`.
+- La qualification Vulkan finale a réussi 12 contrôles hôte et la compilation de six shaders représentatifs, incluant le budget EXT et les erreurs d’allocations partielles. Elle n’a pas exécuté de GPU physique.
+- La bibliothèque ARM64 complète, tous backends activés, a été compilée et liée avec le NDK 27.2/API 26. Les entrées compilées sont inchangées avant/après. Le fichier non strippé mesure 102 000 264 octets, SHA-256 `90b23f5437671c08a859c33dfc59326eb504f252d3dd15d18604331a4e5e3c2a`. L’alignement ELF est au moins 16 Kio ; aucun pilote OpenCL, Vulkan ou FastRPC n’est une dépendance obligatoire. Résumé `build/verification/native-arm64-local/summary.json`.
+- Les 45 tests du transport/publication et les six régressions de provenance ont réussi. Ce sont des tests du mécanisme sur fixtures, pas la publication de cette candidate.
+
+Une première campagne JVM ciblée a exécuté 187 méthodes et trouvé deux échecs : le parseur n’acceptait pas encore la politique FA `DISABLED`, et le test d’accessibilité attendait 18 actions avant les trois nouvelles commandes. Les deux attendus/implémentations ont été corrigés sans supprimer de test. Une reprise ciblée a également révélé un artefact de bundling Release local périmé, distinct du fichier de classe nouvellement compilé ; les journaux initiaux sont conservés. Seuls les XML frais de la campagne finale valident l’intégration complète. L’instrumentation Android de cette candidate n’a pas encore été exécutée à ce stade.
+
+Les contrôles doivent couvrir le choix explicite, les identités de cache, le protocole strict des observations NPU/GPU, les fichiers HTP bornés et leurs empreintes, les refus sur émulateur, les opérateurs synthétiques et les règles de Pause, annulation, déplacement et reprise. Le CPU doit rester utilisable sans chargement du pilote Qualcomm. Une compilation ARM64 du backend et des programmes DSP ne prouve pas une exécution du NPU physique du OnePlus ni la fidélité de TranslateGemma 12B.
+
+La campagne finale doit construire et instrumenter l’APK release sous Android 17 avant fusion. Après réussite, la reconstruction du même arbre vérifie le contenu applicatif hors signature sans répéter les suites inchangées. Les preuves de compilation HTP, son SDK exact et les manifestes d’assets font partie de la provenance. Le dépôt ne déclare aucune exécution matérielle NPU avant mesure correspondante.
+
 ## Candidate 0.5.13-memory — préparation et vérifications à établir
 
 Les sources préparent **0.5.13-memory / code 20**. Le [guide](docs/TRADUCTION_RUNTIME_0513.md) et les [notes](docs/releases/0.5.13-memory.md) distinguent les optimisations sans changement volontaire des calculs, le cache K/V quantifié expérimental et les mesures qui restent nécessaires sur le téléphone. La 0.5.2 reste la stable recommandée. La publication de la 0.5.12 au commit `9f19792656b6a274297a3e23c2d142ddfdb33acc` est une référence historique distincte ; sa réussite ne valide pas les présentes modifications.

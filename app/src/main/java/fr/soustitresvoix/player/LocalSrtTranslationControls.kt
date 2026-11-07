@@ -33,6 +33,7 @@ internal class LocalSrtTranslationControls(
     private val launchModelPicker: () -> Unit,
     private val onExport: (String, String, String) -> Unit,
     private val onChanged: () -> Unit = {},
+    private val retainedOwner: LocalSrtTranslationOwner? = null,
     private val jobFactory: (Context, (LocalSrtTranslationJob.State) -> Unit) -> LocalSrtTranslationJob =
         { context, changed -> LocalSrtTranslationJob(context, onChanged = changed) }
 ) : AutoCloseable {
@@ -57,9 +58,12 @@ internal class LocalSrtTranslationControls(
     private var exampleButton: Button? = null
     private var qualityExampleButton: Button? = null
     private var localStatus: String? = null
-    private val job = jobFactory(activity.applicationContext, {
+    private val job = retainedOwner?.job ?: jobFactory(activity.applicationContext, {
         if (!closed) { render(); onChanged() }
     })
+    private val observation = retainedOwner?.attach {
+        if (!closed) { render(); onChanged() }
+    }
     val busy: Boolean get() = job.state.busy
 
     private fun dp(value: Int) = (value * activity.resources.displayMetrics.density).toInt()
@@ -288,7 +292,9 @@ internal class LocalSrtTranslationControls(
     }
     override fun close() {
         if (closed) return
-        closed = true; dismissPanel(); job.close(); metadataWorker.shutdownNow(); main.removeCallbacksAndMessages(null)
+        closed = true; dismissPanel(); observation?.close()
+        if (retainedOwner == null) job.close()
+        metadataWorker.shutdownNow(); main.removeCallbacksAndMessages(null)
     }
     companion object {
         internal const val SCROLL_TAG = "local-srt-translation-controls-scroll"
