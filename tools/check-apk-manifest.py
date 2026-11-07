@@ -6,9 +6,11 @@ import xml.etree.ElementTree as ET
 if len(sys.argv) != 2:
     raise SystemExit('Usage: check-apk-manifest.py manifest.xml')
 ns = '{http://schemas.android.com/apk/res/android}'
+EXPECTED_VERSION_CODE = '20'
+EXPECTED_VERSION_NAME = '0.5.13-memory'
 root = ET.parse(Path(sys.argv[1])).getroot()
 assert root.get('package') == 'fr.soustitresvoix.player.translation', 'Unexpected application identity'
-assert root.get(ns + 'versionCode') == '19' and root.get(ns + 'versionName') == '0.5.12-runtime', 'Unexpected version'
+assert root.get(ns + 'versionCode') == EXPECTED_VERSION_CODE and root.get(ns + 'versionName') == EXPECTED_VERSION_NAME, 'Unexpected version'
 app = root.find('application')
 assert app is not None and app.get(ns + 'allowBackup') == 'false', 'Backup must remain disabled'
 assert app.get(ns + 'usesCleartextTraffic') == 'false', 'Cleartext network traffic must remain disabled'
