@@ -223,8 +223,8 @@ class LocalGgufRuntimeRobolectricTest {
         val host = Robolectric.buildService(LocalGgufTranslationService::class.java).create()
         try {
             val error = host.get().javaClass.getDeclaredMethod("error", LocalGgufRuntime.Code::class.java,
-                LocalGgufDiagnostic::class.java).apply { isAccessible = true }
-            val encoded = error.invoke(host.get(), LocalGgufRuntime.Code.TEMPLATE, null) as String
+                LocalGgufDiagnostic::class.java, LocalGgufAttemptReport.NativeMemory::class.java).apply { isAccessible = true }
+            val encoded = error.invoke(host.get(), LocalGgufRuntime.Code.TEMPLATE, null, null) as String
             try { LocalGgufRuntime.response(encoded); fail("Template failure was erased") }
             catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.TEMPLATE, failure.code) }
             assertFalse(TranslationFailure(TranslationFailure.Reason.LOCAL_TEMPLATE).message.orEmpty().contains("private"))
