@@ -108,8 +108,8 @@ android {
         applicationId = "fr.soustitresvoix.player.translation"
         minSdk = 26
         targetSdk = 36
-        versionCode = 21
-        versionName = "0.5.14-hexagon"
+        versionCode = 22
+        versionName = "0.5.15-loading"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild { cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" } }

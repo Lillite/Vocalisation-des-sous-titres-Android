@@ -350,18 +350,36 @@
       },
       "id": 437359248,
       "source_commit": "5e83ee9daa6edf78f62e2d8abdbcba9b381d5d10"
+    },
+    {
+      "tag": "v0.5.14-hexagon",
+      "title": "Sous-titres en voix 0.5.14 — Stabilité, mémoire et NPU Hexagon (préversion)",
+      "prerelease": true,
+      "latest": false,
+      "notes": "docs/releases/0.5.14-hexagon.md",
+      "asset": {
+        "name": "SousTitresVoix-0.5.14-hexagon.apk",
+        "version_name": "0.5.14-hexagon",
+        "version_code": 21,
+        "application_id": "fr.soustitresvoix.player.translation",
+        "id": 721169487,
+        "size": 79319029,
+        "sha256": "c034cbc0de9d1c9c07f702dd69a28b28cff139913e7f233a2f2cb8c585a56f50"
+      },
+      "id": 437677403,
+      "source_commit": "7b397ca539460e0a75d6f10643dd87eb3fc1b3cc"
     }
   ],
   "next_release": {
-    "tag": "v0.5.14-hexagon",
-    "title": "Sous-titres en voix 0.5.14 — Stabilité, mémoire et NPU Hexagon (préversion)",
+    "tag": "v0.5.15-loading",
+    "title": "Sous-titres en voix 0.5.15 — Chargement et diagnostics mémoire (préversion)",
     "prerelease": true,
     "latest": false,
-    "notes": "docs/releases/0.5.14-hexagon.md",
+    "notes": "docs/releases/0.5.15-loading.md",
     "asset": {
-      "name": "SousTitresVoix-0.5.14-hexagon.apk",
-      "version_name": "0.5.14-hexagon",
-      "version_code": 21,
+      "name": "SousTitresVoix-0.5.15-loading.apk",
+      "version_name": "0.5.15-loading",
+      "version_code": 22,
       "application_id": "fr.soustitresvoix.player.translation"
     }
   }

@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Bundle
 import android.os.Process
+import org.json.JSONObject
 import java.time.Instant
 
 /** Only fixed stages and numeric measurements; never a prompt, filename or native exception. */
@@ -83,6 +84,67 @@ internal fun interface LocalGgufProgressListener {
 internal object LocalGgufAttemptReport {
     private val MODES = setOf("AUTO", "CPU", "OPENCL", "VULKAN", "HEXAGON")
     private val SHA256 = Regex("[a-fA-F0-9]{64}")
+
+    /** Only validated numbers and our fixed admission policy survive a native failure or service reconstruction. */
+    class NativeMemory private constructor(val residentBytes: Long?, val peakRssBytes: Long?,
+        val availableRamBytes: Long?, val admission: Admission?, val telemetry: LocalGgufMemoryTelemetry?) {
+        data class Admission(val availableBytes: Long, val requiredBytes: Long, val reserveBytes: Long, val deficitBytes: Long)
+
+        fun render(): String = buildString {
+            append("Mesures mémoire reçues avec l’échec natif :")
+            residentBytes?.let { append("\nRSS du processus : "); append(it); append(" octets.") }
+            peakRssBytes?.let { append("\nPic RSS observé du processus : "); append(it); append(" octets.") }
+            availableRamBytes?.let { append("\nRAM disponible au relevé : "); append(it); append(" octets.") }
+            admission?.let {
+                append("\nContrôle de réserve système [SYSTEM_RESERVE] : RAM disponible ")
+                append(if (it.availableBytes < 0) "inconnue" else "${it.availableBytes} octets")
+                append(" ; besoin additionnel retenu, réserve comprise "); append(it.requiredBytes)
+                append(" octets ; réserve "); append(it.reserveBytes)
+                append(" octets ; déficit "); append(it.deficitBytes)
+                append(" octets. Ce contrôle indicatif n’est ni une allocation échouée ni une limite universelle d’Android.")
+            }
+            telemetry?.let { append(it.render()) }
+            append("\nCes relevés ne garantissent pas le pic exact ; ne pas additionner RSS, buffers et mémoire partagée.")
+        }
+
+        fun toJson(): JSONObject = (telemetry?.toJson() ?: JSONObject()).apply {
+            residentBytes?.let { put("residentBytes", it) }
+            peakRssBytes?.let { put("peakRssBytes", it) }
+            availableRamBytes?.let { put("availableRamBytes", it) }
+            admission?.let { put("memoryAdmission", JSONObject().put("policy", "SYSTEM_RESERVE")
+                .put("availableBytes", it.availableBytes).put("requiredBytes", it.requiredBytes)
+                .put("reserveBytes", it.reserveBytes).put("deficitBytes", it.deficitBytes)) }
+        }
+
+        companion object {
+            private const val MAX_BYTES = 1L shl 44
+            private fun bytes(value: JSONObject, key: String, minimum: Long = 0): Long? {
+                val number = value.opt(key)
+                return when (number) { is Int -> number.toLong(); is Long -> number; else -> null }
+                    ?.takeIf { it in minimum..MAX_BYTES }
+            }
+            private fun admission(value: JSONObject?): Admission? = value?.let {
+                if (it.keys().asSequence().toSet() != setOf("policy", "availableBytes", "requiredBytes", "reserveBytes", "deficitBytes") ||
+                    it.opt("policy") != "SYSTEM_RESERVE") return null
+                val available = bytes(it, "availableBytes", -1) ?: return null
+                val required = bytes(it, "requiredBytes") ?: return null
+                val reserve = bytes(it, "reserveBytes") ?: return null
+                val deficit = bytes(it, "deficitBytes") ?: return null
+                val expectedDeficit = if (available < 0) 0L else (required - available).coerceAtLeast(0)
+                if (required < reserve || deficit != expectedDeficit) return null
+                Admission(available, required, reserve, deficit)
+            }
+            fun parse(value: JSONObject): NativeMemory? {
+                val resident = bytes(value, "residentBytes")
+                val peak = bytes(value, "peakRssBytes")
+                val available = bytes(value, "availableRamBytes")
+                val admission = runCatching { admission(value.optJSONObject("memoryAdmission")) }.getOrNull()
+                val telemetry = runCatching { LocalGgufMemoryTelemetry.parse(value) }.getOrNull()
+                if (resident == null && peak == null && available == null && admission == null && telemetry == null) return null
+                return NativeMemory(resident, peak, available, admission, telemetry)
+            }
+        }
+    }
     fun initial(config: TranslationProviderConfig, startedAtMs: Long = System.currentTimeMillis(),
         pendingStatus: Boolean = true): String = buildString {
         append("Préparation locale commencée (UTC) : "); append(Instant.ofEpochMilli(startedAtMs))
@@ -164,7 +226,7 @@ internal object LocalGgufAttemptReport {
     }
 
     fun failure(code: LocalGgufRuntime.Code, progress: LocalGgufProgress?, elapsedMs: Long,
-        exit: ExitRecord? = null): String = buildString {
+        exit: ExitRecord? = null, nativeMemory: NativeMemory? = null): String = buildString {
         append("Fin de l’appel local : "); append(when (code) {
             LocalGgufRuntime.Code.DIED -> "arrêt ou perte du processus de calcul [DIED]"
             LocalGgufRuntime.Code.TIMEOUT -> "délai de l’appel dépassé [TIMEOUT]"
@@ -172,6 +234,7 @@ internal object LocalGgufAttemptReport {
         })
         append(".\nDurée observée par l’application : "); append(elapsedMs.coerceAtLeast(0)); append(" ms.")
         progress?.let { append('\n'); append(it.render()) }
+        nativeMemory?.let { append('\n'); append(it.render()) }
         if (code == LocalGgufRuntime.Code.DIED) {
             if (exit == null) append("\nAucun motif d’arrêt Android corrélé à cet appel n’est disponible ; la cause reste indéterminée.")
             else {

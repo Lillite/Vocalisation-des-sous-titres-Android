@@ -1,0 +1,114 @@
+{
+  "status": "passed",
+  "steps": [
+    {
+      "step": "fixture-repeat",
+      "exitCode": 0,
+      "elapsedMs": 61
+    },
+    {
+      "step": "fixture-eos",
+      "exitCode": 0,
+      "elapsedMs": 45
+    },
+    {
+      "step": "fixture-context",
+      "exitCode": 0,
+      "elapsedMs": 77
+    },
+    {
+      "step": "fixture-gemma-swa",
+      "exitCode": 0,
+      "elapsedMs": 56
+    },
+    {
+      "step": "fixture-cache-q8",
+      "exitCode": 0,
+      "elapsedMs": 70
+    },
+    {
+      "step": "fixture-gemma-cache-q8",
+      "exitCode": 0,
+      "elapsedMs": 60
+    },
+    {
+      "step": "fixture-chat",
+      "exitCode": 0,
+      "elapsedMs": 143
+    },
+    {
+      "step": "translation",
+      "exitCode": 0,
+      "elapsedMs": 6182
+    },
+    {
+      "step": "probe",
+      "exitCode": 0,
+      "elapsedMs": 20
+    },
+    {
+      "step": "diagnostic",
+      "exitCode": 0,
+      "elapsedMs": 5
+    }
+  ],
+  "realHostInference": true,
+  "gpuExecutionValidated": false,
+  "phonePerformanceValidated": false,
+  "loadingAdmissionRegressionsPassed": true,
+  "cachedVsFreshMaxLogitError": 0.0,
+  "changedContextDelta": 0.000209779,
+  "builtinChatFormatValidation": {
+    "fixtureModels": 14,
+    "exactPromptFamilies": 3,
+    "literalUserChecks": 3,
+    "successfulGenerations": 55,
+    "rejectedRequests": 18,
+    "boundaryChecks": 5
+  },
+  "compactSwaValidation": {
+    "requests": 6,
+    "safeRecompute": true,
+    "shortPrefixReuse": true,
+    "cachedVsFreshMaxLogitError": 0.0,
+    "compactVsFullMaxLogitError": 2.69338e-05,
+    "compactVsFullRelativeLogitError": 1.68453e-06
+  },
+  "runtimeOptimizationValidation": {
+    "movingWindow": {
+      "requests": 25,
+      "workspaceGrowthsAfterWarmup": 0,
+      "workspaceBytes": 4352,
+      "cacheResets": 23,
+      "cachedVsFreshMaxLogitError": 0.0,
+      "elapsedIncludingLoadMicroseconds": 400062
+    },
+    "quantizedCache": {
+      "Llama": {
+        "requests": 25,
+        "cachedVsFreshMaxLogitError": 0.0,
+        "q8VsF16MaxLogitError": 0.00262184,
+        "syntheticOutputTokensEqual": true
+      },
+      "Gemma-SWA": {
+        "requests": 25,
+        "cachedVsFreshMaxLogitError": 0.0,
+        "q8VsF16MaxLogitError": 0.00023362,
+        "syntheticOutputTokensEqual": true
+      }
+    },
+    "phoneSpeedupMeasured": false,
+    "linguisticEquivalenceEstablished": false
+  },
+  "sourceRevision": "8ca4060b7e30e76baaa5670ee1ec1b760b7f8552",
+  "sourceFilesSha256": {
+    "app/src/main/cpp/local_translation_engine.cpp": "ad5252bcf27b4bbff46c31c8c91979a4df130a1c797c493722431a3f13653616",
+    "app/src/main/cpp/local_translation_engine.h": "bf6cbda0d3c61f26b59e9cf22f5d539a887f8e8520a9c697924d1cbb9ffe8d4b",
+    "app/src/main/cpp/tests/local_translation_smoke.cpp": "6e762da23568b634c02705b0f1a2e328ff415f5ce1b34cdcb0fc1a65fc188e66",
+    "tools/run-native-translation-tests.py": "ac6a6e49352877593b683ae175c192e4d048cc96d5f5bac31bcbde8753b0d6f4"
+  },
+  "initialLocalBuild": {
+    "result": "link_failed",
+    "observation": "One generated repack object was zero bytes. Only the invalid object and affected targets were rebuilt; the final inference logs passed."
+  }
+}

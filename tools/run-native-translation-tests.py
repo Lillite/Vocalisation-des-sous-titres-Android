@@ -147,6 +147,11 @@ def main():
         q8_swa = work / 'gemma-cache-q8.gguf'
         run('fixture-gemma-cache-q8', ['python3', generator, q8_swa, '--terminating', '--context-sensitive', '--roundtrip', '--gemma-swa', '--cache-q8'], 30)
         translation_log = run('translation', [work / 'build/local-translation-smoke', eos, repeat, context, chat_fixtures, swa, q8, q8_swa], 180)
+        loading_evidence = ('Loading admission: sparse_mmap=1, explicit_accelerators=3, low_reserve_modes=5, '
+                            'pressure_release=1, rss_not_reserved_twice=1.')
+        if translation_log.count(loading_evidence) != 1:
+            raise RuntimeError('The loading/admission regression evidence is missing or duplicated')
+        summary['loadingAdmissionRegressionsPassed'] = True
         run('probe', [work / 'build/model-probe-smoke', repeat], 60)
         run('diagnostic', [work / 'build/optional-opencl-diagnostic-smoke'], 60)
         error, delta = parse_logit_comparison(translation_log)

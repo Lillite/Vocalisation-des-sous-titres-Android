@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish only the signed 0.5.14-hexagon candidate already validated on main.
+"""Publish only the signed 0.5.15-loading candidate already validated on main.
 
 The temporary branch contains only bounded release data, never a signing key. This script
 does not compile or sign an APK, delete a release/tag, replace an asset, execute a
@@ -32,15 +32,15 @@ import zipfile
 
 
 REPOSITORY = "Lillite/Vocalisation-des-sous-titres-Android"
-BRANCH = "release-upload/v0.5.14-hexagon"
-TAG = "v0.5.14-hexagon"
-TITLE = 'Sous-titres en voix 0.5.14 — Stabilité, mémoire et NPU Hexagon (préversion)'
+BRANCH = "release-upload/v0.5.15-loading"
+TAG = "v0.5.15-loading"
+TITLE = 'Sous-titres en voix 0.5.15 — Chargement et diagnostics mémoire (préversion)'
 PRERELEASE = True
 APPLICATION_ID = "fr.soustitresvoix.player.translation"
-VERSION_NAME = "0.5.14-hexagon"
-VERSION_CODE = "21"
+VERSION_NAME = "0.5.15-loading"
+VERSION_CODE = "22"
 EXPECTED_SIGNER_SHA256 = "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d"
-APK_PATH = "release-upload/SousTitresVoix-0.5.14-hexagon.apk"
+APK_PATH = "release-upload/SousTitresVoix-0.5.15-loading.apk"
 NOTES_PATH = "release-upload/notes.md"
 METADATA_PATH = "release-upload/release.json"
 APK_PARTS_DIRECTORY = "release-upload/apk-parts"
