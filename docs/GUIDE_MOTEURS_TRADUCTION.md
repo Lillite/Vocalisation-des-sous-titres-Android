@@ -1,5 +1,8 @@
 # Choisir et configurer les moteurs de traduction
 
+
+La candidate **0.5.14-hexagon** ajoute les [protections mémoire et améliorations des accélérateurs](OPTIMISATIONS_0514.md), ainsi qu’un [mode Qualcomm Hexagon/HTP expérimental](NPU_HEXAGON_0514.md). Il s’agit d’un choix explicite du moteur GGUF, sans acquisition de poids ni précision réduite automatiquement. Sa disponibilité matérielle et la fidélité du modèle réel restent à vérifier ; les résultats des moteurs et modèles décrits plus bas ne valident pas ce nouveau backend.
+
 [Accueil](../README.md) · [Documentation](README.md) · [Services gratuits et limites](TRADUCTION_GRATUITE_ET_LIMITES.md) · [Tests sur téléphone](TESTS_TELEPHONE.md)
 
 Guide d’utilisation courant : fonctions de lecture et traduction de la **0.5.2**, GGUF local publié jusqu’à la **0.5.10-quality**, et nouvelle compatibilité de la **candidate 0.5.11-models** ; état documentaire au **29 octobre 2026**. Les [notes 0.5.10](releases/0.5.10-quality.md) conservent leurs preuves ; le [guide des modèles 0.5.11](COMPATIBILITE_GGUF_0511.md) décrit les changements dont la validation reste à établir. Les références commerciales initiales ont été vérifiées le 24 octobre, puis les offres gratuites le 27 octobre. Les conditions, langues et droits applicables restent ceux affichés dans le compte du fournisseur.

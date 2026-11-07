@@ -60,8 +60,10 @@ class LocalGgufBenchmarkRobolectricTest {
             if (calls == 1) listener?.invoke(LocalTranslationPerformance(phase = "load", requestedMode = config.localExecution,
                 backend = config.localExecution, loadMs = 10))
             val actualGpu = config.localExecution in setOf("OPENCL", "VULKAN") && gpuObserved
+            val actualNpu = config.localExecution == "HEXAGON" && gpuObserved
             listener?.invoke(LocalTranslationPerformance(requestedMode = config.localExecution,
-                backend = if (actualGpu) config.localExecution else "CPU", gpuObserved = actualGpu,
+                backend = if (actualGpu || actualNpu) config.localExecution else "CPU", gpuObserved = actualGpu,
+                npuObserved = actualNpu, npuGraphNodes = if (actualNpu) 6 else 0,
                 openClTransport = gpuTransport ?: if (actualGpu && config.localExecution == "OPENCL") "DIRECT" else "",
                 gpuGraphNodes = if (actualGpu) 8 else 0, device = "synthetic test device",
                 promptMs = if (calls == 1) 12 else 1, generationMs = 20, endToEndMs = 40,
@@ -84,6 +86,38 @@ class LocalGgufBenchmarkRobolectricTest {
     }
     private val probe = { LocalGgufBenchmark.Environment(availableRamBytes = 8L * 1024 * 1024 * 1024,
         thermalStatus = 0, batteryTenthsCelsius = 310) }
+
+    @Test fun hexagonBenchmarkRequiresNpuEvidenceWithoutRelabelingGpuCounters() {
+        val events = mutableListOf<String>()
+        val benchmark = LocalGgufBenchmark(context, {}, engineFactory = { FakeEngine(it, events, mutableListOf()) }, snapshot = probe)
+        try {
+            benchmark.start(model, 4, LocalGgufProfile.TRANSLATE_GEMMA,
+                LocalGgufBenchmark.Options(gpuMode = "HEXAGON")); await(benchmark)
+            assertEquals(listOf("CPU", "HEXAGON"), benchmark.state.runs.map { it.requestedMode })
+            val run = benchmark.state.runs.last()
+            assertNull(run.failure)
+            assertEquals(2, run.samples.size)
+            assertTrue(run.samples.all { it.performance?.npuObserved == true && it.performance?.npuGraphNodes == 6L })
+            assertTrue(run.samples.all { it.performance?.gpuObserved == false && it.performance?.gpuGraphNodes == 0L })
+            val report = benchmark.state.report()
+            assertTrue(report.contains("Moteur NPU demandé pour ce comparatif : Hexagon strict"))
+            assertTrue(report.contains("Ordre fixe : CPU puis NPU Hexagon strict."))
+            assertFalse(report.contains("Aucun test NPU"))
+        } finally { benchmark.close() }
+    }
+
+    @Test fun unobservedHexagonBenchmarkCannotSucceedThroughCpuFallback() {
+        val benchmark = LocalGgufBenchmark(context, {},
+            engineFactory = { FakeEngine(it, mutableListOf(), mutableListOf(), gpuObserved = false) }, snapshot = probe)
+        try {
+            benchmark.start(model, 4, LocalGgufProfile.TRANSLATE_GEMMA,
+                LocalGgufBenchmark.Options(gpuMode = "HEXAGON")); await(benchmark)
+            val run = benchmark.state.runs.last()
+            assertEquals("HEXAGON", run.requestedMode)
+            assertNotNull(run.failure)
+            assertTrue(run.samples.isEmpty())
+        } finally { benchmark.close() }
+    }
 
     @Test fun benchmarkIsPassiveUntilRequestedThenClosesCpuBeforeOpeningGpuWithIdenticalInputs() {
         val events = mutableListOf<String>(); val inputs = mutableListOf<String>()

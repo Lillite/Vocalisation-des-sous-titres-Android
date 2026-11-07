@@ -55,4 +55,24 @@ class LocalGgufLoadSettingsTest {
         assertTrue(quantized.render().contains("modifie la précision"))
         assertTrue(quantized.render().contains("poids"))
     }
+    @Test fun explicitFlashCompatibilityAndNativeCpuWeightsKeepHistoricalDefaultsDistinct() {
+        val defaults = LocalGgufLoadSettings()
+        assertEquals("-1/512/128/false", defaults.cacheIdentity())
+        assertTrue(defaults.isDefault)
+        val choices = listOf(defaults.copy(flashAttentionPolicy = "ENABLED"),
+            defaults.copy(flashAttentionPolicy = "DISABLED"), defaults.copy(qualcommCompatibility = true),
+            defaults.copy(nativeCpuWeights = true))
+        choices.forEach { it.validate(); assertFalse(it.isDefault); assertNotEquals(defaults.cacheIdentity(), it.cacheIdentity()) }
+        assertEquals(choices.size, choices.map { it.cacheIdentity() }.distinct().size)
+        defaults.copy(kvCacheType = "Q8_0", flashAttentionPolicy = "AUTO").validate()
+    }
+
+    @Test fun disabledFlashCannotSilentlyChangeAnExplicitQuantizedCache() {
+        for (choice in listOf(LocalGgufLoadSettings(kvCacheType = "Q8_0", flashAttentionPolicy = "DISABLED"),
+            LocalGgufLoadSettings(flashAttentionPolicy = "invented"))) {
+            try { choice.validate(); fail("An incompatible explicit precision/policy was accepted") }
+            catch (failure: TranslationFailure) { assertEquals(TranslationFailure.Reason.CONFIGURATION, failure.reason) }
+        }
+    }
+
 }

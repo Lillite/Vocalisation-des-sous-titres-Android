@@ -16,7 +16,7 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,6 +33,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.13'
+      - name: Restaurer le SDK Hexagon et les bibliotheques DSP epingles
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/soustitresvoix/hexagon-v1
+          key: hexagon-linux-sdk6.7.0.0-00725fc4-llama8ca4060b-cmake3.31.6-policy1
       - name: Préparer SDK et démonstration synthétique
         shell: bash
         run: |
@@ -57,6 +62,15 @@ jobs:
             "$ANDROID_CMDLINE_TOOLS_BIN/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
           fi
           git rev-parse HEAD > build/verification/source-commit.txt
+      - name: Preparer les memes assets Hexagon sans rejouer les tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/prepare-hexagon.py \
+            --work "$HOME/.cache/soustitresvoix/hexagon-v1" \
+            --assets "$HOME/.cache/soustitresvoix/hexagon-v1/assets" \
+            --ninja "$ANDROID_HOME/cmake/3.22.1/bin/ninja" \
+            --github-env "$GITHUB_ENV"
       - name: Compiler la release sans relancer les suites de tests
         run: gradle --no-daemon --stacktrace --no-build-cache :app:assembleRelease
       - name: Vérifier le contenu identique à l’APK déjà testé

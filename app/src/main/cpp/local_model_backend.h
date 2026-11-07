@@ -20,4 +20,6 @@ void reset_offload_observation();
 int observed_offload_layers();
 void reset_gpu_graph_observation();
 uint64_t observed_gpu_graph_nodes();
+void reset_npu_graph_observation();
+uint64_t observed_npu_graph_nodes();
 }

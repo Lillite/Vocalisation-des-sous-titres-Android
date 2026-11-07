@@ -103,4 +103,39 @@ class LocalGgufAttemptReportTest {
             assertTrue(parsed.render().contains("ne prouve pas qu’une occurrence complète a été validée"))
         }
     }
+    @Test fun processStateSummaryAcceptsOnlyOurBoundedFixedProtocol() {
+        val valid = "s=42;r=7;stage=PREFILL;p=0".toByteArray()
+        assertEquals(LocalGgufAttemptReport.ProcessSummary(42, 7, "PREFILL", 0), LocalGgufAttemptReport.processSummary(valid))
+        for (invalid in listOf("s=42;r=7;stage=/private/model;p=0", "s=42;r=7;stage=PREFILL;p=101",
+            "s=0;r=7;stage=PREFILL;p=0", "s=42;r=7;stage=PREFILL;p=0;private=subtitle",
+            "s=9223372036854775808;r=7;stage=PREFILL;p=0", "x".repeat(129)))
+            assertNull(LocalGgufAttemptReport.processSummary(invalid.toByteArray()))
+        assertNull(LocalGgufAttemptReport.processSummary(null))
+        assertNull(LocalGgufAttemptReport.processSummary(byteArrayOf(-1)))
+    }
+
+    @Test fun aCorrelatedProcessSummaryIsReportedWithoutFreeFormAndroidDescriptions() {
+        val exit = LocalGgufAttemptReport.ExitRecord(123, "app:model_diagnostic", 1000, 10_350,
+            5, 11, 20, 10, summary = LocalGgufAttemptReport.ProcessSummary(42, 7, "PREFILL", 0))
+        val report = LocalGgufAttemptReport.failure(LocalGgufRuntime.Code.DIED, null, 50, exit)
+        assertTrue(report.contains("session 42"))
+        assertTrue(report.contains("requête 7"))
+        assertTrue(report.contains("étape [PREFILL]"))
+        assertFalse(report.contains("app:model_diagnostic"))
+    }
+
+    @Test fun processProgressMemoryIsOptionalStrictlyTypedAndNeverCalledAnExactPeak() {
+        val bundle = progress().apply {
+            putLong(GgufMessages.RESIDENT_BYTES, 10_279_424_000L)
+            putLong(GgufMessages.AVAILABLE_RAM_BYTES, 523_341_824L)
+        }
+        val parsed = requireNotNull(LocalGgufProgress.parse(bundle, 10_000, 10_500))
+        assertEquals(10_279_424_000L, parsed.residentBytes)
+        assertEquals(523_341_824L, parsed.availableRamBytes)
+        assertTrue(parsed.render().contains("ne garantit pas le pic exact"))
+        assertEquals(-1L, requireNotNull(LocalGgufProgress.parse(progress(), 10_000, 10_500)).residentBytes)
+        assertNull(LocalGgufProgress.parse(bundle.apply { putString(GgufMessages.RESIDENT_BYTES, "123") }, 10_000, 10_500))
+        assertNull(LocalGgufProgress.parse(progress().apply { putLong(GgufMessages.RESIDENT_BYTES, 1L shl 45) }, 10_000, 10_500))
+    }
+
 }

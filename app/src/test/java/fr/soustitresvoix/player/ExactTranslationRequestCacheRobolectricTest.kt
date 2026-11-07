@@ -267,4 +267,36 @@ class ExactTranslationRequestCacheRobolectricTest {
         }.toByteArray()
         return body + MessageDigest.getInstance("SHA-256").digest(body)
     }
+    @Test fun localResourceChecksApplyOnlyToNewInferenceAndNeverBlockVerifiedCachedOccurrences() {
+        val cache = temporary.newFolder(); val progress = temporary.newFolder(); val retained = temporary.newFolder()
+        val runner = TranslationRunner(cache, progress, retained)
+        val first = Engine()
+        var checks = 0
+        val result = runner.runGuarded(plan(listOf("Again", "Again")), first, { false }, { _, _ -> }, policy,
+            beforeRequest = { checks++ })
+        assertEquals(2, result.cues.size)
+        assertEquals(1, checks)
+        assertEquals(1, first.calls)
+        val second = Engine()
+        val cached = runner.runGuarded(plan(listOf("Again", "Again"), 1), second, { false }, { _, _ -> }, policy,
+            beforeRequest = { throw AssertionError("Cached occurrences require no model resource wait") })
+        assertEquals(2, cached.cues.size)
+        assertEquals(0, second.calls)
+    }
+
+    @Test fun cancellationAtAResourceBoundaryPreventsAnInferenceAndLeavesTheSourceResumable() {
+        val runner = TranslationRunner(temporary.newFolder(), temporary.newFolder(), temporary.newFolder())
+        val source = plan(listOf("First", "Second"))
+        val first = Engine(); var cancelled = false
+        try {
+            runner.runGuarded(source, first, { cancelled }, { _, _ -> }, policy,
+                beforeRequest = { cancelled = true })
+            fail("A cancellation after the guard must be checked before model invocation")
+        } catch (_: TranslationCancelledException) { }
+        assertEquals(0, first.calls)
+        val resumed = Engine()
+        assertEquals(2, runner.run(source, resumed, { false }, { _, _ -> }, policy).cues.size)
+        assertEquals(2, resumed.calls)
+    }
+
 }

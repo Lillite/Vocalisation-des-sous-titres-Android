@@ -54,7 +54,7 @@ internal object LocalModelProbe {
             append("\n"); append(detail)
             append("\nCalcul observé : ")
             append(if (backend == "CPU" && promptTokens > 0) "CPU" else "non établi")
-            append("\nGPU : non exécuté dans cette version.\nNPU : non exécuté dans cette version.")
+            append("\nGPU : non exécuté dans cette sonde CPU.\nNPU : non exécuté dans cette sonde CPU.")
             append("\nMoteur : llama.cpp, révision "); append(runtimeRevision.take(12))
             if (architecture.isNotEmpty()) { append("\nArchitecture chargée : "); append(architecture) }
             append("\nContexte de cet essai : "); append(contextTokens); append(" tokens ; sortie limitée à ")

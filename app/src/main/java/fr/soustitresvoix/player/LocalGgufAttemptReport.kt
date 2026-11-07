@@ -13,13 +13,22 @@ data class LocalGgufProgress(
     val percent: Int,
     val processId: Int,
     val startedAtMs: Long,
-    val elapsedMs: Long
+    val elapsedMs: Long,
+    val residentBytes: Long = -1,
+    val availableRamBytes: Long = -1
 ) {
     fun render(): String = buildString {
         append("Dernière étape observée : "); append(STAGES.getValue(stage)); append(" ["); append(stage); append(']')
         if (percent >= 0) { append(" ; progression de cette étape : "); append(percent); append(" %") }
         append(".\nProcessus du moteur : "); append(processId)
         append(" ; temps écoulé dans cet appel : "); append(elapsedMs); append(" ms.")
+        if (residentBytes >= 0 || availableRamBytes >= 0) {
+            append("\nDernier échantillon reçu du processus moteur : RSS ")
+            append(if (residentBytes >= 0) residentBytes.toString() else "indisponible")
+            append(" octets ; RAM disponible ")
+            append(if (availableRamBytes >= 0) availableRamBytes.toString() else "indisponible")
+            append(" octets. Ce relevé ponctuel ne garantit pas le pic exact ni toute la mémoire GPU.")
+        }
         append(if (stage in CALCULATION_STAGES)
             "\nUne étape de calcul ne prouve pas qu’une occurrence complète a été validée ni que sa traduction est fidèle."
         else "\nUne étape de chargement ne prouve ni un calcul GPU effectif ni une traduction terminée.")
@@ -32,6 +41,9 @@ data class LocalGgufProgress(
             "BACKEND" to "préparation du moteur",
             "OPENCL" to "préparation OpenCL",
             "VULKAN" to "préparation Vulkan",
+            "HEXAGON" to "préparation Hexagon",
+            "HEXAGON_DRIVER" to "accès au pilote Hexagon",
+            "HEXAGON_DEVICE" to "détection du périphérique Hexagon",
             "MODEL_LOAD" to "chargement des poids",
             "CONTEXT_INIT" to "allocation du contexte de calcul",
             "CHAT_TEMPLATE" to "préparation du format de requête",
@@ -51,7 +63,13 @@ data class LocalGgufProgress(
             val elapsed = bundle.get(GgufMessages.ELAPSED) as? Long ?: return null
             if (stage !in STAGES || percent !in -1..100 || pid <= 0 ||
                 start < requestStartedAtMs - 1000 || start > nowMs + 1000 || elapsed !in 0..86_400_000) return null
-            return LocalGgufProgress(stage, percent, pid, start, elapsed)
+            fun sample(key: String): Long? = if (!bundle.containsKey(key)) -1 else when (val value = bundle.get(key)) {
+                is Long -> value.takeIf { it in -1..(1L shl 44) }
+                else -> null
+            }
+            val resident = sample(GgufMessages.RESIDENT_BYTES) ?: return null
+            val available = sample(GgufMessages.AVAILABLE_RAM_BYTES) ?: return null
+            return LocalGgufProgress(stage, percent, pid, start, elapsed, resident, available)
         }
     }
 }
@@ -63,7 +81,7 @@ internal fun interface LocalGgufProgressListener {
 }
 
 internal object LocalGgufAttemptReport {
-    private val MODES = setOf("AUTO", "CPU", "OPENCL", "VULKAN")
+    private val MODES = setOf("AUTO", "CPU", "OPENCL", "VULKAN", "HEXAGON")
     private val SHA256 = Regex("[a-fA-F0-9]{64}")
     fun initial(config: TranslationProviderConfig, startedAtMs: Long = System.currentTimeMillis(),
         pendingStatus: Boolean = true): String = buildString {
@@ -76,7 +94,7 @@ internal object LocalGgufAttemptReport {
             if (SHA256.matches(it.sha256)) { append(" ; SHA-256 "); append(it.sha256) }
         }
         val settings = config.localLoadSettings
-        append(".\nChargement demandé : couches GPU ")
+        append(if (config.localExecution == "HEXAGON") ".\nChargement demandé : couches NPU " else ".\nChargement demandé : couches GPU ")
         append(if (config.localExecution == "CPU") "0 (calcul CPU explicite)"
             else if (settings.gpuLayers == -1) "toutes" else settings.gpuLayers.toString())
         append(" ; lot "); append(settings.batchTokens); append(" ; micro-lot "); append(settings.microBatchTokens)
@@ -89,7 +107,22 @@ internal object LocalGgufAttemptReport {
 
     data class ExitRecord(val pid: Int, val processName: String, val uid: Int, val timestampMs: Long,
         val reason: Int, val status: Int, val rssKiB: Long, val pssKiB: Long,
-        val memoryLimiter: Boolean = false)
+        val memoryLimiter: Boolean = false, val summary: ProcessSummary? = null)
+
+    data class ProcessSummary(val session: Long, val request: Long, val stage: String, val percent: Int)
+
+    /** Never retain arbitrary process bytes, text, paths or an Android free-form description. */
+    internal fun processSummary(bytes: ByteArray?): ProcessSummary? {
+        if (bytes == null || bytes.size !in 1..128 || bytes.any { it.toInt() !in 32..126 }) return null
+        val match = Regex("s=([0-9]{1,19});r=([0-9]{1,19});stage=([A-Z_]+);p=(-?[0-9]{1,3})")
+            .matchEntire(bytes.toString(Charsets.US_ASCII)) ?: return null
+        val session = match.groupValues[1].toLongOrNull() ?: return null
+        val request = match.groupValues[2].toLongOrNull() ?: return null
+        val stage = match.groupValues[3]
+        val percent = match.groupValues[4].toIntOrNull() ?: return null
+        if (session <= 0 || request <= 0 || stage !in LocalGgufProgress.STAGES || percent !in -1..100) return null
+        return ProcessSummary(session, request, stage, percent)
+    }
 
     /** Retain only the documented fixed marker, never Android's free-form description. */
     fun memoryLimiterMarker(reason: Int, description: String?): Boolean =
@@ -144,6 +177,11 @@ internal object LocalGgufAttemptReport {
             else {
                 append("\nMotif d’arrêt Android : "); append(exitLabel(exit.reason)); append(" ["); append(exit.reason); append("]")
                 append(" ; code ou signal : "); append(exit.status); append('.')
+                exit.summary?.let { summary ->
+                    append("\nRésumé Android corrélé : session "); append(summary.session)
+                    append(" ; requête "); append(summary.request); append(" ; étape ["); append(summary.stage); append(']')
+                    append(" ; progression "); append(summary.percent); append(" %.")
+                }
                 if (exit.memoryLimiter) append("\nAndroid a également fourni le marqueur du limiteur mémoire par application [MemoryLimiter:AnonSwap].")
                 if (exit.rssKiB > 0) { append("\nDernier RSS échantillonné par Android : "); append(exit.rssKiB); append(" Kio.") }
                 if (exit.pssKiB > 0) { append("\nDernier PSS échantillonné par Android : "); append(exit.pssKiB); append(" Kio.") }
@@ -168,7 +206,7 @@ internal object LocalGgufAttemptReport {
             val records = manager.getHistoricalProcessExitReasons(context.packageName, pid, 16).map { entry ->
                 ExitRecord(entry.pid, entry.processName, entry.realUid, entry.timestamp,
                     entry.reason, entry.status, entry.rss, entry.pss,
-                    memoryLimiterMarker(entry.reason, entry.description))
+                    memoryLimiterMarker(entry.reason, entry.description), processSummary(runCatching { entry.processStateSummary }.getOrNull()))
             }
             matchingExit(records, pid, name, Process.myUid(), startedAtMs, stoppedAtMs)
         }.getOrNull()

@@ -133,9 +133,11 @@ endfunction()
 
 set(SUBTITLE_HAS_OPENCL OFF)
 set(SUBTITLE_HAS_VULKAN OFF)
+set(SUBTITLE_HAS_HEXAGON OFF)
 if(ANDROID AND ANDROID_ABI STREQUAL "arm64-v8a")
     option(SUBTITLE_ENABLE_OPENCL "Build optional Android Adreno OpenCL backend" ON)
     option(SUBTITLE_ENABLE_VULKAN "Build optional Android Vulkan backend" ON)
+    option(SUBTITLE_ENABLE_HEXAGON "Build optional Android Hexagon HTP backend" ON)
     set(GGML_CPU_KLEIDIAI ON CACHE BOOL "" FORCE)
     FetchContent_Declare(kleidiai
         URL https://github.com/ARM-software/kleidiai/releases/download/v1.32.0/kleidiai-v1.32.0-src.tar.gz
@@ -153,11 +155,23 @@ if(ANDROID AND ANDROID_ABI STREQUAL "arm64-v8a")
         set(SUBTITLE_HAS_VULKAN ON)
         subtitle_add_optional_vulkan()
     endif()
+    if(SUBTITLE_ENABLE_HEXAGON)
+        set(PREBUILT_LIB_DIR "android_aarch64" CACHE STRING "Hexagon SDK Android host ABI")
+        set(HEXAGON_SDK_ROOT "$ENV{SUBTITLE_HEXAGON_SDK_ROOT}" CACHE PATH "Pinned Hexagon SDK, build-time only")
+        set(HEXAGON_TOOLS_ROOT "$ENV{SUBTITLE_HEXAGON_TOOLS_ROOT}" CACHE PATH "Pinned Hexagon compiler")
+        if(NOT EXISTS "${HEXAGON_SDK_ROOT}/build/cmake/hexagon_fun.cmake" OR
+                NOT EXISTS "${HEXAGON_TOOLS_ROOT}/Tools/bin/hexagon-clang")
+            message(FATAL_ERROR "Run tools/prepare-hexagon.py before building the Hexagon-enabled ARM64 APK")
+        endif()
+        set(SUBTITLE_HAS_HEXAGON ON)
+        add_compile_options("-ffile-prefix-map=${HEXAGON_SDK_ROOT}=subtitle-hexagon-sdk")
+    endif()
 else()
     set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
 endif()
 set(GGML_OPENCL ${SUBTITLE_HAS_OPENCL} CACHE BOOL "" FORCE)
 set(GGML_VULKAN ${SUBTITLE_HAS_VULKAN} CACHE BOOL "" FORCE)
+set(GGML_HEXAGON ${SUBTITLE_HAS_HEXAGON} CACHE BOOL "" FORCE)
 set(GGML_CUDA OFF CACHE BOOL "" FORCE)
 set(GGML_BLAS OFF CACHE BOOL "" FORCE)
 set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
@@ -173,7 +187,69 @@ FetchContent_Declare(probe_llama
     URL https://codeload.github.com/ggml-org/llama.cpp/tar.gz/8ca4060b7e30e76baaa5670ee1ec1b760b7f8552
     URL_HASH SHA256=68f2759b1cd93f352ade2413c1e123199632a348c46414b05f30efc67913f618
 )
-FetchContent_MakeAvailable(probe_llama)
+if(SUBTITLE_HAS_HEXAGON OR SUBTITLE_HAS_VULKAN)
+    FetchContent_GetProperties(probe_llama)
+    if(NOT probe_llama_POPULATED)
+        FetchContent_Populate(probe_llama)
+    endif()
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    if(SUBTITLE_HAS_HEXAGON)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/prepare_hexagon_cmake.py")
+        execute_process(
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/prepare_hexagon_cmake.py"
+                "${probe_llama_SOURCE_DIR}/ggml/src/ggml-hexagon/CMakeLists.txt"
+            RESULT_VARIABLE hexagon_cmake_status)
+        if(NOT hexagon_cmake_status EQUAL 0)
+            message(FATAL_ERROR "Pinned Hexagon host/DSP build adaptation refused")
+        endif()
+    endif()
+    if(SUBTITLE_HAS_VULKAN)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/prepare_vulkan_compat.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/vulkan_compat/provenance.json")
+        foreach(compat_pr 30821 30824 30826 30829 30487)
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/vulkan_compat/${compat_pr}.patch")
+        endforeach()
+        execute_process(
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/prepare_vulkan_compat.py"
+                "${probe_llama_SOURCE_DIR}"
+            RESULT_VARIABLE vulkan_compat_status)
+        if(NOT vulkan_compat_status EQUAL 0)
+            message(FATAL_ERROR "Pinned Vulkan compatibility qualification refused")
+        endif()
+    endif()
+    add_subdirectory("${probe_llama_SOURCE_DIR}" "${probe_llama_BINARY_DIR}")
+else()
+    FetchContent_MakeAvailable(probe_llama)
+endif()
+
+if(SUBTITLE_HAS_HEXAGON)
+    # No DSP, driver or RPC discovery during CPU/OpenCL/Vulkan startup.
+    foreach(property COMPILE_DEFINITIONS INTERFACE_COMPILE_DEFINITIONS)
+        get_target_property(definitions ggml ${property})
+        if(definitions)
+            list(REMOVE_ITEM definitions GGML_USE_HEXAGON)
+            set_property(TARGET ggml PROPERTY ${property} "${definitions}")
+        endif()
+    endforeach()
+    set(instrumented_hexagon "${CMAKE_CURRENT_BINARY_DIR}/optional-hexagon/ggml-hexagon-instrumented.cpp")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/optional_hexagon_patch.py")
+    execute_process(
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/optional_hexagon_patch.py"
+            "${probe_llama_SOURCE_DIR}/ggml/src/ggml-hexagon/ggml-hexagon.cpp" "${instrumented_hexagon}"
+        RESULT_VARIABLE hexagon_instrumented_status)
+    if(NOT hexagon_instrumented_status EQUAL 0)
+        message(FATAL_ERROR "Pinned Hexagon execution instrumentation refused")
+    endif()
+    get_target_property(hexagon_sources ggml-hexagon SOURCES)
+    list(REMOVE_ITEM hexagon_sources ggml-hexagon.cpp)
+    list(APPEND hexagon_sources "${instrumented_hexagon}")
+    set_property(TARGET ggml-hexagon PROPERTY SOURCES "${hexagon_sources}")
+    target_include_directories(ggml-hexagon PRIVATE "${probe_llama_SOURCE_DIR}/ggml/src/ggml-hexagon")
+endif()
 
 if(SUBTITLE_HAS_OPENCL)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -188,6 +264,10 @@ if(SUBTITLE_HAS_OPENCL)
         endif()
     endforeach()
     set(instrumented_opencl "${CMAKE_CURRENT_BINARY_DIR}/optional-opencl/ggml-opencl-instrumented.cpp")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/optional_opencl_patch.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/opencl_memory_observation.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/opencl_q6_upload.h")
     execute_process(
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/optional_opencl_patch.py"
             "${probe_llama_SOURCE_DIR}/ggml/src/ggml-opencl/ggml-opencl.cpp" "${instrumented_opencl}"
@@ -200,7 +280,9 @@ if(SUBTITLE_HAS_OPENCL)
     list(REMOVE_ITEM opencl_sources ggml-opencl.cpp)
     list(APPEND opencl_sources "${instrumented_opencl}")
     set_property(TARGET ggml-opencl PROPERTY SOURCES "${opencl_sources}")
-    target_include_directories(ggml-opencl PRIVATE "${probe_llama_SOURCE_DIR}/ggml/src/ggml-opencl")
+    target_include_directories(ggml-opencl PRIVATE
+        "${probe_llama_SOURCE_DIR}/ggml/src/ggml-opencl"
+        "${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
 
 if(SUBTITLE_HAS_VULKAN)
@@ -241,13 +323,15 @@ if(SUBTITLE_HAS_VULKAN)
     list(APPEND vulkan_sources "${instrumented_vulkan}")
     set_property(TARGET ggml-vulkan PROPERTY SOURCES "${vulkan_sources}")
     target_include_directories(ggml-vulkan PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
         "${probe_llama_SOURCE_DIR}/ggml/src/ggml-vulkan"
         "${subtitle_spirv_headers_SOURCE_DIR}/include")
 endif()
 
-add_library(model_probe_engine STATIC model_probe_engine.cpp local_model_backend.cpp local_translation_engine.cpp optional_opencl_loader.cpp optional_vulkan_backend.cpp)
+add_library(model_probe_engine STATIC model_probe_engine.cpp local_model_backend.cpp local_translation_engine.cpp optional_opencl_loader.cpp optional_vulkan_backend.cpp optional_hexagon_backend.cpp)
 target_compile_features(model_probe_engine PUBLIC cxx_std_17)
 target_include_directories(model_probe_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(model_probe_engine PRIVATE "${probe_llama_SOURCE_DIR}/src")
 target_link_libraries(model_probe_engine PUBLIC llama)
 if(SUBTITLE_HAS_OPENCL)
     target_compile_definitions(model_probe_engine PRIVATE SUBTITLE_HAS_OPENCL=1 CL_TARGET_OPENCL_VERSION=300)
@@ -257,6 +341,10 @@ endif()
 if(SUBTITLE_HAS_VULKAN)
     target_compile_definitions(model_probe_engine PRIVATE SUBTITLE_HAS_VULKAN=1)
     target_link_libraries(model_probe_engine PRIVATE subtitle_vulkan_dispatch ggml-vulkan ${CMAKE_DL_LIBS})
+endif()
+if(SUBTITLE_HAS_HEXAGON)
+    target_compile_definitions(model_probe_engine PRIVATE SUBTITLE_HAS_HEXAGON=1)
+    target_link_libraries(model_probe_engine PRIVATE ggml-hexagon ${CMAKE_DL_LIBS})
 endif()
 
 if(ANDROID)

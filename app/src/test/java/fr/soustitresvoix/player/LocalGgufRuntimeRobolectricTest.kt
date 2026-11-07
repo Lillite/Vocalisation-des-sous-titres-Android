@@ -526,4 +526,26 @@ class LocalGgufRuntimeRobolectricTest {
         }
     }
 
+    @Test fun explicitF16FlashPoliciesAndNativeWeightRequestsAreTypedObservations() {
+        for (policy in listOf("AUTO", "ENABLED", "DISABLED")) {
+            val value = JSONObject(generation()).put("cacheTypeK", "F16").put("cacheTypeV", "F16")
+                .put("flashAttentionPolicy", policy).put("qualcommCompatibility", true).put("nativeCpuWeights", true)
+                .put("memoryReserveBytes", 1024).put("observedPrefillExtraBytes", 512)
+            val result = LocalGgufRuntime.generation(value.toString())
+            assertEquals(policy, result.flashAttentionPolicy)
+            assertTrue(result.qualcommCompatibility)
+            assertTrue(result.nativeCpuWeights)
+            assertEquals(1024L, result.memoryReserveBytes)
+            assertFalse(result.gpuObserved)
+            assertFalse(result.npuObserved)
+        }
+        for (value in listOf(JSONObject(generation()).put("qualcommCompatibility", "true"),
+            JSONObject(generation()).put("nativeCpuWeights", 1),
+            JSONObject(generation()).put("memoryReserveBytes", -1),
+            JSONObject(generation()).put("observedPrefillExtraBytes", Long.MAX_VALUE))) {
+            try { LocalGgufRuntime.generation(value.toString()); fail("Malformed policy or memory observation accepted") }
+            catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.RESPONSE, failure.code) }
+        }
+    }
+
 }

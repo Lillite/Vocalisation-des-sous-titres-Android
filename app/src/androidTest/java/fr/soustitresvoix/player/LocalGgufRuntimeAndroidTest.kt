@@ -71,6 +71,64 @@ class LocalGgufRuntimeAndroidTest {
         } finally { client.setProgressListener(null); client.closeAndAwait(); file.delete() }
     }
 
+    @Test fun explicitHexagonNeverFallsBackToCpuAndCpuRemainsUsableAfterItsRelease() {
+        val file = fixture(true)
+        val client = LocalGgufRuntime.Client(context)
+        try {
+            try {
+                val info = client.open(file, threads = 1, contextTokens = 512, executionMode = "HEXAGON",
+                    batchTokens = 64, microBatchTokens = 16)
+                assertEquals("HEXAGON", info.backend)
+                assertFalse("Loading is not proof of NPU execution", info.npuObserved)
+                assertFalse(info.gpuObserved)
+                val result = client.generate("A complete synthetic input.", 1, true)
+                assertEquals("HEXAGON", result.backend)
+                assertTrue(result.npuObserved)
+                assertTrue(result.npuGraphNodes > 0)
+                assertFalse(result.gpuObserved)
+                assertEquals(0L, result.gpuGraphNodes)
+            } catch (failure: LocalGgufRuntime.Failure) {
+                assertTrue("An unavailable accelerator must fail explicitly, never die or become CPU: ${failure.code}",
+                    failure.code in setOf(LocalGgufRuntime.Code.BACKEND, LocalGgufRuntime.Code.MEMORY,
+                        LocalGgufRuntime.Code.CONTEXT))
+                assertNotNull("An explicit Hexagon failure must retain a fixed diagnostic", failure.diagnostic)
+            }
+        } finally { client.closeAndAwait() }
+        val cpu = open(file).first
+        try {
+            val result = cpu.generate("A complete synthetic input.", 1, true)
+            assertEquals("CPU", result.backend)
+            assertFalse(result.gpuObserved)
+            assertFalse(result.npuObserved)
+            assertEquals(0L, result.npuGraphNodes)
+        } finally { cpu.closeAndAwait(); file.delete() }
+    }
+
+    @Test fun idleRestartRefusesLiveOwnerThenConfirmsReplacementWithoutRestartingReader() {
+        val file = fixture(true)
+        val readerPid = Process.myPid()
+        val client = LocalGgufRuntime.Client(context)
+        val previousPid: Int
+        try {
+            val info = client.open(file, threads = 1, contextTokens = 512, executionMode = "CPU",
+                flashAttentionPolicy = "DISABLED", nativeCpuWeights = true)
+            previousPid = info.processId
+            assertEquals("DISABLED", info.flashAttentionPolicy)
+            assertTrue(info.nativeCpuWeights)
+            try { LocalGgufRuntime.restartIdleProcess(context); fail("A live model owner was restarted") }
+            catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.BUSY, failure.code) }
+            assertEquals("end_of_generation", client.generate("A complete synthetic input.", 1, true).stopReason)
+        } finally { client.closeAndAwait() }
+        LocalGgufRuntime.restartIdleProcess(context)
+        assertEquals(readerPid, Process.myPid())
+        val reopened = open(file)
+        try {
+            assertNotEquals(previousPid, reopened.second.processId)
+            assertNotEquals(readerPid, reopened.second.processId)
+            assertEquals("CPU", reopened.first.generate("A complete synthetic input.", 1, true).backend)
+        } finally { reopened.first.closeAndAwait(); file.delete() }
+    }
+
     @Test fun explicitQ8CacheCrossesRealJniAndIpcWithoutChangingModelWeights() {
         val file = File(context.cacheDir, "translation-q8-kv.gguf")
         instrumentation.context.assets.open("translation_q8_test_model.gguf").use { input ->

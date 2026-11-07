@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
-/** Optional OpenCL and CPU execution; text and paths stay inside private app processes. */
+/** Explicit CPU, GPU and experimental Hexagon execution; text and paths stay inside private app processes. */
 internal object LocalGgufRuntime {
     enum class Code { BUSY, MODEL, CONTEXT, INPUT_TOO_LONG, OUTPUT_LIMIT, CANCELLED, DIED, TIMEOUT, RESPONSE, BACKEND, MEMORY, TEMPLATE }
     class Failure(val code: Code, val diagnostic: LocalGgufDiagnostic? = null, val attemptReport: String? = null) : Exception("Local GGUF: ${code.name}")
@@ -34,7 +34,12 @@ internal object LocalGgufRuntime {
         val loadProfile: LocalGgufLoadProfile? = null,
         val chatTemplateAvailable: Boolean = false, val chatTemplateMode: String = "",
         val batchTokens: Int = 0, val microBatchTokens: Int = 0, val compactSwa: Boolean? = null,
-        val cacheTypeK: String = "", val cacheTypeV: String = "", val flashAttentionPolicy: String = "")
+        val cacheTypeK: String = "", val cacheTypeV: String = "", val flashAttentionPolicy: String = "",
+        val npuObserved: Boolean = false, val npuGraphNodes: Long = 0,
+        val requestedNpuLayers: Int = 0, val actualNpuLayers: Int = 0,
+        val qualcommCompatibility: Boolean = false, val nativeCpuWeights: Boolean = false,
+        val memoryReserveBytes: Long = 0, val observedPrefillExtraBytes: Long = 0,
+        val memoryTelemetry: LocalGgufMemoryTelemetry? = null)
     data class Generation(val output: String, val promptTokens: Int, val generatedTokens: Int,
         val stopReason: String, val promptMs: Long, val generationMs: Long, val peakRssBytes: Long,
         val backend: String = "CPU", val device: String = "CPU", val requestedMode: String = "CPU",
@@ -46,7 +51,12 @@ internal object LocalGgufRuntime {
         val batchTokens: Int = 0, val microBatchTokens: Int = 0, val compactSwa: Boolean? = null,
         val processId: Int = 0, val cacheTypeK: String = "", val cacheTypeV: String = "", val flashAttentionPolicy: String = "",
         val startResidentBytes: Long = -1, val prefillResidentBytes: Long = -1,
-        val cacheResetReason: String = "", val cacheResets: Long = 0, val workspaceGrowths: Long = 0, val workspaceBytes: Long = 0)
+        val cacheResetReason: String = "", val cacheResets: Long = 0, val workspaceGrowths: Long = 0, val workspaceBytes: Long = 0,
+        val npuObserved: Boolean = false, val npuGraphNodes: Long = 0,
+        val requestedNpuLayers: Int = 0, val actualNpuLayers: Int = 0,
+        val qualcommCompatibility: Boolean = false, val nativeCpuWeights: Boolean = false,
+        val memoryReserveBytes: Long = 0, val observedPrefillExtraBytes: Long = 0,
+        val memoryTelemetry: LocalGgufMemoryTelemetry? = null)
     private val loaded by lazy {
         try { System.loadLibrary("subtitle_model_probe"); true }
         catch (_: LinkageError) { false }
@@ -72,14 +82,20 @@ internal object LocalGgufRuntime {
                 x.optBoolean("gpuObserved"), x.optLong("residentBytes", -1), x.optLong("availableRamBytes", -1),
                 LocalGgufDiagnostic.parse(x.optJSONObject("diagnostic")), openClTransport(x), LocalGgufLoadProfile.fromResponse(x),
                 chatTemplateAvailable(x), chatTemplateMode(x), settingInt(x, "batchTokens"), settingInt(x, "microBatchTokens"), compactSwa(x),
-                cacheType(x, "cacheTypeK"), cacheType(x, "cacheTypeV"), flashAttentionPolicy(x)).also {
+                cacheType(x, "cacheTypeK"), cacheType(x, "cacheTypeV"), flashAttentionPolicy(x),
+                optionalBoolean(x, "npuObserved"), optionalNonNegativeLong(x, "npuGraphNodes"),
+                optionalLayers(x, "requestedNpuLayers"), optionalLayers(x, "actualNpuLayers"),
+                optionalBoolean(x, "qualcommCompatibility"), optionalBoolean(x, "nativeCpuWeights"),
+                optionalMemoryBytes(x, "memoryReserveBytes"), optionalMemoryBytes(x, "observedPrefillExtraBytes"),
+                LocalGgufMemoryTelemetry.parse(x)).also {
                 if (it.contextTokens !in 128..2048 || it.modelBytes <= 0 || it.modelParameters <= 0 ||
                     it.loadMs < 0 || it.peakRssBytes < 0 || !validBackend(it.backend, it.requestedMode) ||
-                    it.gpuObserved || it.actualGpuLayers !in -1..1024 || it.requestedGpuLayers !in -1..1024 ||
+                    it.gpuObserved || it.npuObserved || it.npuGraphNodes != 0L || it.actualGpuLayers !in -1..1024 || it.requestedGpuLayers !in -1..1024 ||
                     it.residentBytes < -1 || it.availableRamBytes < -1 || !validTransport(it.backend, it.openClTransport) ||
                     it.chatTemplateAvailable != (it.chatTemplateMode == "BUILTIN_FORMAT") ||
                     !validSettings(it.batchTokens, it.microBatchTokens, it.compactSwa, it.contextTokens) ||
-                    !validCacheTypes(it.cacheTypeK, it.cacheTypeV, it.flashAttentionPolicy))
+                    !validCacheTypes(it.cacheTypeK, it.cacheTypeV, it.flashAttentionPolicy) ||
+                    !validLayerEvidence(it.backend, it.requestedGpuLayers, it.actualGpuLayers, it.requestedNpuLayers, it.actualNpuLayers))
                     throw Failure(Code.RESPONSE)
                 it.loadProfile?.let { profile ->
                     if (profile.modelLoadMs + profile.contextInitMs > it.loadMs || it.loadMs > profile.openTotalMs)
@@ -103,23 +119,45 @@ internal object LocalGgufRuntime {
                 cacheType(x, "cacheTypeK"), cacheType(x, "cacheTypeV"), flashAttentionPolicy(x),
                 optionalNonNegativeLong(x, "startResidentBytes", -1), optionalNonNegativeLong(x, "prefillResidentBytes", -1),
                 cacheResetReason(x), optionalNonNegativeLong(x, "cacheResets"),
-                optionalNonNegativeLong(x, "workspaceGrowths"), optionalNonNegativeLong(x, "workspaceBytes")).also {
+                optionalNonNegativeLong(x, "workspaceGrowths"), optionalNonNegativeLong(x, "workspaceBytes"),
+                optionalBoolean(x, "npuObserved"), optionalNonNegativeLong(x, "npuGraphNodes"),
+                optionalLayers(x, "requestedNpuLayers"), optionalLayers(x, "actualNpuLayers"),
+                optionalBoolean(x, "qualcommCompatibility"), optionalBoolean(x, "nativeCpuWeights"),
+                optionalMemoryBytes(x, "memoryReserveBytes"), optionalMemoryBytes(x, "observedPrefillExtraBytes"),
+                LocalGgufMemoryTelemetry.parse(x)).also {
                 if (it.stopReason != "end_of_generation" || it.output.toByteArray(Charsets.UTF_8).size > 65536 ||
                     it.promptTokens !in 1..2048 || it.generatedTokens !in 0..1024 ||
                     it.promptMs < 0 || it.generationMs < 0 || it.peakRssBytes < 0 || !validBackend(it.backend, it.requestedMode) ||
                     it.gpuGraphNodes < 0 || it.gpuObserved != (it.backend in setOf("OPENCL", "VULKAN") && it.gpuGraphNodes > 0) ||
                     it.gpuGraphNodes > 0 && it.backend !in setOf("OPENCL", "VULKAN") ||
+                    it.npuObserved != (it.backend == "HEXAGON" && it.npuGraphNodes > 0) ||
+                    it.npuGraphNodes > 0 && it.backend != "HEXAGON" ||
+                    it.requestedMode == "HEXAGON" && !it.npuObserved ||
                     it.cachedPromptTokens < 0 || it.promptEvaluatedTokens < 1 ||
                     it.cachedPromptTokens + it.promptEvaluatedTokens != it.promptTokens ||
                     it.actualGpuLayers !in -1..1024 || it.requestedGpuLayers !in -1..1024 ||
                     it.residentBytes < -1 || it.availableRamBytes < -1 || !validTransport(it.backend, it.openClTransport) ||
                     !validSettings(it.batchTokens, it.microBatchTokens, it.compactSwa, 2048) ||
-                    !validCacheTypes(it.cacheTypeK, it.cacheTypeV, it.flashAttentionPolicy))
+                    !validCacheTypes(it.cacheTypeK, it.cacheTypeV, it.flashAttentionPolicy) ||
+                    !validLayerEvidence(it.backend, it.requestedGpuLayers, it.actualGpuLayers, it.requestedNpuLayers, it.actualNpuLayers))
                     throw Failure(Code.RESPONSE)
             }
         } catch (failure: Failure) { throw failure }
           catch (_: Exception) { throw Failure(Code.RESPONSE) }
     }
+    private fun optionalMemoryBytes(value: JSONObject, key: String): Long =
+        optionalNonNegativeLong(value, key).takeIf { it <= (1L shl 44) } ?: throw Failure(Code.RESPONSE)
+    private fun optionalLayers(value: JSONObject, key: String): Int {
+        if (!value.has(key)) return 0
+        val number = value.get(key)
+        val parsed = when (number) { is Int -> number.toLong(); is Long -> number; else -> throw Failure(Code.RESPONSE) }
+        return parsed.takeIf { it in -1..1024 }?.toInt() ?: throw Failure(Code.RESPONSE)
+    }
+    private fun validLayerEvidence(backend: String, requestedGpu: Int, actualGpu: Int, requestedNpu: Int, actualNpu: Int): Boolean =
+        if (backend == "HEXAGON") requestedGpu == 0 && actualGpu == 0
+        else requestedNpu == 0 && actualNpu == 0
+    private fun optionalBoolean(value: JSONObject, key: String): Boolean =
+        if (!value.has(key)) false else value.get(key) as? Boolean ?: throw Failure(Code.RESPONSE)
     private fun optionalNonNegativeLong(value: JSONObject, key: String, absent: Long = 0): Long {
         if (!value.has(key)) return absent
         val number = value.get(key)
@@ -144,15 +182,16 @@ internal object LocalGgufRuntime {
             ?: throw Failure(Code.RESPONSE)
     private fun flashAttentionPolicy(value: JSONObject): String =
         if (!value.has("flashAttentionPolicy")) "" else (value.get("flashAttentionPolicy") as? String)
-            ?.takeIf { it in setOf("AUTO", "ENABLED") } ?: throw Failure(Code.RESPONSE)
+            ?.takeIf { it in setOf("AUTO", "ENABLED", "DISABLED") } ?: throw Failure(Code.RESPONSE)
     private fun validCacheTypes(k: String, v: String, flash: String): Boolean =
         k.isEmpty() && v.isEmpty() && flash.isEmpty() ||
-            k == "F16" && v == "F16" && flash == "AUTO" ||
+            k == "F16" && v == "F16" && flash in setOf("AUTO", "ENABLED", "DISABLED") ||
             k == "Q8_0" && v == "Q8_0" && flash == "ENABLED"
     private fun validBackend(backend: String, mode: String) = when (mode) {
         "CPU" -> backend == "CPU"
         "OPENCL" -> backend == "OPENCL"
         "VULKAN" -> backend == "VULKAN"
+        "HEXAGON" -> backend == "HEXAGON"
         "AUTO" -> backend in setOf("CPU", "OPENCL")
         else -> false
     }
@@ -197,9 +236,12 @@ internal object LocalGgufRuntime {
         }
         fun open(file: File, threads: Int, contextTokens: Int, executionMode: String = "CPU", gpuLayers: Int = -1,
             cacheDirectory: File? = null, batchTokens: Int = 512, microBatchTokens: Int = 128,
-            compactSwa: Boolean = false, progress: LocalGgufProgressListener? = null, kvCacheType: String = "F16"): String {
+            compactSwa: Boolean = false, progress: LocalGgufProgressListener? = null, kvCacheType: String = "F16", hexagonLibraryDirectory: File? = null,
+            flashAttentionPolicy: String = "AUTO", qualcommCompatibility: Boolean = false, nativeCpuWeights: Boolean = false): String {
             val id = handle.get().takeIf { it != 0L } ?: throw Failure(Code.CANCELLED)
-            return decode(nativeOpen(id, file.absolutePath.toByteArray(Charsets.UTF_8), threads, contextTokens, executionMode, gpuLayers, cacheDirectory?.absolutePath.orEmpty().toByteArray(Charsets.UTF_8), batchTokens, microBatchTokens, compactSwa, progress, cacheTypeCode(kvCacheType)))
+            return decode(nativeOpen(id, file.absolutePath.toByteArray(Charsets.UTF_8), threads, contextTokens, executionMode, gpuLayers, cacheDirectory?.absolutePath.orEmpty().toByteArray(Charsets.UTF_8), batchTokens, microBatchTokens, compactSwa, progress, cacheTypeCode(kvCacheType),
+                if (executionMode == "HEXAGON") hexagonLibraryDirectory?.canonicalPath.orEmpty().toByteArray(Charsets.UTF_8) else byteArrayOf(),
+                flashAttentionCode(flashAttentionPolicy), qualcommCompatibility, nativeCpuWeights))
         }
         fun generate(prompt: String, maxOutputTokens: Int, addSpecialTokens: Boolean, progress: LocalGgufProgressListener? = null): String {
             val id = handle.get().takeIf { it != 0L } ?: throw Failure(Code.CANCELLED)
@@ -229,6 +271,9 @@ internal object LocalGgufRuntime {
         private var connection: ServiceConnection? = null
         private var opened = false
         private var expectedKvCacheType = "F16"
+        private var expectedFlashAttention = "AUTO"
+        private var expectedQualcommCompatibility = false
+        private var expectedNativeCpuWeights = false
         private var broken = false
         private var ownershipPossible = false
         private val releaseStarted = AtomicBoolean(false)
@@ -237,6 +282,7 @@ internal object LocalGgufRuntime {
         private var releaseDeadline: Runnable? = null
         @Volatile private var progressListener: ((LocalGgufProgress) -> Unit)? = null
         @Volatile private var serviceProcessId = 0
+        @Volatile private var restartDeath: CountDownLatch? = null
         fun setProgressListener(listener: ((LocalGgufProgress) -> Unit)?) { progressListener = listener }
         private class Pending(val id: Long, val what: Int, val arguments: Bundle) {
             val startedAtMs = System.currentTimeMillis()
@@ -281,21 +327,48 @@ internal object LocalGgufRuntime {
             }
             true
         })
+        /** A manually requested idle-process replacement; it never opens a model or restarts the reader. */
+        fun restartIdle(isCancelled: () -> Boolean = { false }) = onWorker {
+            if (opened || ownershipPossible || closed.get() || cancelled.get()) throw Failure(Code.BUSY)
+            val death = CountDownLatch(1)
+            restartDeath = death
+            try {
+                val ack = response(perform(GgufMessages.RESTART_IDLE, Bundle(), 5_000, isCancelled))
+                if (ack.opt("restartScheduled") != true) throw Failure(Code.RESPONSE)
+                val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+                while (!death.await(50, TimeUnit.MILLISECONDS)) {
+                    if (isCancelled() || cancelled.get() || closed.get()) throw Failure(Code.CANCELLED)
+                    if (System.nanoTime() >= deadline) throw Failure(Code.TIMEOUT)
+                }
+                if (isCancelled() || cancelled.get() || closed.get()) throw Failure(Code.CANCELLED)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt(); throw Failure(Code.CANCELLED)
+            } finally { restartDeath = null }
+        }
         fun open(file: File, threads: Int = 4, contextTokens: Int = 2048,
             cancelled: () -> Boolean = { false }, executionMode: String = "CPU", gpuLayers: Int = -1,
-            batchTokens: Int = 512, microBatchTokens: Int = 128, compactSwa: Boolean = false, kvCacheType: String = "F16"): Info = onWorker {
+            batchTokens: Int = 512, microBatchTokens: Int = 128, compactSwa: Boolean = false, kvCacheType: String = "F16", flashAttentionPolicy: String = "AUTO",
+            qualcommCompatibility: Boolean = false, nativeCpuWeights: Boolean = false): Info = onWorker {
             if (opened) throw Failure(Code.CONTEXT)
-            if (threads !in 1..8 || contextTokens !in 128..2048 || executionMode !in setOf("AUTO", "CPU", "OPENCL", "VULKAN") ||
+            if (threads !in 1..8 || contextTokens !in 128..2048 || executionMode !in setOf("AUTO", "CPU", "OPENCL", "VULKAN", "HEXAGON") ||
                 gpuLayers !in -1..1024 || gpuLayers == 0 && executionMode != "CPU" ||
-                batchTokens !in 16..512 || microBatchTokens !in 16..128 || microBatchTokens > batchTokens || kvCacheType !in setOf("F16", "Q8_0")) throw Failure(Code.CONTEXT)
+                batchTokens !in 16..512 || microBatchTokens !in 16..128 || microBatchTokens > batchTokens || kvCacheType !in setOf("F16", "Q8_0") ||
+                flashAttentionPolicy !in setOf("AUTO", "ENABLED", "DISABLED") || kvCacheType == "Q8_0" && flashAttentionPolicy == "DISABLED") throw Failure(Code.CONTEXT)
             val privateFile = privateGgufFile(app, file.absolutePath) ?: throw Failure(Code.MODEL)
             info(perform(GgufMessages.OPEN, Bundle().apply {
                 putString(GgufMessages.PATH, privateFile.absolutePath); putInt(GgufMessages.THREADS, threads)
                 putInt(GgufMessages.CONTEXT, contextTokens); putString(GgufMessages.EXECUTION, executionMode); putInt(GgufMessages.LAYERS, gpuLayers)
                 putInt(GgufMessages.BATCH, batchTokens); putInt(GgufMessages.MICRO_BATCH, microBatchTokens); putBoolean(GgufMessages.COMPACT_SWA, compactSwa); putString(GgufMessages.KV_CACHE_TYPE, kvCacheType)
+                putString(GgufMessages.FLASH_ATTENTION, flashAttentionPolicy)
+                putBoolean(GgufMessages.QUALCOMM_COMPAT, qualcommCompatibility); putBoolean(GgufMessages.NATIVE_CPU_WEIGHTS, nativeCpuWeights)
             }, GgufMessages.OPEN_TIMEOUT_MS, cancelled)).also {
-                verifyCachePrecision(it.cacheTypeK, it.cacheTypeV, kvCacheType)
+                val effectiveFlash = if (kvCacheType == "Q8_0" && flashAttentionPolicy == "AUTO") "ENABLED" else flashAttentionPolicy
+                verifyCachePrecision(it.cacheTypeK, it.cacheTypeV, kvCacheType, it.flashAttentionPolicy, effectiveFlash)
+                if (it.qualcommCompatibility != qualcommCompatibility || it.nativeCpuWeights != nativeCpuWeights) throw Failure(Code.RESPONSE)
                 expectedKvCacheType = kvCacheType
+                expectedFlashAttention = effectiveFlash
+                expectedQualcommCompatibility = qualcommCompatibility
+                expectedNativeCpuWeights = nativeCpuWeights
                 opened = true
             }
         }
@@ -308,7 +381,8 @@ internal object LocalGgufRuntime {
                 putString(GgufMessages.TEXT, prompt); putInt(GgufMessages.TOKENS, maxOutputTokens)
                 putBoolean(GgufMessages.SPECIAL, addSpecialTokens)
             }, GgufMessages.GENERATION_TIMEOUT_MS, cancelled)).also {
-                verifyCachePrecision(it.cacheTypeK, it.cacheTypeV, expectedKvCacheType)
+                verifyCachePrecision(it.cacheTypeK, it.cacheTypeV, expectedKvCacheType, it.flashAttentionPolicy, expectedFlashAttention)
+                if (it.qualcommCompatibility != expectedQualcommCompatibility || it.nativeCpuWeights != expectedNativeCpuWeights) throw Failure(Code.RESPONSE)
             }
         }
         fun generateChat(userContent: String, maxOutputTokens: Int = 512,
@@ -321,14 +395,15 @@ internal object LocalGgufRuntime {
                 putString(GgufMessages.TEXT, userContent); putInt(GgufMessages.TOKENS, maxOutputTokens)
                 putBoolean(GgufMessages.MODEL_TEMPLATE, true)
             }, GgufMessages.GENERATION_TIMEOUT_MS, cancelled)).also {
-                verifyCachePrecision(it.cacheTypeK, it.cacheTypeV, expectedKvCacheType)
+                verifyCachePrecision(it.cacheTypeK, it.cacheTypeV, expectedKvCacheType, it.flashAttentionPolicy, expectedFlashAttention)
+                if (it.qualcommCompatibility != expectedQualcommCompatibility || it.nativeCpuWeights != expectedNativeCpuWeights) throw Failure(Code.RESPONSE)
             }
         }
-        private fun verifyCachePrecision(k: String, v: String, expected: String) {
+        private fun verifyCachePrecision(k: String, v: String, expected: String, flash: String, expectedFlash: String) {
             // Old responses predate configurable precision and retain only their
             // historical F16 meaning. They cannot establish an explicit Q8 request.
-            if (expected == "F16" && k.isEmpty() && v.isEmpty()) return
-            if (k != expected || v != expected) throw Failure(Code.RESPONSE)
+            if (expected == "F16" && k.isEmpty() && v.isEmpty() && flash.isEmpty() && expectedFlash == "AUTO") return
+            if (k != expected || v != expected || flash != expectedFlash) throw Failure(Code.RESPONSE)
         }
         private fun <T> onWorker(action: () -> T): T {
             check(Looper.myLooper() != Looper.getMainLooper()) { "GGUF inference must run on a worker" }
@@ -413,7 +488,16 @@ internal object LocalGgufRuntime {
         private fun lost() {
             val confirmedDead = remote?.binder?.isBinderAlive == false
             if (confirmedDead) ownershipPossible = false
-            synchronized(state) { broken = true; pending?.fail(Code.DIED) }
+            synchronized(state) {
+                broken = true
+                pending?.let { request ->
+                    // An idle restart ACK can race the expected Binder death.
+                    // Preserve that completed ACK while still requiring a real dead Binder.
+                    if (request.what != GgufMessages.RESTART_IDLE || request.json == null || request.ready.count > 0)
+                        request.fail(Code.DIED)
+                }
+            }
+            if (confirmedDead) restartDeath?.countDown()
             clearBinding()
             if (confirmedDead && releaseStarted.get()) {
                 releaseDeadline?.let(main::removeCallbacks); releaseDeadline = null
@@ -481,27 +565,42 @@ internal object LocalGgufRuntime {
             bound = false; remote = null; connection = null
         }
     }
+    internal fun restartIdleProcess(context: Context, cancelled: () -> Boolean = { false }) {
+        val client = Client(context)
+        try { client.restartIdle(cancelled) }
+        finally { client.closeAndAwait(timeoutMs = 5_000) }
+    }
+    internal fun reserveProcessRestart(): Boolean = loaded && nativeReserveProcessRestart()
+    private external fun nativeReserveProcessRestart(): Boolean
     // A reader-process restart must not reuse session 1 while the private model
     // process is still delivering a previous Binder death/cancellation callback.
     private val nextSession = AtomicLong(android.os.SystemClock.elapsedRealtimeNanos())
     private fun cacheTypeCode(value: String): Int = when (value) {
         "F16" -> 0; "Q8_0" -> 1; else -> throw Failure(Code.CONTEXT)
     }
+    private fun flashAttentionCode(value: String): Int = when (value) {
+        "AUTO" -> 0; "ENABLED" -> 1; "DISABLED" -> 2; else -> throw Failure(Code.CONTEXT)
+    }
     private external fun nativeCreate(): Long
     private external fun nativeCancel(handle: Long)
     private external fun nativeDestroy(handle: Long)
     private external fun nativeOpen(handle: Long, path: ByteArray, threads: Int, context: Int, execution: String,
         gpuLayers: Int, cachePath: ByteArray, batchTokens: Int, microBatchTokens: Int, compactSwa: Boolean,
-        progress: LocalGgufProgressListener?, cacheType: Int): ByteArray?
+        progress: LocalGgufProgressListener?, cacheType: Int, hexagonLibraryPath: ByteArray,
+        flashAttentionPolicy: Int, qualcommCompatibility: Boolean, nativeCpuWeights: Boolean): ByteArray?
     private external fun nativeGenerate(handle: Long, prompt: ByteArray, tokens: Int, addSpecial: Boolean, progress: LocalGgufProgressListener?): ByteArray?
     private external fun nativeGenerateChat(handle: Long, userContent: ByteArray, tokens: Int, progress: LocalGgufProgressListener?): ByteArray?
 }
 
 internal object GgufMessages {
+    const val RESTART_IDLE = 7
     const val OPEN = 1; const val GENERATE = 2; const val CANCEL = 3; const val CLOSE = 4; const val RESULT = 5; const val PROGRESS = 6
     const val SESSION = "session"; const val REQUEST = "request"; const val PATH = "path"; const val THREADS = "threads"
     const val CONTEXT = "context"; const val TEXT = "text"; const val TOKENS = "tokens"; const val SPECIAL = "special"; const val JSON = "json"
     const val EXECUTION = "execution"; const val LAYERS = "layers"
+    const val RESIDENT_BYTES = "residentBytes"; const val AVAILABLE_RAM_BYTES = "availableRamBytes"
+    const val FLASH_ATTENTION = "flashAttentionPolicy"; const val QUALCOMM_COMPAT = "qualcommCompatibility"
+    const val NATIVE_CPU_WEIGHTS = "nativeCpuWeights"
     const val BATCH = "batchTokens"; const val MICRO_BATCH = "microBatchTokens"; const val COMPACT_SWA = "compactSwa"
     const val KV_CACHE_TYPE = "kvCacheType"
     const val STAGE = "stage"; const val PERCENT = "percent"; const val PROCESS_ID = "processId"

@@ -1,5 +1,6 @@
 #include "local_translation_engine.h"
 #include "model_probe_engine.h"
+#include "local_model_backend.h"
 #include "llama.h"
 #ifdef NDEBUG
 #undef NDEBUG
@@ -15,13 +16,16 @@
 #include <utility>
 #include <vector>
 
+extern "C" void subtitle_hexagon_graph_executed(uint64_t nodes);
+extern "C" void subtitle_opencl_graph_executed(uint64_t nodes);
+
 namespace {
 void check_profile(const subtitle_local::Response & response) {
     const auto & profile = response.load_profile;
     assert(profile.present && profile.load_attempts >= 1 && profile.load_attempts <= 2);
-    assert(profile.backend_init_ms >= 0 && profile.opencl_prepare_ms >= 0 && profile.vulkan_prepare_ms >= 0);
+    assert(profile.backend_init_ms >= 0 && profile.opencl_prepare_ms >= 0 && profile.vulkan_prepare_ms >= 0 && profile.hexagon_prepare_ms >= 0);
     assert(profile.model_load_ms >= 0 && profile.context_init_ms >= 0);
-    assert(profile.backend_init_ms + profile.opencl_prepare_ms + profile.vulkan_prepare_ms + profile.model_load_ms +
+    assert(profile.backend_init_ms + profile.opencl_prepare_ms + profile.vulkan_prepare_ms + profile.hexagon_prepare_ms + profile.model_load_ms +
            profile.context_init_ms <= profile.open_total_ms);
     assert(profile.model_load_ms + profile.context_init_ms <= response.load_ms);
     assert(response.load_ms <= profile.open_total_ms);
@@ -36,6 +40,7 @@ void check_output(const subtitle_local::Response & response) {
     assert(response.prompt_tokens == response.cached_prompt_tokens + response.prompt_evaluated_tokens);
     assert(response.prompt_evaluated_tokens >= 1);
     assert(response.backend == "CPU" && !response.gpu_observed && response.gpu_graph_nodes == 0);
+    assert(!response.npu_observed && response.npu_graph_nodes == 0 && response.actual_npu_layers == 0);
     assert(response.opencl_transport.empty());
     check_profile(response);
 }
@@ -348,6 +353,17 @@ void check_quantized_cache(const std::string & model, const std::string & label,
 }
 int main(int argc, char ** argv) {
     assert(argc >= 3 && argc <= 8);
+    // Request-local NPU submission evidence must be independent from GPU
+    // evidence. A stale count is never sufficient to mark a CPU generation.
+    subtitle_native::reset_gpu_graph_observation();
+    subtitle_native::reset_npu_graph_observation();
+    subtitle_hexagon_graph_executed(7);
+    assert(subtitle_native::observed_npu_graph_nodes() == 7 && subtitle_native::observed_gpu_graph_nodes() == 0);
+    subtitle_opencl_graph_executed(11);
+    assert(subtitle_native::observed_npu_graph_nodes() == 7 && subtitle_native::observed_gpu_graph_nodes() == 11);
+    subtitle_native::reset_npu_graph_observation();
+    assert(subtitle_native::observed_npu_graph_nodes() == 0 && subtitle_native::observed_gpu_graph_nodes() == 11);
+    subtitle_native::reset_gpu_graph_observation();
     check_greedy_chain_equivalence();
     {
         // Bounds must fail before a backend is initialized or a model lease is
@@ -381,7 +397,7 @@ int main(int argc, char ** argv) {
         bool saw_context = false, saw_template = false;
         for (const auto & event : progress_events) {
             assert(event.second >= -1 && event.second <= 100);
-            assert(event.first != "OPENCL" && event.first != "VULKAN");
+            assert(event.first != "OPENCL" && event.first != "VULKAN" && event.first != "HEXAGON");
             if (event.first == "MODEL_LOAD") {
                 assert(event.second >= last_loading_percent);
                 last_loading_percent = event.second;
@@ -545,6 +561,49 @@ int main(int argc, char ** argv) {
         assert(std::string(rejected.diagnostic.reason) == "BACKEND_NOT_COMPILED");
         assert(rejected.requested_mode == "VULKAN" && !rejected.gpu_observed);
     }
+    {
+        // A strict accelerator request must never be reported as a CPU or GPU
+        // success on a build without the Hexagon backend. The failed owner
+        // must release its model lease so an ordinary CPU session still works.
+        subtitle_local::Session strict_hexagon;
+        const auto rejected = strict_hexagon.open(argv[1], 1, 512, "HEXAGON");
+        assert(rejected.code == "BACKEND" && rejected.diagnostic.present());
+        assert(std::string(rejected.diagnostic.stage) == "HEXAGON_DRIVER");
+        assert(std::string(rejected.diagnostic.reason) == "BACKEND_NOT_COMPILED");
+        assert(rejected.requested_mode == "HEXAGON" && !rejected.npu_observed && rejected.npu_graph_nodes == 0);
+        assert(!rejected.gpu_observed && rejected.gpu_graph_nodes == 0 && rejected.actual_gpu_layers == 0);
+        assert(rejected.requested_gpu_layers == 0 && rejected.requested_npu_layers == -1);
+        assert(rejected.json().find("\"npuObserved\":false,\"npuGraphNodes\":0") != std::string::npos);
+        subtitle_local::Session cpu_after;
+        assert(cpu_after.open(argv[1], 1, 512).code == "OK");
+        check_output(cpu_after.generate("CPU remains available after absent NPU", 1, true));
+    }
+#ifdef SUBTITLE_NATIVE_TESTING
+    {
+        subtitle_local::Session pressure;
+        assert(pressure.open(argv[1], 1, 512).code == "OK");
+        pressure.test_set_available_ram_bytes(0);
+        const auto stopped = pressure.generate("Keep this occurrence pending under pressure", 1, true);
+        assert(stopped.code == "MEMORY" && stopped.output.empty() && stopped.generated_tokens == 0);
+        assert(stopped.diagnostic.present() && std::string(stopped.diagnostic.reason) == "RESERVE_INSUFFICIENT");
+        assert(stopped.memory_reserve_bytes >= (128LL << 20) && stopped.cache_reset_reason == "FAILURE");
+        pressure.test_set_available_ram_bytes(std::numeric_limits<long long>::max());
+        check_output(pressure.generate("Keep this occurrence pending under pressure", 1, true));
+    }
+    for (const std::string policy : {"AUTO", "ENABLED", "DISABLED"}) {
+        subtitle_local::Session configured;
+        const auto info = configured.open(argv[1], 1, 512, "CPU", -1, "", 64, 32, false, {}, "F16", "", policy, false, true);
+        assert(info.code == "OK" && info.flash_attention_policy == policy && info.native_cpu_weights);
+        assert(info.memory_samples.size() <= 8 && info.memory_estimate_available && info.memory_breakdown_available);
+        check_output(configured.generate("Explicit flash policy retains a complete output", 1, true));
+    }
+    {
+        subtitle_local::Session incompatible;
+        const auto rejected = incompatible.open(argv[1], 1, 512, "CPU", -1, "", 64, 32, false, {}, "Q8_0", "", "DISABLED");
+        assert(rejected.code == "CONTEXT");
+    }
+    assert(subtitle_local::Session::test_memory_estimate_failure_clears_rows());
+#endif
 #ifdef SUBTITLE_NATIVE_TESTING
     if (argc >= 4) {
         const std::string original = "Prefix common context: Alpha. The train leaves.";

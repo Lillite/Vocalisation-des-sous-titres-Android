@@ -2,6 +2,19 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
+## 0.5.14-hexagon — candidate de stabilité, mémoire et NPU Qualcomm Hexagon/HTP
+
+VersionCode **21**, identité Traduction et certificat durable conservés. [Guide](docs/NPU_HEXAGON_0514.md) · [Notes et limites](docs/releases/0.5.14-hexagon.md). Validation et publication propres à cette candidate à établir.
+
+- Garde mémoire commune, estimation et ventilation natives, mesures bornées et diagnostic distinguant un refus préventif d’une allocation réellement échouée.
+- Causes d’interruption et sorties des deux processus conservées ; tâche SRT retenue, attente thermique/mémoire annulable et récupération bornée après acquittement de libération.
+- Optimisations de réserves, transferts Q6_K et durées de vie OpenCL ; profil Vulkan Qualcomm expérimental, contrôles de bornes et nettoyage des allocations partielles.
+- Politiques explicites Flash Attention et poids CPU natifs, préréglages mémoire et comparatif séquentiel de profils.
+- Mode Hexagon strict sur demande explicite ; aucun repli CPU présenté comme une réussite NPU.
+- Programmes HTP construits avec le SDK de compilation épinglé, embarqués et préparés dans un répertoire privé avec contrôles d’intégrité ; aucun téléchargement de code ou modèle par l’application.
+- Mesures NPU distinctes des mesures GPU ; compatibilité et calcul effectif à confirmer sur le téléphone.
+- Modèle choisi, précision K/V, contexte et chaque occurrence conservés. Aucune promesse de stabilisation du 12B, de débit ou d’autonomie n’est déduite de l’intégration.
+
 ## 0.5.13-memory — candidate de mémoire et de reprise du calcul local
 
 VersionCode **20**, identité Traduction et certificat durable conservés. [Guide](docs/TRADUCTION_RUNTIME_0513.md) · [Notes et limites](docs/releases/0.5.13-memory.md). La 0.5.2 reste la dernière stable recommandée. La validation complète et la publication de cette candidate doivent encore être établies.

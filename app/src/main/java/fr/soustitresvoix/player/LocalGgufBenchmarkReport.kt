@@ -11,12 +11,16 @@ internal object LocalGgufBenchmarkReport {
         value != null && value.observedAtMs > 0 && readAtMs >= value.observedAtMs && readAtMs - value.observedAtMs <= 2_000
 
     fun render(state: LocalGgufBenchmark.State): String = buildString {
+        val npu = state.options.gpuMode == "HEXAGON"
+        val accelerator = if (npu) "NPU Hexagon" else "GPU"
         val varied = state.options.scenario != LocalGgufBenchmark.Scenario.SHORT
         val contextComparison = state.options.scenario == LocalGgufBenchmark.Scenario.CONTEXT_POLICIES
+        val profileComparison = state.options.scenario == LocalGgufBenchmark.Scenario.PROFILES
         append(when {
-            contextComparison -> "Comparatif local GPU — stratégies de contexte\n"
-            varied -> "Comparatif local CPU / GPU — série synthétique de sous-titres\n"
-            else -> "Comparatif local CPU / GPU — texte synthétique intégré\n"
+            profileComparison -> "Comparatif local — profils de calcul explicites\n"
+            contextComparison -> "Comparatif local $accelerator — stratégies de contexte\n"
+            varied -> "Comparatif local CPU / $accelerator — série synthétique de sous-titres\n"
+            else -> "Comparatif local CPU / $accelerator — texte synthétique intégré\n"
         })
         append(state.status)
         if (state.modelSha256.isEmpty()) { append("\nAucun modèle n’a été exécuté."); return@buildString }
@@ -24,7 +28,8 @@ internal object LocalGgufBenchmarkReport {
         append("\nModèle : "); append(state.modelBytes); append(" octets ; SHA-256 "); append(state.modelSha256)
         append("\nProfil demandé : "); append(state.profile.label); append(" ; threads CPU demandés : "); append(state.threads)
         append('\n'); append(state.options.loadSettings.render())
-        append("\nCes réglages de chargement sont identiques entre modes ; le passage CPU utilise zéro couche GPU. Les valeurs réellement retenues par le moteur figurent dans ses mesures lorsqu’elles sont disponibles.")
+        append(if (profileComparison) "\nLes réglages ci-dessus sont le point de départ ; chaque profil explicite et ses allocations demandées figurent ci-dessous. Aucun profil n’est appliqué à tes préférences."
+            else "\nCes réglages de chargement sont identiques entre modes ; le passage CPU utilise zéro couche GPU. Les valeurs réellement retenues par le moteur figurent dans ses mesures lorsqu’elles sont disponibles.")
         if (varied) {
             val cues = LocalGgufBenchmark.cues(state.options)
             append("\nCorpus : "); append(if (contextComparison && state.options.qualityCorpus) LocalGgufQualityCorpus.VERSION
@@ -36,14 +41,24 @@ internal object LocalGgufBenchmarkReport {
             append("\nLe contexte est reconstruit uniquement à partir de paires source/traduction complètes de la même session. Des sorties différentes modifient aussi les contextes suivants ; les entrées en tokens ne sont donc pas supposées identiques. Les limites natives peuvent retirer les paires anciennes entières sans tronquer la source courante.")
         } else { append("\nSource anglaise fixe : "); append(LocalGgufBenchmark.SOURCE) }
         append("\nCible : français ; contexte personnel vide ; mêmes poids, profil et limites de génération pour tous les passages.")
-        val gpuLabel = if (state.options.gpuMode == "VULKAN") "Vulkan" else "OpenCL"
-        append("\nMoteur GPU demandé pour ce comparatif : "); append(gpuLabel); append(" strict ; aucun repli CPU accepté pour les passages GPU.")
-        if (contextComparison) append("\nOrdre fixe des stratégies : deux échanges précédents, occurrence seule, blocs de six. GPU $gpuLabel strict pour chacune ; aucun passage CPU ni réouverture supplémentaire. Cet ordre, le cache système et la chauffe peuvent influencer la comparaison.")
-        else append(if (state.options.order == LocalGgufBenchmark.Order.CPU_THEN_GPU)
-            "\nOrdre fixe : CPU puis GPU $gpuLabel strict." else "\nOrdre fixe : GPU $gpuLabel strict puis CPU.")
+        if (profileComparison) {
+            append("\nProfils successifs sur les mêmes huit occurrences :")
+            LocalGgufBenchmark.executionPlans(state.options).forEach { plan ->
+                append("\n"); append(plan.label); append(" : "); append(plan.settings.render())
+            }
+            append("\nLe processus de calcul inactif est renouvelé avant le premier profil et avant le profil de compatibilité optionnel ; l’acquittement et sa disparition sont attendus. Aucun modèle concurrent n’est arrêté.")
+            append("\nOrdre fixe : lots 128/32, lots 64/16, CPU avec poids natifs, puis compatibilité Vulkan seulement si demandée. Mémoire, temps et fidélité doivent être comparés ; aucun gagnant ni réglage automatique.")
+        } else {
+            val gpuLabel = when (state.options.gpuMode) { "VULKAN" -> "Vulkan"; "HEXAGON" -> "Hexagon"; else -> "OpenCL" }
+            val acceleratorDescription = if (npu) "NPU Hexagon" else "GPU $gpuLabel"
+            append(if (npu) "\nMoteur NPU demandé pour ce comparatif : " else "\nMoteur GPU demandé pour ce comparatif : "); append(gpuLabel); append(" strict ; aucun repli CPU accepté pour les passages de l’accélérateur.")
+            if (contextComparison) append("\nOrdre fixe des stratégies : deux échanges précédents, occurrence seule, blocs de six. ${acceleratorDescription} strict pour chacune ; aucun passage CPU ni réouverture supplémentaire. Cet ordre, le cache système et la chauffe peuvent influencer la comparaison.")
+            else append(if (state.options.order == LocalGgufBenchmark.Order.CPU_THEN_GPU)
+                "\nOrdre fixe : CPU puis ${acceleratorDescription} strict." else "\nOrdre fixe : ${acceleratorDescription} strict puis CPU.")
+        }
         append(if (varied) " Une session et un chargement par série ; chaque occurrence est traitée dans son ordre."
             else " Deux passages identiques par mode : premier passage puis réutilisation éventuelle du préfixe.")
-        if (state.options.reopenForLoad && !contextComparison) append("\nRéouverture demandée : après chaque série libérée, une nouvelle session traduit seulement la première occurrence. Les caches ne sont pas effacés ; ceci n’est pas une mesure garantie à cache froid.")
+        if (state.options.reopenForLoad && !contextComparison && !profileComparison) append("\nRéouverture demandée : après chaque série libérée, une nouvelle session traduit seulement la première occurrence. Les caches ne sont pas effacés ; ceci n’est pas une mesure garantie à cache froid.")
         append("\nLes durées d’appel et de mode comprennent déjà le chargement éventuel ; sa mesure séparée détaille le total.")
         append("\nLes modèles ne sont jamais chargés simultanément. L’ordre, le cache système, la chauffe et les autres applications peuvent influencer ces mesures. Ces mesures ne prouvent pas la qualité sur un film.")
         append("\nLes réponses validées le sont structurellement : une réponse reçue et terminée par occurrence. La conservation des identifiants et minutages ne prouve pas la fidélité sémantique ; relire les sources et sorties.")
@@ -52,6 +67,11 @@ internal object LocalGgufBenchmarkReport {
         }
         state.runs.forEach { run ->
             append("\n\nMode demandé : "); append(run.requestedMode)
+            if (run.profileLabel.isNotEmpty()) {
+                append("\nProfil de calcul : "); append(run.profileLabel)
+                append('\n'); append(run.loadSettings.render())
+                append("\nRenouvellement du processus inactif confirmé avant ce profil : "); append(yes(run.processRestarted))
+            }
             append(if (run.reopening) " — session de réouverture, une occurrence" else " — session principale")
             if (varied) { append("\nStratégie de contexte : "); append(run.contextPolicy.label) }
             append("\nAvant : "); append(run.before.render())
@@ -106,8 +126,8 @@ internal object LocalGgufBenchmarkReport {
         val mainRuns = state.runs.filterNot { it.reopening }
         if (!contextComparison && mainRuns.size == 2 && mainRuns.all { it.failure == null && it.samples.size == it.plannedSamples }) {
             val same = mainRuns[0].samples.map { it.output } == mainRuns[1].samples.map { it.output }
-            append(if (same) "\n\nLes sorties CPU et GPU sont identiques sur ces passages ; cela ne prouve pas leur fidélité linguistique."
-                else "\n\nLes sorties CPU et GPU diffèrent : examine les textes avant d’interpréter les durées. Aucun classement de qualité automatique.")
+            append(if (same) "\n\nLes sorties CPU et $accelerator sont identiques sur ces passages ; cela ne prouve pas leur fidélité linguistique."
+                else "\n\nLes sorties CPU et $accelerator diffèrent : examine les textes avant d’interpréter les durées. Aucun classement de qualité automatique.")
         }
         if (contextComparison && mainRuns.size == LocalGgufContextPolicy.entries.size &&
             mainRuns.all { it.failure == null && it.samples.size == it.plannedSamples }) {
@@ -116,7 +136,7 @@ internal object LocalGgufBenchmarkReport {
                 else "\n\nLes stratégies produisent des textes différents : comparer chaque source et traduction. Aucun score de fidélité ni choix automatique n’est établi.")
         }
         if (varied) append("\nLes relevés du lecteur sont ponctuels et ne prouvent ni continuité, ni fluidité, ni vocalisation complète. Ils n’actionnent jamais Lire, Pause ou la voix. Aucune identité, URI ou phrase du média ouvert ne figure dans ce rapport.")
-        append("\nLa mémoire résidente et son pic concernent tout le processus de calcul, sans comptabilité complète des allocations GPU. Les relevés RAM et thermiques sont ponctuels. Aucun test NPU ni classement automatique de fidélité linguistique.")
+        append("\nLa mémoire résidente et son pic concernent tout le processus de calcul, sans comptabilité complète des allocations GPU. Les relevés RAM et thermiques sont ponctuels. Aucun classement automatique de fidélité linguistique. Le choix d’un backend ou un chargement réussi ne prouve pas son exécution effective.")
     }
 
     private fun StringBuilder.appendSummary(run: LocalGgufBenchmark.Run) {

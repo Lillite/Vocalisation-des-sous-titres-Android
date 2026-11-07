@@ -39,16 +39,23 @@ private class NativeTranslationBackend(context: Context) : LocalGgufBackend {
         executionMode: String, settings: LocalGgufLoadSettings): LocalGgufBackend.Info =
         client.open(file, threads, contextTokens, cancelled, executionMode = executionMode,
             gpuLayers = settings.gpuLayers, batchTokens = settings.batchTokens,
-            microBatchTokens = settings.microBatchTokens, compactSwa = settings.compactSwa, kvCacheType = settings.kvCacheType).let {
+            microBatchTokens = settings.microBatchTokens, compactSwa = settings.compactSwa, kvCacheType = settings.kvCacheType,
+            flashAttentionPolicy = settings.flashAttentionPolicy, qualcommCompatibility = settings.qualcommCompatibility,
+            nativeCpuWeights = settings.nativeCpuWeights).let {
             LocalGgufBackend.Info(it.name, it.architecture, LocalTranslationPerformance(phase = "load",
                 requestedMode = it.requestedMode, backend = it.backend, device = it.device,
                 gpuObserved = false, loadMs = it.loadMs, peakRssBytes = it.peakRssBytes,
                 currentRssBytes = it.residentBytes, availableRamBytes = it.availableRamBytes, fallbackReason = it.fallbackReason,
                 diagnostic = it.diagnostic, openClTransport = it.openClTransport, loadProfile = it.loadProfile,
                 batchTokens = it.batchTokens, microBatchTokens = it.microBatchTokens, compactSwa = it.compactSwa,
-                requestedGpuLayers = it.requestedGpuLayers, actualGpuLayers = it.actualGpuLayers,
+                requestedGpuLayers = if (it.backend == "HEXAGON") null else it.requestedGpuLayers,
+                actualGpuLayers = if (it.backend == "HEXAGON") null else it.actualGpuLayers,
+                requestedNpuLayers = it.requestedNpuLayers.takeIf { _ -> it.backend == "HEXAGON" },
+                actualNpuLayers = it.actualNpuLayers.takeIf { _ -> it.backend == "HEXAGON" },
                 processId = it.processId, cacheTypeK = it.cacheTypeK, cacheTypeV = it.cacheTypeV,
-                flashAttentionPolicy = it.flashAttentionPolicy),
+                flashAttentionPolicy = it.flashAttentionPolicy, qualcommCompatibility = it.qualcommCompatibility,
+                nativeCpuWeights = it.nativeCpuWeights, memoryReserveBytes = it.memoryReserveBytes,
+                observedPrefillExtraBytes = it.observedPrefillExtraBytes, memoryTelemetry = it.memoryTelemetry),
                 chatTemplateAvailable = it.chatTemplateAvailable)
         }
     override fun generate(prompt: String, maxOutputTokens: Int, cancelled: () -> Boolean): LocalGgufBackend.Generation =
@@ -64,11 +71,16 @@ private class NativeTranslationBackend(context: Context) : LocalGgufBackend {
             currentRssBytes = residentBytes, availableRamBytes = availableRamBytes,
             gpuGraphNodes = gpuGraphNodes, fallbackReason = fallbackReason, diagnostic = diagnostic,
             openClTransport = openClTransport, batchTokens = batchTokens, microBatchTokens = microBatchTokens,
-            compactSwa = compactSwa, requestedGpuLayers = requestedGpuLayers, actualGpuLayers = actualGpuLayers,
+            compactSwa = compactSwa, requestedGpuLayers = requestedGpuLayers.takeIf { backend != "HEXAGON" },
+            actualGpuLayers = actualGpuLayers.takeIf { backend != "HEXAGON" },
+            requestedNpuLayers = requestedNpuLayers.takeIf { backend == "HEXAGON" },
+            actualNpuLayers = actualNpuLayers.takeIf { backend == "HEXAGON" },
             processId = processId, cacheTypeK = cacheTypeK, cacheTypeV = cacheTypeV, flashAttentionPolicy = flashAttentionPolicy,
             startResidentBytes = startResidentBytes, prefillResidentBytes = prefillResidentBytes,
             cacheResetReason = cacheResetReason, cacheResets = cacheResets, workspaceGrowths = workspaceGrowths,
-            workspaceBytes = workspaceBytes))
+            workspaceBytes = workspaceBytes, npuObserved = npuObserved, npuGraphNodes = npuGraphNodes,
+            qualcommCompatibility = qualcommCompatibility, nativeCpuWeights = nativeCpuWeights,
+            memoryReserveBytes = memoryReserveBytes, observedPrefillExtraBytes = observedPrefillExtraBytes, memoryTelemetry = memoryTelemetry))
     }
     override fun cancel() = client.cancel()
     override fun close() = client.close()
@@ -377,7 +389,7 @@ class LocalGgufTranslationEngine internal constructor(
 
         fun validateSettings(threads: Int, context: String, executionMode: String = "AUTO") {
             if (threads !in 1..8 || context.length > MAX_LOCAL_CONTEXT_CHARACTERS || !validText(context) ||
-                LocalGgufPrompts.hasControlTokens(context) || executionMode !in setOf("AUTO", "CPU", "OPENCL", "VULKAN"))
+                LocalGgufPrompts.hasControlTokens(context) || executionMode !in setOf("AUTO", "CPU", "OPENCL", "VULKAN", "HEXAGON"))
                 throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
         }
         fun validateLanguages(source: String, target: String = "fr") {

@@ -567,4 +567,110 @@ class LocalSrtTranslationJobRobolectricTest {
         assertEquals(3, resumedEngine.inputs.size)
         assertEquals(4, Regex(" --> ").findAll(requireNotNull(restored.completedExport())).count())
     }
+    @Test fun processLossReopensOnlyAfterAcknowledgedReleaseAndRestoresTheValidatedPrefix() {
+        val store = prepareNativeModel()
+        val first = DeferredTranslationCleanupBackend().apply {
+            beforeGeneration = { call, _ -> if (call == 2) throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.DIED) }
+        }
+        val replacement = DeferredTranslationCleanupBackend().apply { acknowledgeRelease.countDown() }
+        var constructions = 0
+        val task = job({ config ->
+            val backend = if (constructions++ == 0) first else replacement
+            LocalGgufTranslationEngine(requireNotNull(config.localModel), store, { backend })
+        })
+        import(task)
+        try {
+            task.start("en", configuration())
+            await { first.cleanupEntered.count == 0L }
+            assertTrue(task.state.busy)
+            assertEquals("An unacknowledged old owner prevents a replacement", 1, constructions)
+            assertNull(task.completedExport())
+            first.acknowledgeRelease.countDown()
+            await { !task.state.busy }
+            assertTrue(task.state.status, task.state.complete)
+            assertEquals(2, constructions)
+            assertEquals("The first validated occurrence must not be recomputed", 3, replacement.generateCalls.get())
+            assertEquals(4, Regex(" --> ").findAll(requireNotNull(task.completedExport())).count())
+            val source = requireNotNull(File(application.filesDir, "local-srt-source-v1").listFiles()).single { it.extension == "srt" }
+            val journal = LocalSrtAttemptJournal(File(application.filesDir, "local-srt-attempt-v1"))
+            val record = requireNotNull(journal.read(requireNotNull(LocalSrtAttemptJournal.sourceKey(source))))
+            assertEquals("COMPLETED", record.state)
+            assertEquals("PROCESS_LOSS", record.cause)
+            assertEquals("LOCAL_PROCESS_DIED", record.failureCode)
+            assertEquals(1, record.recoveries)
+        } finally { first.acknowledgeRelease.countDown() }
+    }
+
+    @Test fun repeatedProcessLossAtTheSameOccurrenceCannotBecomeAnUnboundedRecoveryLoop() {
+        val store = prepareNativeModel()
+        var constructions = 0
+        val task = job({ config ->
+            constructions++
+            val backend = DeferredTranslationCleanupBackend().apply {
+                acknowledgeRelease.countDown()
+                beforeGeneration = { _, _ -> throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.DIED) }
+            }
+            LocalGgufTranslationEngine(requireNotNull(config.localModel), store, { backend })
+        })
+        import(task)
+        task.start("en", configuration())
+        await { !task.state.busy }
+        assertEquals(2, constructions)
+        assertFalse(task.state.complete)
+        assertEquals(0, task.state.done)
+        assertNull(task.completedExport())
+    }
+
+    @Test fun userCancellationDuringRecoveryReleaseCannotConstructAnotherEngine() {
+        val store = prepareNativeModel()
+        val backend = DeferredTranslationCleanupBackend().apply {
+            beforeGeneration = { call, _ -> if (call == 2) throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.DIED) }
+        }
+        var constructions = 0
+        val task = job({ config -> constructions++; LocalGgufTranslationEngine(requireNotNull(config.localModel), store, { backend }) })
+        import(task)
+        try {
+            task.start("en", configuration())
+            await { backend.cleanupEntered.count == 0L }
+            task.cancel()
+            backend.acknowledgeRelease.countDown()
+            await { !task.state.busy }
+            assertEquals(1, constructions)
+            assertEquals(1, task.state.done)
+            assertFalse(task.state.complete)
+            assertNull(task.completedExport())
+            val source = requireNotNull(File(application.filesDir, "local-srt-source-v1").listFiles()).single { it.extension == "srt" }
+            val record = requireNotNull(LocalSrtAttemptJournal(File(application.filesDir, "local-srt-attempt-v1"))
+                .read(requireNotNull(LocalSrtAttemptJournal.sourceKey(source))))
+            assertEquals("PROCESS_LOSS", record.cause)
+            assertEquals("USER_CANCEL", record.stopCause)
+            assertEquals("FAILED", record.state)
+        } finally { backend.acknowledgeRelease.countDown() }
+    }
+
+    @Test fun thermalPauseReleasesTheOldEngineAndResumesOnlyAfterASafeNewSample() {
+        var now = 0L
+        var samples = 0
+        var constructions = 0
+        var closedEngines = 0
+        val governor = LocalPreparationGovernor({
+            samples++
+            LocalPreparationGovernor.Sample(thermalStatus = if (samples == 2) 3 else 0)
+        }, { now }, { now += it })
+        val task = LocalSrtTranslationJob(application, {}, { config ->
+            constructions++
+            object : Engine(config, { _, texts -> now += 10_000; texts.map { "FR $it" } }) {
+                override fun close() { closedEngines++ }
+            }
+        }, governorFactory = { governor }).also { jobs += it; await { !it.state.busy } }
+        import(task)
+        task.start("en", configuration())
+        await { !task.state.busy }
+        assertTrue(task.state.status, task.state.complete)
+        assertEquals(2, constructions)
+        assertEquals(2, closedEngines)
+        assertEquals(4, task.state.done)
+        assertEquals(4, Regex(" --> ").findAll(requireNotNull(task.completedExport())).count())
+    }
+
 }

@@ -332,18 +332,36 @@
       },
       "id": 428590886,
       "source_commit": "9f19792656b6a274297a3e23c2d142ddfdb33acc"
+    },
+    {
+      "tag": "v0.5.13-memory",
+      "title": "Sous-titres en voix 0.5.13 — Mémoire, suivi et reprise du calcul local (préversion)",
+      "prerelease": true,
+      "latest": false,
+      "notes": "docs/releases/0.5.13-memory.md",
+      "asset": {
+        "name": "SousTitresVoix-0.5.13-memory.apk",
+        "version_name": "0.5.13-memory",
+        "version_code": 20,
+        "application_id": "fr.soustitresvoix.player.translation",
+        "id": 719720890,
+        "size": 74100091,
+        "sha256": "5d2d23b838a1a8f25856fa8422867cb5daee25fb1401e0d4bc0ea5a4883ec51b"
+      },
+      "id": 437359248,
+      "source_commit": "5e83ee9daa6edf78f62e2d8abdbcba9b381d5d10"
     }
   ],
   "next_release": {
-    "tag": "v0.5.13-memory",
-    "title": "Sous-titres en voix 0.5.13 — Mémoire, suivi et reprise du calcul local (préversion)",
+    "tag": "v0.5.14-hexagon",
+    "title": "Sous-titres en voix 0.5.14 — Stabilité, mémoire et NPU Hexagon (préversion)",
     "prerelease": true,
     "latest": false,
-    "notes": "docs/releases/0.5.13-memory.md",
+    "notes": "docs/releases/0.5.14-hexagon.md",
     "asset": {
-      "name": "SousTitresVoix-0.5.13-memory.apk",
-      "version_name": "0.5.13-memory",
-      "version_code": 20,
+      "name": "SousTitresVoix-0.5.14-hexagon.apk",
+      "version_name": "0.5.14-hexagon",
+      "version_code": 21,
       "application_id": "fr.soustitresvoix.player.translation"
     }
   }

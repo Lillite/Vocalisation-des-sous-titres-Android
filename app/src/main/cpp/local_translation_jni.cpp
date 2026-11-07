@@ -1,4 +1,5 @@
 #include "local_translation_engine.h"
+#include "local_model_backend.h"
 #include <jni.h>
 #include <atomic>
 #include <map>
@@ -9,6 +10,10 @@ namespace {
 std::mutex registry_mutex;
 std::map<jlong, std::shared_ptr<subtitle_local::Session>> sessions;
 std::atomic<jlong> next_id{1};
+// Once accepted, no service can acquire a model until this private process is
+// restarted. The Kotlin service verifies its identity and idle state before
+// reserving, then acknowledges the caller before terminating only that process.
+std::unique_ptr<subtitle_native::ModelLease> restart_reservation;
 std::shared_ptr<subtitle_local::Session> find(jlong id) {
     std::lock_guard<std::mutex> lock(registry_mutex);
     const auto at = sessions.find(id); return at == sessions.end() ? nullptr : at->second;
@@ -67,22 +72,37 @@ Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeDestroy(JNIEnv *, jobject, 
     { std::lock_guard<std::mutex> lock(registry_mutex); const auto at = sessions.find(id); if (at != sessions.end()) { retained = at->second; sessions.erase(at); } }
     if (retained) retained->cancel();
 }
+extern "C" JNIEXPORT jboolean JNICALL
+Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeReserveProcessRestart(JNIEnv *, jobject) {
+    try {
+        std::lock_guard<std::mutex> lock(registry_mutex);
+        if (restart_reservation) return JNI_TRUE;
+        auto reservation = std::make_unique<subtitle_native::ModelLease>();
+        if (!*reservation) return JNI_FALSE;
+        restart_reservation = std::move(reservation);
+        return JNI_TRUE;
+    } catch (...) { return JNI_FALSE; }
+}
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_fr_soustitresvoix_player_LocalGgufRuntime_nativeOpen(JNIEnv * env, jobject, jlong id, jbyteArray path,
         jint threads, jint context, jstring execution, jint gpu_layers, jbyteArray cache_path,
-        jint batch_tokens, jint micro_batch_tokens, jboolean compact_swa, jobject progress, jint cache_type) {
+        jint batch_tokens, jint micro_batch_tokens, jboolean compact_swa, jobject progress, jint cache_type,
+        jbyteArray hexagon_library_path, jint flash_attention, jboolean qualcomm_compatibility, jboolean native_cpu_weights) {
     try {
-        const auto session = find(id); std::string filename, cache;
-        if (!session || !read(env, path, filename, 32768) || !execution || !cache_path) return nullptr;
+        const auto session = find(id); std::string filename, cache, hexagon_path;
+        if (!session || !read(env, path, filename, 32768) || !execution || !cache_path || !hexagon_library_path) return nullptr;
         if (env->GetArrayLength(cache_path) > 0 && !read(env, cache_path, cache, 32768)) return nullptr;
+        if (env->GetArrayLength(hexagon_library_path) > 0 && !read(env, hexagon_library_path, hexagon_path, 32768)) return nullptr;
         const char * mode_chars = env->GetStringUTFChars(execution, nullptr);
         if (!mode_chars) return nullptr;
         const std::string mode(mode_chars);
         env->ReleaseStringUTFChars(execution, mode_chars);
         const auto report = progress_report(env, progress);
         const std::string kv = cache_type == 0 ? "F16" : cache_type == 1 ? "Q8_0" : "INVALID";
+        const std::string fa = flash_attention == 0 ? "AUTO" : flash_attention == 1 ? "ENABLED" : flash_attention == 2 ? "DISABLED" : "INVALID";
         return bytes(env, session->open(filename, threads, context, mode, gpu_layers, cache,
-            batch_tokens, micro_batch_tokens, compact_swa == JNI_TRUE, report, kv).json());
+            batch_tokens, micro_batch_tokens, compact_swa == JNI_TRUE, report, kv, hexagon_path, fa,
+            qualcomm_compatibility == JNI_TRUE, native_cpu_weights == JNI_TRUE).json());
     } catch (...) { return nullptr; }
 }
 extern "C" JNIEXPORT jbyteArray JNICALL

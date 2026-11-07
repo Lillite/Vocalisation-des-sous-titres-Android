@@ -187,4 +187,69 @@ class LocalSrtAttemptJournalTest {
         assertFalse(journal.failedWrite)
         assertNotNull(journal.read(key))
     }
+    @Test fun legacyCancelledRecordsStillRequestAndroidExitEvidenceAndExplicitCancellationDoesNot() {
+        val legacy = entry().copy(state = "CANCELLED")
+        assertTrue(legacy.needsExitEvidence())
+        assertFalse(legacy.copy(cause = "USER_CANCEL", stopCause = "USER_CANCEL").needsExitEvidence())
+        assertTrue(legacy.copy(cause = "HOST_DESTROYED").needsExitEvidence())
+        assertTrue(legacy.copy(state = "FAILED", cause = "PROCESS_LOSS", stopCause = "USER_CANCEL",
+            failureCode = "LOCAL_PROCESS_DIED").needsExitEvidence())
+    }
+
+    @Test fun primaryFailureAndSecondaryCloseSurviveRoundTripWithoutBeingRelabelledAsUserCancellation() {
+        val directory = temporary.newFolder()
+        val journal = LocalSrtAttemptJournal(directory) { 10_200 }
+        val failed = entry().copy(state = "FAILED", cause = "PROCESS_LOSS", stopCause = "HOST_DESTROYED",
+            failureCode = "LOCAL_PROCESS_DIED", failedProcessId = 456, failedRequestStartedAtMs = 10_010,
+            failedAtMs = 10_100, updatedAtMs = 10_200, recoveries = 1)
+        assertTrue(journal.save(failed, true))
+        val restored = requireNotNull(journal.read(key))
+        assertEquals(failed, restored)
+        val report = restored.render(nowMs = 10_200)
+        assertTrue(report.contains("[PROCESS_LOSS]"))
+        assertTrue(report.contains("[HOST_DESTROYED]"))
+        assertTrue(report.contains("Erreur enregistrée"))
+        assertFalse(report.contains("annulée explicitement"))
+    }
+
+    @Test fun resourcePauseAndNewExplicitPoliciesRemainBoundedAndCompatibleWithOldRecords() {
+        val directory = temporary.newFolder()
+        val journal = LocalSrtAttemptJournal(directory) { 10_100 }
+        val paused = entry().copy(state = "WAITING", phase = "waiting-thermal", cause = "THERMAL_PRESSURE",
+            requestedFlashAttentionPolicy = "DISABLED", qualcommCompatibility = true)
+        assertTrue(journal.save(paused, true))
+        val restored = requireNotNull(journal.read(key))
+        assertEquals(paused, restored)
+        assertTrue(restored.render().contains("reprise explicite nécessaire"))
+        assertFalse(journal.save(paused.copy(cause = "/private/path"), true))
+        assertFalse(journal.save(paused.copy(recoveries = 3), true))
+        val file = File(directory, "attempt.json")
+        val old = JSONObject(file.readText())
+        for (field in listOf("cause", "stopCause", "recoveries", "failedPid", "failedStarted", "failedAt", "requestedFlash", "qualcommCompatibility")) old.remove(field)
+        file.writeText(old.toString())
+        val legacy = requireNotNull(journal.read(key))
+        assertEquals("", legacy.cause)
+        assertEquals("AUTO", legacy.requestedFlashAttentionPolicy)
+        assertFalse(legacy.qualcommCompatibility)
+    }
+
+    @Test fun aFatalPrefillCanKeepItsLastWorkerMemorySampleWithoutAnyNativeCompletionJson() {
+        val directory = temporary.newFolder()
+        val journal = LocalSrtAttemptJournal(directory) { 10_200 }
+        val withSample = entry().copy(memoryReserveBytes = 1L shl 30, observedPrefillExtraBytes = 123)
+            .measured(LocalTranslationPerformance(phase = "progress",
+            progress = LocalGgufProgress("PREFILL", 0, 456, 10_010, 90, 10_279_424_000L, 523_341_824L)), 10_100)
+            .measured(LocalTranslationPerformance(phase = "progress",
+                progress = LocalGgufProgress("PREFILL", 0, 456, 10_010, 190)), 10_200)
+        assertEquals(1L shl 30, withSample.memoryReserveBytes)
+        assertEquals(123L, withSample.observedPrefillExtraBytes)
+        assertEquals(10_279_424_000L, withSample.currentRssBytes)
+        assertEquals(523_341_824L, withSample.availableRamBytes)
+        assertTrue(journal.save(withSample, true))
+        val restored = requireNotNull(journal.read(key))
+        assertEquals(withSample, restored)
+        assertTrue(restored.render().contains("Dernier relevé mémoire conservé"))
+        assertTrue(restored.render().contains("10279424000"))
+    }
+
 }

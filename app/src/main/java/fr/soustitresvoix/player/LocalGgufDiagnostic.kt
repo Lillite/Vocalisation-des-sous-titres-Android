@@ -22,15 +22,19 @@ class LocalGgufDiagnostic private constructor(
         OPENCL_DEVICE("détection du périphérique OpenCL"),
         VULKAN_DRIVER("accès au pilote Vulkan"),
         VULKAN_DEVICE("détection du périphérique Vulkan"),
+        HEXAGON("préparation Hexagon"),
+        HEXAGON_DRIVER("accès au pilote Hexagon"),
+        HEXAGON_DEVICE("détection du périphérique Hexagon"),
         MODEL_LOAD("chargement des poids du modèle"),
         CONTEXT_INIT("création du contexte de calcul"),
         GENERATION("calcul du texte")
     }
 
     enum class Reason(val label: String) {
-        BACKEND_NOT_COMPILED("Le moteur GPU demandé n’est pas compilé pour cette architecture de l’application."),
+        BACKEND_NOT_COMPILED("Le moteur accéléré demandé n’est pas compilé pour cette architecture de l’application."),
         CPU_BACKEND_MISSING("Le backend CPU requis n’a pas été trouvé."),
         DRIVER_NOT_ACCESSIBLE("La bibliothèque du pilote demandé n’est pas accessible à l’application."),
+        DRIVER_CONFIGURATION_FAILED("La configuration privée de l’accès au pilote Hexagon a échoué."),
         ENTRY_POINTS_MISSING("Les fonctions requises du pilote demandé sont absentes."),
         DIRECT_SYMBOLS_MISSING("Une ou plusieurs fonctions OpenCL nécessaires au calcul direct sont absentes du pilote."),
         DIRECT_QUERY_FAILED("L’interrogation directe des plateformes du pilote a échoué."),
@@ -39,12 +43,19 @@ class LocalGgufDiagnostic private constructor(
         ICD_CONFIGURATION_FAILED("La configuration locale du chargeur ICD a échoué."),
         ICD_QUERY_FAILED("Le chargeur ICD n’a pas pu interroger les plateformes OpenCL."),
         ICD_NO_PLATFORM("Le chargeur ICD n’a trouvé aucune plateforme OpenCL utilisable."),
-        REGISTRATION_FAILED("L’enregistrement du moteur GPU demandé a échoué."),
+        REGISTRATION_FAILED("L’enregistrement du moteur accéléré demandé a échoué."),
         NO_SUPPORTED_GPU("Aucun GPU pris en charge n’a été exposé par le moteur demandé."),
+        NO_SUPPORTED_NPU("Aucun accélérateur Hexagon pris en charge n’a été exposé par le pilote."),
+        LIBRARY_PATH_INVALID("Le répertoire privé des bibliothèques Hexagon n’a pas pu être validé."),
+        SKEL_NOT_ACCESSIBLE("Les bibliothèques de calcul Hexagon requises ne sont pas disponibles ou leur intégrité est invalide."),
         DEVICE_NOT_REGISTERED("Le périphérique OpenCL n’a pas été retrouvé dans le registre des moteurs."),
         MODEL_LOAD_FAILED("Le chargement des poids avec le moteur sélectionné a échoué ; la cause précise n’est pas établie."),
         CONTEXT_INIT_FAILED("La création du contexte avec le moteur sélectionné a échoué ; la cause précise n’est pas établie."),
         NO_GPU_EXECUTION("Aucun calcul GPU effectif n’a été observé pendant cet appel."),
+        NO_NPU_EXECUTION("Aucun calcul Hexagon effectif n’a été observé pendant cet appel."),
+        RAM_BUDGET_INSUFFICIENT("La mémoire disponible ne laisse pas la réserve indicative prévue pour ce chargement du modèle."),
+        RESERVE_INSUFFICIENT("La mémoire disponible ne laisse plus la réserve indicative prévue avant cette requête ; la progression validée est conservée."),
+        PROFILE_REQUIRES_RESTART("Le profil Vulkan a changé ; un nouveau processus de calcul est requis avant de l’appliquer."),
         ALLOCATION_FAILED("Une allocation de mémoire a échoué pendant cette étape."),
         UNEXPECTED_FAILURE("Une erreur interne a interrompu cette étape ; sa cause précise n’est pas établie.")
     }
@@ -58,12 +69,12 @@ class LocalGgufDiagnostic private constructor(
         }
         append("Temps natif observé avant ce diagnostic : "); append(elapsedMs); append(" ms.")
         openClStatus?.let {
-            append(if (stage == Stage.VULKAN_DRIVER || stage == Stage.VULKAN_DEVICE) "\nCode du pilote observé : " else "\nCode OpenCL observé : ")
+            append(if (stage in setOf(Stage.VULKAN_DRIVER, Stage.VULKAN_DEVICE, Stage.HEXAGON, Stage.HEXAGON_DRIVER, Stage.HEXAGON_DEVICE)) "\nCode du pilote observé : " else "\nCode OpenCL observé : ")
             append(it); append('.')
         }
         if (directPlatforms >= 0) { append("\nPlateformes du pilote, accès direct : "); append(directPlatforms); append('.') }
         if (icdPlatforms >= 0) { append("\nPlateformes exposées par le chargeur ICD : "); append(icdPlatforms); append('.') }
-        if (gpuDevices >= 0) { append("\nPériphériques GPU pris en charge observés : "); append(gpuDevices); append('.') }
+        if (gpuDevices >= 0) { append(if (stage in setOf(Stage.HEXAGON, Stage.HEXAGON_DRIVER, Stage.HEXAGON_DEVICE)) "\nPériphériques Hexagon pris en charge observés : " else "\nPériphériques GPU pris en charge observés : "); append(gpuDevices); append('.') }
         if (probeCached) append("\nRésultat de la détection déjà mémorisé dans le processus ; cette consultation ne relance pas la détection du pilote.")
     }
 
