@@ -2,7 +2,29 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Essais sur téléphone](docs/TESTS_TELEPHONE.md) · [Contribution](CONTRIBUTING.md)
 
-## Candidate 0.5.14-hexagon — validation à établir
+## Candidate 0.5.15-loading — validation à établir
+
+Les sources préparent **0.5.15-loading / code 22**, avec la même identité Android et le même certificat durable. Les [notes](docs/releases/0.5.15-loading.md) décrivent les refus de chargement introduits en 0.5.14, le retrait du seuil fondé sur la taille du fichier et du second contexte de planification, la surveillance réelle de la réserve et la conservation des diagnostics de chaque tentative. Aucun résultat des versions précédentes ne valide ces corrections ; la compilation et les suites de cette candidate restent à établir.
+
+Les régressions doivent vérifier l’absence de blocage fondé sur le seul poids du GGUF, le refus distinct d’une pression réellement observée, les contrôles avant et pendant le chargement puis avant le contexte et les requêtes, l’annulation et la libération synchronisée. L’augmentation de RSS pendant le préfill peut inclure les pages MMAP du modèle ; elle ne doit pas produire un second budget de poids à réserver. La collecte doit conserver la mémoire mesurée et les causes des deux tentatives AUTO puis CPU, sans remplacer le premier arrêt par le dernier refus ni inventer un motif Android absent.
+
+La campagne finale doit rapprocher les identités des XML frais des sources du commit final, construire les APK et instrumenter l’APK release sous **Android 17 / API 37** avant fusion. Les contrôles de Pause, déplacement, callback périmé, fin de vidéo, reprise, intégrité des caches et conservation de chaque occurrence restent requis. Après fusion à deux parents, une reconstruction doit confirmer la provenance et le contenu applicatif hors seules métadonnées de signature autorisées, sans répéter les suites déjà réussies sur le même changement. Les identifiants de run et les empreintes propres à la candidate seront ajoutés après observation réelle.
+
+Les captures du téléphone en 0.5.14 ont montré un refus avant chargement, puis un arrêt de la tentative AUTO suivi d’un refus CPU. Un essai avec poids CPU natifs et une couche déportée a atteint le préfill, avec une lenteur signalée ; ces observations ne démontrent ni le moteur réellement exécuté ni la cause du premier arrêt. Aucun gain de vitesse, de mémoire, de qualité ou stabilité prolongée n’est annoncé pour la 0.5.15 avant validation matérielle correspondante.
+
+### Contrôles locaux de la 0.5.15
+
+Les inférences natives sur fixtures ont réussi, dont le chargement d’un GGUF sparse de 512 Mio avec 256 Mio disponibles injectés, les refus de réserve dans les cinq modes, la pression entre phases et la libération, et l’absence de double réserve après un delta RSS injecté de 8 Gio. Les contrôles de cache, contexte glissant, SWA, Q8 et annulation restent réussis. La [preuve structurée](docs/verification/0.5.15-native-local.json) conserve résultats et empreintes des sources ; elle ne valide aucun GPU/NPU physique.
+
+Le premier lien local a échoué avec un objet généré `repack` de zéro octet. Cet objet et les seules cibles affectées ont été reconstruits avant les inférences finales réussies ; l’échec initial reste consigné. Les contrôles Python locaux de publication (45), synchronisation (23), rangement documentaire (10) et lecture des preuves natives (10) ont réussi. La campagne Android du changement final reste à établir.
+
+## Préversion 0.5.14-hexagon publiée — preuves et historique de préparation
+
+La [PR #30](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/pull/30) a validé **938 méthodes**, dont **196 noyau, 626 JVM application et 116 Android API 37**, dans le [run 42369093756](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/42369093756), sans échec, erreur, test ignoré, manquant ou dupliqué. La fusion produit `7b397ca539460e0a75d6f10643dd87eb3fc1b3cc`, arbre `407ae70c2529a57ff00c0fb972180aad63a783cf`. La [reconstruction 42372249839](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/42372249839) a vérifié le contenu applicatif identique à l’APK testé hors signature, sans répéter les suites. La [publication 42389082058](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/runs/42389082058) et le téléchargement public indépendant ont confirmé l’APK de **79 319 029 octets**, SHA-256 **c034cbc0de9d1c9c07f702dd69a28b28cff139913e7f233a2f2cb8c585a56f50**, certificat durable **304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d**. Release **437677403**, asset APK **721169487**, `SHA256SUMS` **721169596**.
+
+Les paragraphes suivants conservent les preuves et attentes de préparation de cette version. Ils ne constituent pas les résultats de la 0.5.15 et ne démontrent pas une exécution NPU physique, une stabilité prolongée ou une vitesse acceptable sur le modèle de production.
+
+### Historique de préparation de la 0.5.14
 
 Les sources préparent **0.5.14-hexagon / code 21**. Le [guide](docs/NPU_HEXAGON_0514.md) distingue l’intégration du backend, la preuve d’opérations HTP et un essai matériel. Aucun résultat des versions précédentes ne valide ce changement. Les résultats nouveaux seront ajoutés après exécution réelle.
 

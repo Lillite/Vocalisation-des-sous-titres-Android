@@ -305,7 +305,8 @@ class LocalGgufTranslationEngineTest {
         assertEquals("AUTO", reports.last().requestedMode)
         assertEquals("CPU", reports.last().backend)
         assertEquals("", reports.last().openClTransport)
-        assertSame(diagnostic, reports.last().diagnostic)
+        assertNull(reports.last().diagnostic)
+        assertTrue(reports.last().attemptReport.contains("Première tentative [AUTO]"))
         assertTrue(reports.last().render().contains("NO_GPU_EXECUTION"))
         engine.close()
     }
@@ -348,6 +349,9 @@ class LocalGgufTranslationEngineTest {
         val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { creations++; gpu })
         val failure = fails<TranslationFailure> { engine.translate(listOf("Hello."), "en", "fr") { false } }
         assertEquals(TranslationFailure.Reason.LOCAL_TIMEOUT, failure.reason)
+        assertTrue(failure.localAttemptReport.orEmpty().contains("Première tentative [AUTO]"))
+        assertTrue(failure.localAttemptReport.orEmpty().contains("Libération avant repli CPU"))
+        assertFalse(failure.localAttemptReport.orEmpty().contains("Tentative suivante [CPU]"))
         assertEquals(1, creations)
         assertEquals(1, gpu.awaitedCloses)
         engine.close()
@@ -367,6 +371,40 @@ class LocalGgufTranslationEngineTest {
         assertEquals(1, gpu.awaitedCloses)
         assertEquals(listOf("CPU"), cpu.modes)
         engine.close()
+    }
+
+    @Test fun cpuMemoryRefusalCannotEraseTheEarlierAutomaticProcessDeath() {
+        val fixture = fixture()
+        val initialReport = LocalGgufAttemptReport.failure(LocalGgufRuntime.Code.DIED, null, 100,
+            LocalGgufAttemptReport.ExitRecord(123, "app:model_diagnostic", 1000, 10_350, 5, 11, 20, 10))
+        val gpu = Backend().apply {
+            onOpen = { throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.DIED, attemptReport = initialReport) }
+        }
+        val diagnostic = requireNotNull(LocalGgufDiagnostic.parse(JSONObject()
+            .put("stage", "MODEL_LOAD").put("reason", "RAM_BUDGET_INSUFFICIENT").put("elapsedMs", 10)
+            .put("openClStatus", JSONObject.NULL).put("directPlatforms", -1).put("icdPlatforms", -1)
+            .put("gpuDevices", -1).put("probeCached", false)))
+        val cpu = Backend().apply {
+            onOpen = { throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.MEMORY, diagnostic,
+                "Fin de l’appel local : échec [MEMORY]. RAM disponible au relevé : 50 octets.") }
+        }
+        var creations = 0
+        val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { if (creations++ == 0) gpu else cpu })
+        val reports = mutableListOf<LocalTranslationPerformance>()
+        engine.setPerformanceListener(reports::add)
+        try {
+            val failure = fails<TranslationFailure> { engine.translate(listOf("Private synthetic source"), "en", "fr") { false } }
+            assertEquals(TranslationFailure.Reason.LOCAL_MEMORY, failure.reason)
+            assertSame(diagnostic, failure.localDiagnostic)
+            val report = failure.localAttemptReport.orEmpty()
+            assertTrue(report.contains("Première tentative [AUTO]"))
+            assertTrue(report.contains("[DIED]")); assertTrue(report.contains("crash natif rapporté par Android"))
+            assertTrue(report.contains("Tentative suivante [CPU]")); assertTrue(report.contains("RAM_BUDGET_INSUFFICIENT"))
+            assertTrue(report.indexOf("[DIED]") < report.indexOf("RAM_BUDGET_INSUFFICIENT"))
+            assertTrue(reports.any { it.phase == "fallback" && it.attemptReport.contains("[DIED]") })
+            assertFalse(report.contains("Private synthetic source"))
+            assertEquals(2, creations)
+        } finally { engine.close() }
     }
 
     @Test fun explicitCpuAndOpenClNeverSilentlyRetryWithAnotherBackend() {

@@ -4,7 +4,7 @@
 
 **Documentation 0.5.2 — Google et traduction pendant la lecture.** [Télécharger l’APK](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/download/v0.5.2/SousTitresVoix-0.5.2-google.apk) · [Notes 0.5.2](releases/0.5.2.md) · [Guide Google](TRADUCTION_GOOGLE_052.md) · [Validation GitHub Actions](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml). Les résultats antérieurs restent attachés à leurs versions.
 
-**Candidate 0.5.14-hexagon en préparation.** [NPU Hexagon expérimental](NPU_HEXAGON_0514.md) · [Notes et limites](releases/0.5.14-hexagon.md). La 0.5.13-memory est publiée. Historique : [Mémoire, suivi et reprise du calcul local](TRADUCTION_RUNTIME_0513.md) · [Notes et validation](releases/0.5.13-memory.md). La [préversion 0.5.12-runtime est publiée](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.12-runtime). Les preuves historiques ne valident pas les nouveaux parcours. La 0.5.2 reste le téléchargement stable recommandé.
+**Candidate 0.5.15-loading en préparation.** [Chargement et diagnostics mémoire : corrections, validation à établir et limites](releases/0.5.15-loading.md). La [préversion 0.5.14-hexagon est publiée](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v0.5.14-hexagon) : [NPU Hexagon expérimental](NPU_HEXAGON_0514.md) · [Notes et preuves](releases/0.5.14-hexagon.md). Les refus de chargement observés en 0.5.14 motivent la nouvelle candidate ; les résultats historiques ne valident pas ses corrections. Historique : [Mémoire et reprise 0.5.13](TRADUCTION_RUNTIME_0513.md) · [Calcul local 0.5.12](TRADUCTION_RUNTIME_0512.md). La 0.5.2 reste le téléchargement stable recommandé.
 
 ## Installer et utiliser sur téléphone
 
@@ -27,9 +27,10 @@ La série 0.5 conserve l’identité Android de l’édition Traduction 0.4.0 ; 
 
 | Besoin | Guide |
 | --- | --- |
+| Comprendre les corrections des refus de chargement de la 0.5.14 | [Candidate 0.5.15, surveillance mémoire et diagnostics des tentatives](releases/0.5.15-loading.md) |
 | Suivre les optimisations, protections et pistes de l’audit 0.5.14 | [Matrice des 28 pistes et critères de qualification](OPTIMISATIONS_0514.md) |
 | Essayer explicitement le NPU Qualcomm Hexagon/HTP | [Guide 0.5.14 et limites matérielles](NPU_HEXAGON_0514.md) |
-| Traduire avec un GGUF choisi sur le téléphone | [Parcours publié 0.5.4](TRADUCTION_GGUF_054.md) ; [optimisations publiées 0.5.5](TRADUCTION_GGUF_055.md) ; [diagnostic GPU publié 0.5.6](DIAGNOSTIC_OPENCL_056.md) ; [accès direct publié 0.5.7](OPENCL_DIRECT_057.md) ; [comparatif étendu publié 0.5.8](COMPARATIF_LOCAL_058.md) ; [contexte et cache publiés 0.5.9](TRADUCTION_LOCALE_059.md) ; [qualité et fiabilité publiées 0.5.10](TRADUCTION_QUALITE_0510.md) ; [modèles et profils publiés 0.5.11](COMPATIBILITE_GGUF_0511.md) ; [calcul et diagnostic publiés 0.5.12](TRADUCTION_RUNTIME_0512.md) ; [mémoire et reprise préparées 0.5.13](TRADUCTION_RUNTIME_0513.md) |
+| Traduire avec un GGUF choisi sur le téléphone | [Parcours publié 0.5.4](TRADUCTION_GGUF_054.md) ; [optimisations publiées 0.5.5](TRADUCTION_GGUF_055.md) ; [diagnostic GPU publié 0.5.6](DIAGNOSTIC_OPENCL_056.md) ; [accès direct publié 0.5.7](OPENCL_DIRECT_057.md) ; [comparatif étendu publié 0.5.8](COMPARATIF_LOCAL_058.md) ; [contexte et cache publiés 0.5.9](TRADUCTION_LOCALE_059.md) ; [qualité et fiabilité publiées 0.5.10](TRADUCTION_QUALITE_0510.md) ; [modèles et profils publiés 0.5.11](COMPATIBILITE_GGUF_0511.md) ; [calcul et diagnostic publiés 0.5.12](TRADUCTION_RUNTIME_0512.md) ; [mémoire et reprise publiées 0.5.13](TRADUCTION_RUNTIME_0513.md) |
 | Configurer Google en ligne/local et regarder pendant la traduction | [Guide Google 0.5.2](TRADUCTION_GOOGLE_052.md) |
 | Choisir une offre gratuite, comprendre Google et les limites DeepL | [Traduction gratuite et limites](TRADUCTION_GRATUITE_ET_LIMITES.md) |
 | Configurer les moteurs Google, Azure, DeepL ou LibreTranslate depuis Android | [Moteurs, comptes, options et dépannage](GUIDE_MOTEURS_TRADUCTION.md) |

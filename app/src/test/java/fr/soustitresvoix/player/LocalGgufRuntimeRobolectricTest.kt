@@ -142,8 +142,8 @@ class LocalGgufRuntimeRobolectricTest {
         val host = Robolectric.buildService(LocalGgufTranslationService::class.java).create()
         try {
             val error = host.get().javaClass.getDeclaredMethod("error", LocalGgufRuntime.Code::class.java,
-                LocalGgufDiagnostic::class.java).apply { isAccessible = true }
-            val encoded = error.invoke(host.get(), nativeFailure.code, nativeFailure.diagnostic) as String
+                LocalGgufDiagnostic::class.java, LocalGgufAttemptReport.NativeMemory::class.java).apply { isAccessible = true }
+            val encoded = error.invoke(host.get(), nativeFailure.code, nativeFailure.diagnostic, nativeFailure.nativeMemory) as String
             assertFalse(encoded.contains("privatePath"))
             assertFalse(encoded.contains("not-for-the-report"))
             try { LocalGgufRuntime.response(encoded); fail("Service error was lost") }
@@ -159,12 +159,39 @@ class LocalGgufRuntimeRobolectricTest {
             }
             val directFailure = try { LocalGgufRuntime.response(direct.toString()); throw AssertionError("Expected direct API error") }
                 catch (failure: LocalGgufRuntime.Failure) { failure }
-            val directEncoded = error.invoke(host.get(), directFailure.code, directFailure.diagnostic) as String
+            val directEncoded = error.invoke(host.get(), directFailure.code, directFailure.diagnostic, directFailure.nativeMemory) as String
             assertFalse(directEncoded.contains("not-for-the-report"))
             try { LocalGgufRuntime.response(directEncoded); fail("Direct API error was lost") }
             catch (clientFailure: LocalGgufRuntime.Failure) {
                 assertEquals(LocalGgufDiagnostic.Reason.DIRECT_SYMBOLS_MISSING, clientFailure.diagnostic?.reason)
                 assertEquals("clCreateBuffer", clientFailure.diagnostic?.missingSymbol)
+            }
+        } finally { host.destroy(); shadowOf(Looper.getMainLooper()).idle() }
+    }
+    @Test fun nativeMemoryRefusalRetainsItsMeasuredBudgetAcrossTheServiceBoundary() {
+        val native = JSONObject().put("code", "MEMORY").put("residentBytes", 1000L)
+            .put("peakRssBytes", 2000L).put("availableRamBytes", 50L)
+            .put("memoryAdmission", JSONObject().put("policy", "SYSTEM_RESERVE")
+                .put("availableBytes", 50L).put("requiredBytes", 128L).put("reserveBytes", 128L).put("deficitBytes", 78L))
+            .put("privatePath", "/private/not-for-the-report.gguf").put("output", "PRIVATE SUBTITLE")
+        val failure = try { LocalGgufRuntime.response(native.toString()); throw AssertionError("Expected memory refusal") }
+            catch (failure: LocalGgufRuntime.Failure) { failure }
+        assertEquals(LocalGgufRuntime.Code.MEMORY, failure.code)
+        val host = Robolectric.buildService(LocalGgufTranslationService::class.java).create()
+        try {
+            val error = host.get().javaClass.getDeclaredMethod("error", LocalGgufRuntime.Code::class.java,
+                LocalGgufDiagnostic::class.java, LocalGgufAttemptReport.NativeMemory::class.java).apply { isAccessible = true }
+            val encoded = error.invoke(host.get(), failure.code, failure.diagnostic, failure.nativeMemory) as String
+            val forwarded = try { LocalGgufRuntime.response(encoded); throw AssertionError("Expected forwarded memory refusal") }
+                catch (failure: LocalGgufRuntime.Failure) { failure }
+            val report = LocalGgufAttemptReport.failure(forwarded.code, null, 21, nativeMemory = forwarded.nativeMemory)
+            assertTrue(report.contains("RAM disponible au relevé : 50 octets"))
+            assertTrue(report.contains("réserve comprise 128 octets"))
+            assertTrue(report.contains("déficit 78 octets"))
+            assertTrue(report.contains("ni une allocation échouée"))
+            for (text in listOf(encoded, report)) {
+                assertFalse(text.contains("privatePath")); assertFalse(text.contains("not-for-the-report"))
+                assertFalse(text.contains("PRIVATE SUBTITLE"))
             }
         } finally { host.destroy(); shadowOf(Looper.getMainLooper()).idle() }
     }

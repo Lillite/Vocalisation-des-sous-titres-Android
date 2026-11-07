@@ -1,6 +1,7 @@
 package fr.soustitresvoix.player
 
 import android.os.Bundle
+import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -136,6 +137,35 @@ class LocalGgufAttemptReportTest {
         assertEquals(-1L, requireNotNull(LocalGgufProgress.parse(progress(), 10_000, 10_500)).residentBytes)
         assertNull(LocalGgufProgress.parse(bundle.apply { putString(GgufMessages.RESIDENT_BYTES, "123") }, 10_000, 10_500))
         assertNull(LocalGgufProgress.parse(progress().apply { putLong(GgufMessages.RESIDENT_BYTES, 1L shl 45) }, 10_000, 10_500))
+    }
+
+    @Test fun failureMemoryDiscardsInvalidOptionalFieldsWithoutLosingTheOriginalError() {
+        val admission = JSONObject().put("policy", "SYSTEM_RESERVE").put("availableBytes", 50L)
+            .put("requiredBytes", 128L).put("reserveBytes", 128L).put("deficitBytes", 78L)
+        for (invalid in listOf(
+            JSONObject(admission.toString()).put("policy", "/private/unsafe"),
+            JSONObject(admission.toString()).put("availableBytes", "50"),
+            JSONObject(admission.toString()).put("requiredBytes", 1L shl 45),
+            JSONObject(admission.toString()).put("reserveBytes", -1),
+            JSONObject(admission.toString()).put("deficitBytes", 1),
+            JSONObject(admission.toString()).put("extra", "PRIVATE SUBTITLE"))) {
+            val failure = try {
+                LocalGgufRuntime.response(JSONObject().put("code", "MEMORY").put("residentBytes", 1000L)
+                    .put("availableRamBytes", 50L).put("memoryAdmission", invalid).toString())
+                throw AssertionError("Expected memory failure")
+            } catch (failure: LocalGgufRuntime.Failure) { failure }
+            assertEquals(LocalGgufRuntime.Code.MEMORY, failure.code)
+            val memory = requireNotNull(failure.nativeMemory)
+            assertNull(memory.admission)
+            assertTrue(memory.render().contains("RAM disponible au relevé : 50 octets"))
+            assertFalse(memory.render().contains("PRIVATE")); assertFalse(memory.toJson().toString().contains("unsafe"))
+        }
+        assertNull(LocalGgufAttemptReport.NativeMemory.parse(JSONObject().put("residentBytes", "1000")
+            .put("peakRssBytes", -1).put("availableRamBytes", 1L shl 45)))
+        val unknown = requireNotNull(LocalGgufAttemptReport.NativeMemory.parse(JSONObject()
+            .put("memoryAdmission", JSONObject(admission.toString()).put("availableBytes", -1).put("deficitBytes", 0))))
+        assertTrue(unknown.render().contains("RAM disponible inconnue"))
+        assertFalse(unknown.render().contains("RAM disponible au relevé"))
     }
 
 }

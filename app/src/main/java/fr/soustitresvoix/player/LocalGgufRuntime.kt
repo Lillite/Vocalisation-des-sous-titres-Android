@@ -23,7 +23,8 @@ import java.util.concurrent.atomic.AtomicLong
 /** Explicit CPU, GPU and experimental Hexagon execution; text and paths stay inside private app processes. */
 internal object LocalGgufRuntime {
     enum class Code { BUSY, MODEL, CONTEXT, INPUT_TOO_LONG, OUTPUT_LIMIT, CANCELLED, DIED, TIMEOUT, RESPONSE, BACKEND, MEMORY, TEMPLATE }
-    class Failure(val code: Code, val diagnostic: LocalGgufDiagnostic? = null, val attemptReport: String? = null) : Exception("Local GGUF: ${code.name}")
+    class Failure(val code: Code, val diagnostic: LocalGgufDiagnostic? = null, val attemptReport: String? = null,
+        val nativeMemory: LocalGgufAttemptReport.NativeMemory? = null) : Exception("Local GGUF: ${code.name}")
     data class Info(val name: String, val architecture: String, val fileType: String,
         val contextTokens: Int, val modelBytes: Long, val modelParameters: Long,
         val loadMs: Long = 0, val peakRssBytes: Long = 0, val processId: Int = 0,
@@ -67,7 +68,8 @@ internal object LocalGgufRuntime {
         JSONObject(json).also {
             val code = it.getString("code")
             if (code != "OK") throw Failure(runCatching { Code.valueOf(code) }.getOrDefault(Code.RESPONSE),
-                LocalGgufDiagnostic.parse(it.optJSONObject("diagnostic")))
+                LocalGgufDiagnostic.parse(it.optJSONObject("diagnostic")),
+                nativeMemory = LocalGgufAttemptReport.NativeMemory.parse(it))
         }
     } catch (failure: Failure) { throw failure }
       catch (_: Exception) { throw Failure(Code.RESPONSE) }
@@ -436,7 +438,8 @@ internal object LocalGgufRuntime {
                 val exit = if (failure.code == Code.DIED) LocalGgufAttemptReport.exitFor(app, serviceProcessId,
                     request.startedAtMs, stoppedAtMs) else null
                 throw Failure(failure.code, failure.diagnostic, LocalGgufAttemptReport.failure(failure.code,
-                    request.progress, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - request.startedAtNanos), exit))
+                    request.progress, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - request.startedAtNanos), exit,
+                    failure.nativeMemory), failure.nativeMemory)
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt(); cancel(); throw Failure(Code.CANCELLED)
             } finally { synchronized(state) { if (pending === request) pending = null } }

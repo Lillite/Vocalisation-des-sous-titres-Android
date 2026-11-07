@@ -2,9 +2,19 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
-## 0.5.14-hexagon — candidate de stabilité, mémoire et NPU Qualcomm Hexagon/HTP
+## 0.5.15-loading — candidate de correction du chargement et des diagnostics mémoire
 
-VersionCode **21**, identité Traduction et certificat durable conservés. [Guide](docs/NPU_HEXAGON_0514.md) · [Notes et limites](docs/releases/0.5.14-hexagon.md). Validation et publication propres à cette candidate à établir.
+VersionCode **22**, identité Traduction et certificat durable conservés. [Notes et limites](docs/releases/0.5.15-loading.md). Validation et publication propres à cette candidate à établir.
+
+- Retrait du seuil « taille du GGUF + 1 Gio » qui refusait des modèles avant l’initialisation du backend ; réserve indicative et surveillance des conditions réelles conservées.
+- Retrait du second modèle/contexte de planification `no_alloc` du chargement normal : une seule préparation native par tentative réelle.
+- Réserve minimale de 128 Mio aux frontières sûres ; le delta RSS du préfill, qui peut inclure des pages des poids MMAP, ne gonfle plus la réserve des requêtes suivantes.
+- Diagnostics de la première tentative automatique et du repli CPU conservés, avec les données mémoire disponibles.
+- Même modèle, précision, contexte, occurrences et minutages ; CPU, OpenCL, Vulkan et Hexagon/HTP restent disponibles. Aucun gain matériel ni disparition du crash physique n’est annoncé avant mesure correspondante.
+
+## 0.5.14-hexagon — stabilité, mémoire et NPU Qualcomm Hexagon/HTP publiés
+
+VersionCode **21**, identité Traduction et certificat durable conservés. [Guide](docs/NPU_HEXAGON_0514.md) · [Notes, preuves et limites observées](docs/releases/0.5.14-hexagon.md). La PR #30 a été fusionnée après 938 tests réussis ; reconstruction, signature et téléchargement public ont ensuite été vérifiés. Les refus de chargement observés sur le téléphone motivent les corrections de la 0.5.15.
 
 - Garde mémoire commune, estimation et ventilation natives, mesures bornées et diagnostic distinguant un refus préventif d’une allocation réellement échouée.
 - Causes d’interruption et sorties des deux processus conservées ; tâche SRT retenue, attente thermique/mémoire annulable et récupération bornée après acquittement de libération.

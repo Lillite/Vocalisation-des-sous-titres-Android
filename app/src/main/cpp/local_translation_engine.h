@@ -32,6 +32,10 @@ struct MemorySample {
     const char * stage;
     long long resident_bytes = -1, peak_rss_bytes = 0, available_ram_bytes = -1;
 };
+struct MemoryAdmission {
+    bool present = false;
+    long long available_bytes = -1, required_bytes = 0, reserve_bytes = 0, deficit_bytes = 0;
+};
 struct Response {
     subtitle_native::ExecutionDiagnostic diagnostic;
     LoadProfile load_profile;
@@ -80,6 +84,7 @@ struct Response {
     bool native_cpu_weights = false;
     long long memory_reserve_bytes = 0;
     long long observed_prefill_extra_bytes = 0;
+    MemoryAdmission memory_admission;
     bool memory_estimate_available = false;
     bool memory_breakdown_available = false;
     std::vector<MemoryAllocation> memory_estimate;
@@ -116,7 +121,7 @@ public:
     std::vector<float> test_logits();
     std::string test_render_chat(const std::string & user_content);
     void test_set_available_ram_bytes(long long bytes);
-    static bool test_memory_estimate_failure_clears_rows();
+    void test_set_observed_prefill_extra_bytes(long long bytes);
 #endif
 private:
     struct State;

@@ -46,8 +46,12 @@ class LocalGgufTranslationService : Service() {
         true
     })
     override fun onBind(intent: Intent?): IBinder = inbox.binder
-    private fun error(code: LocalGgufRuntime.Code, diagnostic: LocalGgufDiagnostic? = null) = JSONObject()
-        .put("code", code.name).apply { diagnostic?.let { put("diagnostic", it.toJson()) } }.toString()
+    private fun error(code: LocalGgufRuntime.Code, diagnostic: LocalGgufDiagnostic? = null,
+        nativeMemory: LocalGgufAttemptReport.NativeMemory? = null) = JSONObject()
+        .put("code", code.name).apply {
+            diagnostic?.let { put("diagnostic", it.toJson()) }
+            nativeMemory?.toJson()?.let { memory -> memory.keys().forEach { key -> put(key, memory.get(key)) } }
+        }.toString()
     private fun respond(reply: Messenger, request: Long, session: Long, json: String) {
         if (destroyed.get()) return
         try { reply.send(Message.obtain(null, GgufMessages.RESULT).apply {
@@ -155,7 +159,7 @@ class LocalGgufTranslationService : Service() {
                 }
                 opened.open(file, threads, context, execution, layers, cache, batch, microBatch, compactSwa, observer, kvCacheType,
                     if (execution == "HEXAGON") HexagonRuntimeAssets.prepare(this, cancelled::get) else null, flashAttentionPolicy, qualcommCompatibility, nativeCpuWeights).also { LocalGgufRuntime.info(it); succeeded = true }
-            } catch (failure: LocalGgufRuntime.Failure) { error(failure.code, failure.diagnostic) }
+            } catch (failure: LocalGgufRuntime.Failure) { error(failure.code, failure.diagnostic, failure.nativeMemory) }
               catch (_: Exception) { error(LocalGgufRuntime.Code.MODEL) }
               catch (_: LinkageError) { error(LocalGgufRuntime.Code.BACKEND) }
               catch (_: OutOfMemoryError) { error(LocalGgufRuntime.Code.MEMORY) }
@@ -198,7 +202,7 @@ class LocalGgufTranslationService : Service() {
                 nativeSession?.let {
                     if (useModelTemplate) it.generateChat(text, tokens, observer) else it.generate(text, tokens, special, observer)
                 } ?: error(LocalGgufRuntime.Code.MODEL)
-            } catch (failure: LocalGgufRuntime.Failure) { error(failure.code, failure.diagnostic) }
+            } catch (failure: LocalGgufRuntime.Failure) { error(failure.code, failure.diagnostic, failure.nativeMemory) }
               catch (_: Exception) { error(LocalGgufRuntime.Code.RESPONSE) }
               catch (_: LinkageError) { error(LocalGgufRuntime.Code.BACKEND) }
               catch (_: OutOfMemoryError) { error(LocalGgufRuntime.Code.MEMORY) }

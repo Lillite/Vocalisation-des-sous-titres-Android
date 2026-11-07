@@ -6,8 +6,8 @@ import xml.etree.ElementTree as ET
 if len(sys.argv) != 2:
     raise SystemExit('Usage: check-apk-manifest.py manifest.xml')
 ns = '{http://schemas.android.com/apk/res/android}'
-EXPECTED_VERSION_CODE = '21'
-EXPECTED_VERSION_NAME = '0.5.14-hexagon'
+EXPECTED_VERSION_CODE = '22'
+EXPECTED_VERSION_NAME = '0.5.15-loading'
 root = ET.parse(Path(sys.argv[1])).getroot()
 assert root.get('package') == 'fr.soustitresvoix.player.translation', 'Unexpected application identity'
 assert root.get(ns + 'versionCode') == EXPECTED_VERSION_CODE and root.get(ns + 'versionName') == EXPECTED_VERSION_NAME, 'Unexpected version'

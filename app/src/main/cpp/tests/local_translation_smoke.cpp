@@ -15,6 +15,9 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
+#include <fstream>
+#include <filesystem>
+#include <unistd.h>
 
 extern "C" void subtitle_hexagon_graph_executed(uint64_t nodes);
 extern "C" void subtitle_opencl_graph_executed(uint64_t nodes);
@@ -579,6 +582,64 @@ int main(int argc, char ** argv) {
         check_output(cpu_after.generate("CPU remains available after absent NPU", 1, true));
     }
 #ifdef SUBTITLE_NATIVE_TESTING
+    // Exercise the real loader with a sparse GGUF whose file length exceeds the
+    // sampled available RAM. File length is not additional resident memory.
+    {
+        char temporary[] = "/tmp/subtitle-memory-admission-XXXXXX";
+        const auto descriptor = mkstemp(temporary);
+        assert(descriptor >= 0); close(descriptor);
+        {
+            std::ifstream source(argv[1], std::ios::binary);
+            std::ofstream copy(temporary, std::ios::binary);
+            copy << source.rdbuf(); assert(source && copy);
+        }
+        std::filesystem::resize_file(temporary, 512LL << 20);
+        for (const std::string mode : {"OPENCL", "VULKAN", "HEXAGON"}) {
+            subtitle_local::Session unavailable_accelerator;
+            unavailable_accelerator.test_set_available_ram_bytes(256LL << 20);
+            const auto rejected = unavailable_accelerator.open(temporary, 1, 512, mode);
+            // This host build has no phone driver. Reach that explicit driver
+            // failure instead of mistaking file length for an allocation need.
+            assert(rejected.code == "BACKEND" && rejected.diagnostic.present());
+        }
+        {
+            subtitle_local::Session mapped;
+            mapped.test_set_available_ram_bytes(256LL << 20);
+            const auto loaded = mapped.open(temporary, 1, 512);
+            assert(loaded.code == "OK" && !loaded.memory_estimate_available && loaded.memory_estimate.empty());
+            assert(loaded.memory_admission.present && loaded.memory_admission.deficit_bytes == 0);
+            mapped.test_set_observed_prefill_extra_bytes(8LL << 30);
+            const auto translated = mapped.generate("Mapped pages are not a second allocation", 1, true);
+            check_output(translated);
+            assert(translated.memory_reserve_bytes == (128LL << 20));
+        }
+        std::filesystem::remove(temporary);
+    }
+    for (const std::string mode : {"CPU", "AUTO", "OPENCL", "VULKAN", "HEXAGON"}) {
+        subtitle_local::Session exhausted;
+        exhausted.test_set_available_ram_bytes(0);
+        const auto rejected = exhausted.open(argv[1], 1, 512, mode);
+        assert(rejected.code == "MEMORY" && rejected.diagnostic.present());
+        assert(std::string(rejected.diagnostic.reason) == "RAM_BUDGET_INSUFFICIENT");
+        assert(rejected.memory_admission.present && rejected.memory_admission.available_bytes == 0);
+        assert(rejected.memory_admission.deficit_bytes == (128LL << 20));
+        assert(rejected.json().find("\"policy\":\"SYSTEM_RESERVE\"") != std::string::npos);
+    }
+    {
+        subtitle_local::Session pressure;
+        bool pressured = false;
+        const auto rejected = pressure.open(argv[1], 1, 512, "CPU", -1, "", 64, 16, false,
+            [&](const char * stage, int) {
+                if (std::string(stage) == "MODEL_LOAD" && !pressured) {
+                    pressured = true;
+                    pressure.test_set_available_ram_bytes(0);
+                }
+            });
+        assert(rejected.code == "MEMORY" && pressured && rejected.memory_admission.deficit_bytes == (128LL << 20));
+        pressure.test_set_available_ram_bytes(256LL << 20);
+        assert(pressure.open(argv[1], 1, 512).code == "OK");
+    }
+    std::cout << "Loading admission: sparse_mmap=1, explicit_accelerators=3, low_reserve_modes=5, pressure_release=1, rss_not_reserved_twice=1.\n";
     {
         subtitle_local::Session pressure;
         assert(pressure.open(argv[1], 1, 512).code == "OK");
@@ -594,7 +655,7 @@ int main(int argc, char ** argv) {
         subtitle_local::Session configured;
         const auto info = configured.open(argv[1], 1, 512, "CPU", -1, "", 64, 32, false, {}, "F16", "", policy, false, true);
         assert(info.code == "OK" && info.flash_attention_policy == policy && info.native_cpu_weights);
-        assert(info.memory_samples.size() <= 8 && info.memory_estimate_available && info.memory_breakdown_available);
+        assert(info.memory_samples.size() <= 8 && !info.memory_estimate_available && info.memory_breakdown_available);
         check_output(configured.generate("Explicit flash policy retains a complete output", 1, true));
     }
     {
@@ -602,7 +663,6 @@ int main(int argc, char ** argv) {
         const auto rejected = incompatible.open(argv[1], 1, 512, "CPU", -1, "", 64, 32, false, {}, "Q8_0", "", "DISABLED");
         assert(rejected.code == "CONTEXT");
     }
-    assert(subtitle_local::Session::test_memory_estimate_failure_clears_rows());
 #endif
 #ifdef SUBTITLE_NATIVE_TESTING
     if (argc >= 4) {

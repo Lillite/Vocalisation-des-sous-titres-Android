@@ -133,13 +133,14 @@ class LocalGgufTranslationEngine internal constructor(
     private var runningMode = executionMode
     private var cpuFallbackAttempted = false
     private var fallbackMessage = ""
-    private var fallbackDiagnostic: LocalGgufDiagnostic? = null
+    private var fallbackAttemptReport = ""
+    private var fallbackStep = ""
 
     override fun setPerformanceListener(listener: ((LocalTranslationPerformance) -> Unit)?) { performanceListener = listener }
     private fun measured(value: LocalTranslationPerformance) {
         val message = if (fallbackMessage.isEmpty()) value.fallbackReason else fallbackMessage
         runCatching { performanceListener?.invoke(value.copy(requestedMode = executionMode, fallbackReason = message,
-            diagnostic = fallbackDiagnostic ?: value.diagnostic)) }
+            attemptReport = listOf(fallbackAttemptReport, value.attemptReport).filter(String::isNotBlank).joinToString("\n\n"))) }
     }
 
     override fun translate(texts: List<String>, sourceLanguage: String, targetLanguage: String,
@@ -260,7 +261,8 @@ class LocalGgufTranslationEngine internal constructor(
                 LocalGgufRuntime.Code.DIED -> TranslationFailure.Reason.LOCAL_PROCESS_DIED
                 LocalGgufRuntime.Code.TIMEOUT -> TranslationFailure.Reason.LOCAL_TIMEOUT
                 else -> TranslationFailure.Reason.RESPONSE
-            }, failure.diagnostic, failure.attemptReport)
+            }, failure.diagnostic, if (fallbackAttemptReport.isBlank()) failure.attemptReport
+                else "$fallbackAttemptReport\n\n$fallbackStep :\n${failureDetails(failure)}")
         } catch (failure: TranslationCancelledException) { throw failure }
           catch (_: IOException) { throw TranslationFailure(TranslationFailure.Reason.LOCAL_MODEL) }
           catch (_: Exception) { throw TranslationFailure(TranslationFailure.Reason.LOCAL_TRANSLATION) }
@@ -329,12 +331,15 @@ class LocalGgufTranslationEngine internal constructor(
 
     private fun retryCpu(failure: LocalGgufRuntime.Failure, cancelled: () -> Boolean): LocalGgufBackend {
         cpuFallbackAttempted = true
+        // The CPU result cannot replace the evidence from the failed AUTO
+        // process. Keep at most this one predecessor, without subtitle text.
+        fallbackAttemptReport = "Première tentative [$runningMode], avant repli CPU :\n${failureDetails(failure)}"
+        fallbackStep = "Libération avant repli CPU"
         fallbackMessage = when (failure.code) {
             LocalGgufRuntime.Code.BACKEND -> "Le calcul automatique accéléré n’a pas pu être exécuté. Nouvelle tentative sur CPU."
             LocalGgufRuntime.Code.TIMEOUT -> "Le calcul automatique a dépassé son délai. Nouvelle tentative sur CPU."
             else -> "Le processus du calcul automatique s’est arrêté. Nouvelle tentative sur CPU."
         }
-        fallbackDiagnostic = failure.diagnostic
         measured(LocalTranslationPerformance(phase = "fallback", requestedMode = executionMode))
         val previous = backend ?: retiredBackend
         // A returned cancellation is not proof of memory release. Wait for the
@@ -347,8 +352,16 @@ class LocalGgufTranslationEngine internal constructor(
         }
         releaseLease()
         runningMode = "CPU"
+        fallbackStep = "Tentative suivante [CPU]"
         checkCancelled(cancelled)
         return open(cancelled)
+    }
+
+    private fun failureDetails(failure: LocalGgufRuntime.Failure): String = buildString {
+        append("Code de l’appel : ["); append(failure.code.name); append("]")
+        failure.diagnostic?.let { append('\n'); append(it.render()) }
+        failure.attemptReport?.takeIf(String::isNotBlank)?.let { append('\n'); append(it.take(24_000)) }
+            ?: failure.nativeMemory?.let { append('\n'); append(it.render()) }
     }
 
     /** Native cancellation and Binder unbinding are asynchronous and never wait for a worker. */

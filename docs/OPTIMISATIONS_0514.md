@@ -2,7 +2,7 @@
 
 [Accueil](../README.md) · [Hexagon](NPU_HEXAGON_0514.md) · [Validation](../TESTING.md)
 
-Cette page suit les **28 pistes** étudiées après l’interruption d’une préparation Vulkan à 17 occurrences sur 25. Les modifications de la candidate sont en cours de validation. Un changement de code, une estimation mémoire et un résultat sur fixture ne constituent pas une mesure de gain sur le OnePlus. La cause exacte de l’interruption initiale reste distincte des défauts observés dans le diagnostic.
+Cette page suit les **28 pistes** étudiées après l’interruption d’une préparation Vulkan à 17 occurrences sur 25. La 0.5.14 est publiée ; les refus précoces de chargement observés sur le téléphone ont conduit aux [corrections de la candidate 0.5.15](releases/0.5.15-loading.md), dont la validation propre reste à établir. Un changement de code, une estimation mémoire et un résultat sur fixture ne constituent pas une mesure de gain sur le OnePlus. La cause exacte de l’interruption initiale reste distincte des défauts observés dans le diagnostic.
 
 ## Contrats à préserver
 
@@ -13,13 +13,13 @@ Chaque occurrence, panneau, répétition légitime, identifiant et minutage rest
 | N° | Sujet de l’audit | Mise en œuvre ou condition de qualification |
 | --- | --- | --- |
 | 1 | Cause d’interruption masquée | Journal distinguant cause initiale, annulation volontaire et fermeture secondaire ; une fermeture ne doit pas écraser la première erreur. |
-| 2 | Admission mémoire des modes explicites | Garde commune CPU/OpenCL/Vulkan/Hexagon avec réserve indicative ; ce refus préventif n’est pas une preuve d’OOM Android. |
+| 2 | Admission mémoire des modes explicites | La 0.5.14 comparait le fichier entier à la mémoire disponible avec une réserve de 1 Gio, ce qui a refusé des chargements avant le backend. La candidate 0.5.15 retire ce seuil et conserve une réserve minimale de 128 Mio avec sondes de pression aux frontières sûres. Un refus préventif reste distinct d’un OOM Android. |
 | 3 | Budget Vulkan | Interrogation et observation du budget lorsqu’il est disponible, sans addition naïve au RSS de la mémoire partagée. |
-| 4 | Estimation poids/contexte/calcul | Plan `no_alloc` et ventilation encapsulant l’API interne de la révision épinglée ; allocations du plan libérées avant le modèle réel. |
-| 5 | Mesures par phase | Série bornée et composantes natives, distinguant estimations, instantanés et pics observés. |
+| 4 | Estimation poids/contexte/calcul | Le plan `no_alloc` de la 0.5.14 créait malgré tout un contexte et initialisait les backends avant le chargement réel. La candidate 0.5.15 supprime cette double initialisation du parcours normal ; la ventilation des allocations réellement créées reste observée. |
+| 5 | Mesures par phase | Série bornée et composantes natives, distinguant estimations, instantanés et pics observés. La candidate 0.5.15 ne traite plus l’augmentation du RSS pendant le préfill comme une nouvelle réserve temporaire : ce delta peut inclure les pages des poids MMAP devenues résidentes. |
 | 6 | Arrêt avant pression excessive | Contrôle aux frontières sûres, préfixe sauvegardé, libération acquittée et reprise bornée. |
 | 7 | Limites Android 17 | Motif système corrélé, marqueur mémoire éventuel, aucune limite numérique universelle inventée. |
-| 8 | Deux processus et résumé d’étape | Motifs moteur et application conservés séparément ; corrélation avec les résumés disponibles, sans texte privé. |
+| 8 | Deux processus et résumé d’étape | Motifs moteur et application conservés séparément ; corrélation avec les résumés disponibles, sans texte privé. La candidate 0.5.15 conserve aussi le premier échec AUTO lorsqu’une tentative CPU ultérieure échoue, avec ses données mémoire disponibles. |
 | 9 | Recréation d’écran | Propriétaire retenu du job et observateur UI détachable ; annulation explicite toujours prioritaire. |
 | 10 | Récupération du moteur | Tentatives limitées, même configuration, attente de libération ; aucun recyclage aveugle toutes les N phrases. |
 | 11 | Thermique | Sondes bornées et pauses du parcours SRT, sans modifier le texte ; aucune dépendance exclusive aux anciens callbacks mémoire. |
