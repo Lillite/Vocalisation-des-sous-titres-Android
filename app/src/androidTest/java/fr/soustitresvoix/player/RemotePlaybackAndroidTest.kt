@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Base64
 import androidx.core.content.ContextCompat
@@ -13,10 +15,12 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSpec
 import androidx.media3.exoplayer.PlayerMessage
+import androidx.media3.ui.PlayerView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import fr.soustitresvoix.core.NarrationMachine
+import fr.soustitresvoix.core.NarrationLedger
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -67,7 +71,21 @@ class RemotePlaybackAndroidTest {
         val requests = Collections.synchronizedList(mutableListOf<String>())
         fun observed() = synchronized(requests) { requests.toList() }
         val errors = Collections.synchronizedList(mutableListOf<String>())
-        val activity = AtomicReference<MainActivity>()
+        val sessionReference = AtomicReference<PlaybackSession>()
+        val observation = RemoteNarrationObservation()
+        val maintenance = Handler(Looper.getMainLooper())
+        var lastSavedAt = 0L
+        val maintenanceTick = object : Runnable {
+            override fun run() {
+                sessionReference.get()?.let { session ->
+                    session.prepareTick()
+                    if (SystemClock.elapsedRealtime() - lastSavedAt > 5_000) {
+                        session.savePosition(); lastSavedAt = SystemClock.elapsedRealtime()
+                    }
+                }
+                maintenance.postDelayed(this, 500)
+            }
+        }
         val firstUtterance = AtomicReference<String>()
         val pauseOnce = AtomicBoolean()
         val pauseBarrier = AtomicReference<PlayerMessage>()
@@ -79,9 +97,10 @@ class RemotePlaybackAndroidTest {
                 val text = intent.getStringExtra("text") ?: return
                 // Record every service request, including unexpected duplicates and preparations.
                 requests += text
+                observation.event("service.received(text=$text)")
                 if (text == expectedRequests.first() && pauseOnce.compareAndSet(false, true)) {
                     try {
-                        val session = requireNotNull(activity.get()).session
+                        val session = requireNotNull(sessionReference.get())
                         firstUtterance.set(requireNotNull(session.machine.snapshot().speakingId))
                         session.pause()
                         pauseBarrier.set((session.playback as Media3PlaybackBackend).exoPlayer.createMessage { _, _ -> }.send())
@@ -105,61 +124,84 @@ class RemotePlaybackAndroidTest {
                 assertFalse(uri.toString().contains("synthetic"))
                 assertFalse(context.getSharedPreferences("remote-connections-private-v1", Context.MODE_PRIVATE).all.toString().contains("synthetic-signed-token"))
                 ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-                    scenario.onActivity { current ->
-                        activity.set(current)
-                        current.session.player.addListener(object : Player.Listener {
-                            override fun onPlayerError(error: PlaybackException) { errors += error.errorCodeName }
-                        })
-                        current.session.open(SavedMedia(uri.toString(), "Synthetic authenticated HTTP fixture"))
-                    }
-                    waitFor("The authenticated real player, selected text track and test TTS engine did not become ready") {
-                        val session = activity.get().session
-                        session.player.playbackState == Player.STATE_READY && session.selectedTextId() != null && session.speech.isReady
-                    }
-                    scenario.onActivity { current -> current.session.ensureCompleteIndex { completeIndex.set(true) } }
-                    waitFor("The real session did not finish a complete index of its authenticated opaque source") { completeIndex.get() }
-                    scenario.onActivity { current ->
-                        assertCompleteDemoIndex(current.session.ahead)
-                        assertEquals(uri.toString(), current.session.media?.uri)
-                        assertEquals(uri.toString(), current.session.prefs.lastMedia()?.uri)
-                        assertTrue("Paused demux/index preparation must not request TTS", observed().isEmpty())
-                        current.session.play()
-                    }
-                    waitFor("The first real TTS request was not interrupted by an explicit user pause") {
-                        pauseBarrier.get() != null || receiverFailure.get() != null
-                    }
-                    receiverFailure.get()?.let { throw AssertionError("Could not pause the observed real utterance", it) }
-                    assertTrue(requireNotNull(pauseBarrier.get()).blockUntilDelivered(20_000))
-                    instrument.waitForIdleSync()
-                    scenario.onActivity { current ->
-                        val state = current.session.machine.snapshot()
-                        assertFalse(state.wantsPlayback); assertFalse(state.videoRequested); assertNull(state.speakingId)
-                        assertFalse(current.session.player.playWhenReady)
-                        assertEquals(listOf("Bonjour."), observed())
-                    }
-                    // Let the fixture's cancelled/completed callback arrive while user intent stays paused.
-                    Thread.sleep(1_200)
-                    scenario.onActivity { current ->
-                        assertFalse("An old TTS completion must not resume a user-paused network film", current.session.machine.snapshot().wantsPlayback)
-                        assertFalse(current.session.player.playWhenReady)
-                        assertEquals(listOf("Bonjour."), observed())
-                        current.session.play()
-                        assertNotNull(current.session.machine.snapshot().speakingId)
-                        assertNotEquals(firstUtterance.get(), current.session.machine.snapshot().speakingId)
-                    }
-                    waitFor("The authenticated film did not end with every narration occurrence drained", 55_000) {
-                        val session = activity.get().session; val state = session.machine.snapshot()
-                        session.player.playbackState == Player.STATE_ENDED && state.speakingId == null && state.pendingCount == 0 && !state.wantsPlayback
-                    }
-                    instrument.waitForIdleSync()
-                    assertTrue("Real network playback failed: $errors", errors.isEmpty())
-                    assertEquals("Only the deliberately interrupted first segment may restart; both Oui occurrences must reach the actual TTS service",
-                        listOf("Bonjour.") + expectedRequests, observed())
-                    scenario.onActivity { current ->
-                        assertCompleteDemoIndex(current.session.ahead)
-                        assertEquals(0, current.session.machine.snapshot().recoverableCount)
-                        assertFalse(current.session.player.playWhenReady)
-                        assertEquals(uri.toString(), current.session.prefs.lastMedia()?.uri)
+                    var surface: PlayerView? = null
+                    try {
+                        scenario.onActivity { current ->
+                            // MainActivity's own empty session makes no audio request.
+                            // This real session differs only by transparent observers.
+                            val session = PlaybackSession(current, preferences, onChanged = {},
+                                onMessage = { text, error -> observation.event("message(error=$error,$text)") },
+                                onCaption = {}, components = observation.components)
+                            sessionReference.set(session)
+                            observation.attach(session); observation.observePlayer(session)
+                            surface = PlayerView(current).apply { useController = false; player = session.player }
+                            current.setContentView(requireNotNull(surface))
+                            maintenance.post(maintenanceTick)
+                            session.player.addListener(object : Player.Listener {
+                                override fun onPlayerError(error: PlaybackException) { errors += error.errorCodeName }
+                            })
+                            session.open(SavedMedia(uri.toString(), "Synthetic authenticated HTTP fixture"))
+                        }
+                        waitFor("The authenticated real player, selected text track and test TTS engine did not become ready") {
+                            val session = sessionReference.get()
+                            session.player.playbackState == Player.STATE_READY && session.selectedTextId() != null && session.speech.isReady
+                        }
+                        scenario.onActivity { sessionReference.get().ensureCompleteIndex { completeIndex.set(true) } }
+                        waitFor("The real session did not finish a complete index of its authenticated opaque source") { completeIndex.get() }
+                        scenario.onActivity {
+                            assertCompleteDemoIndex(sessionReference.get().ahead)
+                            assertEquals(uri.toString(), sessionReference.get().media?.uri)
+                            assertEquals(uri.toString(), sessionReference.get().prefs.lastMedia()?.uri)
+                            assertTrue("Paused demux/index preparation must not request TTS", observed().isEmpty())
+                            sessionReference.get().play()
+                        }
+                        waitFor("The first real TTS request was not interrupted by an explicit user pause") {
+                            pauseBarrier.get() != null || receiverFailure.get() != null
+                        }
+                        receiverFailure.get()?.let { throw AssertionError("Could not pause the observed real utterance", it) }
+                        assertTrue(requireNotNull(pauseBarrier.get()).blockUntilDelivered(20_000))
+                        instrument.waitForIdleSync()
+                        scenario.onActivity {
+                            val state = sessionReference.get().machine.snapshot()
+                            assertFalse(state.wantsPlayback); assertFalse(state.videoRequested); assertNull(state.speakingId)
+                            assertFalse(sessionReference.get().player.playWhenReady)
+                            assertEquals(listOf("Bonjour."), observed())
+                        }
+                        // Let the fixture's cancelled/completed callback arrive while user intent stays paused.
+                        Thread.sleep(1_200)
+                        scenario.onActivity {
+                            assertFalse("An old TTS completion must not resume a user-paused network film", sessionReference.get().machine.snapshot().wantsPlayback)
+                            assertFalse(sessionReference.get().player.playWhenReady)
+                            assertEquals(listOf("Bonjour."), observed())
+                            sessionReference.get().play()
+                            assertNotNull(sessionReference.get().machine.snapshot().speakingId)
+                            assertNotEquals(firstUtterance.get(), sessionReference.get().machine.snapshot().speakingId)
+                        }
+                        waitFor("The authenticated film did not end with every narration occurrence drained", 55_000) {
+                            val session = sessionReference.get(); val state = session.machine.snapshot()
+                            session.player.playbackState == Player.STATE_ENDED && state.speakingId == null && state.pendingCount == 0 && !state.wantsPlayback
+                        }
+                        instrument.waitForIdleSync()
+                        assertTrue("Real network playback failed: $errors", errors.isEmpty())
+                        scenario.onActivity {
+                            val session = sessionReference.get()
+                            val items = (0..9).flatMap { session.ahead.selected(it.toString()) }.sortedBy { it.startUs }
+                            observation.assertComplete(expectedRequests, listOf(0, 0, 1, 2, 2, 3, 4, 5, 6, 7),
+                                items.map { NarrationLedger.hashIdentity(it.identity) }, observed())
+                        }
+                        scenario.onActivity {
+                            assertCompleteDemoIndex(sessionReference.get().ahead)
+                            assertEquals(0, sessionReference.get().machine.snapshot().recoverableCount)
+                            assertFalse(sessionReference.get().player.playWhenReady)
+                            assertEquals(uri.toString(), sessionReference.get().prefs.lastMedia()?.uri)
+                        }
+                    } finally {
+                        maintenance.removeCallbacks(maintenanceTick)
+                        scenario.onActivity {
+                            surface?.player = null
+                            sessionReference.getAndSet(null)?.close()
+                            observation.detach()
+                        }
                     }
                 }
                 assertTrue("The fixture was never read with its expected HTTP Basic authorization", server.authorizedReads.get() > 0)
@@ -167,6 +209,8 @@ class RemotePlaybackAndroidTest {
                 assertTrue("The loopback HTTP fixture failed: ${server.failure.get()}", server.failure.get() == null)
             }
         } finally {
+            maintenance.removeCallbacks(maintenanceTick)
+            observation.writeDiagnostics()
             context.unregisterReceiver(receiver)
             preferences.enginePackage = ""; preferences.clearMedia()
             opaque?.let(store::deleteDirectUrl)

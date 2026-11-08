@@ -1010,7 +1010,14 @@ class Revision03AndroidTest {
             androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.navigation_settings))
                 .perform(androidx.test.espresso.action.ViewActions.click())
             click("Réglages de la voix et du confort", true)
+            lateinit var settingsWindow: View
             androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withContentDescription("Rechercher dans les huit rubriques de réglages"))
+                .inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
+                .check { view, error ->
+                    if (error != null) throw error
+                    settingsWindow = requireNotNull(view).rootView
+                    assertTrue("The actual settings dialog must be attached before starting the benchmark", settingsWindow.isAttachedToWindow)
+                }
                 .perform(androidx.test.espresso.action.ViewActions.replaceText("Banc d’essai de lecture"), androidx.test.espresso.action.ViewActions.closeSoftKeyboard())
             click("Banc d’essai de lecture : 2 ou 30 minutes", true)
             click("Court : 2 minutes")
@@ -1018,9 +1025,10 @@ class Revision03AndroidTest {
                 current!!.session.playbackBenchmark.active && current!!.session.machine.snapshot().wantsPlayback &&
                     current!!.session.player.currentPosition >= 1000
             }
-            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText("Voix et confort"))
-                .check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
             scenario.onActivity { a ->
+                // The Settings tab also has a permanent “Voix et confort” title.
+                // Observe the dialog window captured before the action instead.
+                assertFalse("The settings dialog window must be detached after starting the benchmark", settingsWindow.isAttachedToWindow)
                 assertEquals(120_000L, a.session.playbackBenchmark.snapshot()!!.requestedMs)
                 a.session.stopPlaybackBenchmark()
             }
