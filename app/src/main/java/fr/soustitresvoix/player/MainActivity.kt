@@ -23,6 +23,13 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
 import android.widget.*
+import com.google.android.material.bottomnavigation.BottomNavigationView
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.card.MaterialCardView
+import com.google.android.material.color.DynamicColorsOptions
+import com.google.android.material.color.DynamicColors
+import com.google.android.material.color.MaterialColors
+import androidx.core.view.ViewCompat
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
@@ -49,6 +56,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var localSrtTranslationControls: LocalSrtTranslationControls
     private lateinit var localGgufBenchmarkControls: LocalGgufBenchmarkControls
     private lateinit var preparationDiagnostics: PreparationDiagnosticsController
+    private lateinit var fileExplorer: FileExplorerControls
+    private var selectedTab = R.id.navigation_home
+    private var libraryNavigation: BottomNavigationView? = null
     private lateinit var prefs: PlayerPreferences
     internal lateinit var session: PlaybackSession; private set
     private lateinit var playerView: PlayerView
@@ -83,6 +93,7 @@ class MainActivity : ComponentActivity() {
     private var pendingResumeOffer = false
     private var resumeOfferUri: String? = null
     private var pendingSubtitleExport: String? = null
+    private var subtitleReadCancellation: RemoteCancellation? = null
     private val diagnosticModelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (::preparationDiagnostics.isInitialized && !closed) preparationDiagnostics.selectedModel(uri)
     }
@@ -122,6 +133,10 @@ class MainActivity : ComponentActivity() {
     private val localBenchmarkModelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (::localGgufBenchmarkControls.isInitialized && !closed) localGgufBenchmarkControls.selectedModel(uri)
     }
+    // Appended after all historical Activity Result registrations.
+    private val storagePermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        if (::fileExplorer.isInitialized && !closed) fileExplorer.onResume()
+    }
     private val ticker = object : Runnable {
         override fun run() {
             if (closed || stopped) return
@@ -133,7 +148,10 @@ class MainActivity : ComponentActivity() {
         }
     }
     override fun onCreate(savedInstanceState: Bundle?) {
+        DynamicColors.applyToActivityIfAvailable(this, DynamicColorsOptions.Builder()
+            .setThemeOverlay(com.google.android.material.R.style.ThemeOverlay_Material3_DynamicColors_Dark).build())
         super.onCreate(savedInstanceState)
+        selectedTab = savedInstanceState?.getInt("selectedTab", R.id.navigation_home) ?: R.id.navigation_home
         volumeControlStream = android.media.AudioManager.STREAM_MUSIC
         prefs = PlayerPreferences(this)
         fullscreen = savedInstanceState?.getBoolean("fullscreen", false) ?: false
@@ -187,13 +205,41 @@ class MainActivity : ComponentActivity() {
             },
             launchModelPicker = { diagnosticModelPicker.launch(arrayOf("*/*")) },
             launchVideoPicker = { diagnosticVideoPicker.launch(arrayOf("video/*", "application/octet-stream")) })
+        fileExplorer = FileExplorerControls(this,
+            onMedia = { media ->
+                session.pause(); requestToken++; subtitleReadCancellation?.close(); pendingRepairUri = null
+                resumeOfferUri = media.uri; selectedTab = R.id.navigation_home
+                val previous = prefs.lastMedia()?.takeIf { it.uri == media.uri }
+                session.open(previous?.copy(title = media.title) ?: media, restoreSession = true)
+                buildUi()
+            },
+            onSubtitle = { uri, name ->
+                libraryNavigation?.selectedItemId = R.id.navigation_home
+                if (session.media == null) showMessage("Ouvre d’abord une vidéo.", false) else importSubtitle(uri, null, name)
+            },
+            chooseSystemFile = { pickDocument(OPEN_VIDEO) },
+            requestLegacyPermission = { storagePermissionLauncher.launch(android.Manifest.permission.READ_EXTERNAL_STORAGE) },
+            onDirectUrlDeleted = { uri -> forgetRemovedNetworkSource(RemoteMediaUris.DIRECT_SCHEME, uri.host) },
+            onConnectionDeleted = { id -> forgetRemovedNetworkSource(RemoteMediaUris.SERVER_SCHEME, id) },
+            onConnectionUpdated = { id -> forgetRemovedNetworkSource(RemoteMediaUris.SERVER_SCHEME, id,
+                "Connexion modifiée. Rouvre la vidéo dans Explorer ; elle reste en pause jusqu’à une demande de lecture.") })
         buildUi()
         if (!handleViewIntent(intent)) prefs.lastMedia()?.let { saved ->
             val scheme = Uri.parse(saved.uri).scheme
-            if (scheme == "content" || scheme == "android.resource") {
+            if (scheme == "content" || scheme == "android.resource" || scheme == "file" || RemoteMediaUris.isRemote(Uri.parse(saved.uri))) {
                 resumeOfferUri = saved.uri; session.open(saved, restoreSession = true)
             } else prefs.clearMedia()
         }
+    }
+    private fun forgetRemovedNetworkSource(scheme: String, id: String?, notice: String = "Source réseau supprimée. Choisis une autre vidéo dans Explorer.") {
+        if (closed || id == null) return
+        fun matches(raw: String?) = raw?.let { Uri.parse(it).let { uri -> uri.scheme == scheme && uri.host == id } } == true
+        if (matches(resumeOfferUri)) { resumeOfferUri = null; pendingResumeOffer = false; resumeDialog?.dismiss() }
+        if (matches(session.media?.uri)) {
+            requestToken++; subtitleReadCancellation?.close(); repairDialog?.dismiss()
+            session.forgetSession()
+            showMessage(notice, false)
+        } else if (matches(prefs.lastMedia()?.uri)) prefs.clearMedia()
     }
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); handleViewIntent(intent) }
     private fun handleViewIntent(intent: Intent?): Boolean {
@@ -206,6 +252,7 @@ class MainActivity : ComponentActivity() {
         // External engines can update their package or voice data while this
         // activity is paused. Revalidate before allowing the next playback.
         session.refreshSettings(); applyWindowMode()
+        if (::fileExplorer.isInitialized) fileExplorer.onResume()
         main.removeCallbacks(ticker); main.post(ticker)
         offerSessionResume()
     }
@@ -217,11 +264,13 @@ class MainActivity : ComponentActivity() {
     }
     override fun onDestroy() {
         closed = true; localBenchmarkPlayback = null; uiRebuildPending = false; requestToken++
+        subtitleReadCancellation?.close(); subtitleReadCancellation = null
         cinema?.close(); repairDialog?.dismiss(); resumeDialog?.dismiss(); resumeDialog = null
         if (::translationControls.isInitialized) translationControls.close()
         if (::localSrtTranslationControls.isInitialized) localSrtTranslationControls.close()
         if (::localGgufBenchmarkControls.isInitialized) localGgufBenchmarkControls.close()
         if (::preparationDiagnostics.isInitialized) preparationDiagnostics.close()
+        if (::fileExplorer.isInitialized) fileExplorer.close()
         main.removeCallbacksAndMessages(null); io.shutdownNow()
         if (::playerView.isInitialized) playerView.player = null
         if (::session.isInitialized) {
@@ -233,6 +282,7 @@ class MainActivity : ComponentActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) { super.onConfigurationChanged(newConfig); buildUi() }
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("fullscreen", fullscreen); outState.putInt("savedOrientation", savedOrientation)
+        outState.putInt("selectedTab", selectedTab)
         super.onSaveInstanceState(outState)
     }
     private fun offerSessionResume() {
@@ -286,8 +336,9 @@ class MainActivity : ComponentActivity() {
     private fun text(value: String, size: Float = 20f) = TextView(this).apply {
         text = value; textSize = size; setTextColor(Color.WHITE); setPadding(dp(8), dp(4), dp(8), dp(4))
     }
-    private fun button(label: String, action: () -> Unit) = Button(this).apply {
-        text = label; textSize = 18f; isAllCaps = false; minHeight = dp(64)
+    private fun button(label: String, action: () -> Unit) = MaterialButton(this).apply {
+        text = label; textSize = 17f; isAllCaps = false; minHeight = dp(56)
+        setSingleLine(false); maxLines = Int.MAX_VALUE; ellipsize = null
         setPadding(dp(8), dp(8), dp(8), dp(8)); setOnClickListener { action() }
     }
     private fun buildUi() {
@@ -313,6 +364,7 @@ class MainActivity : ComponentActivity() {
         }
     }
     private fun buildUiContent() {
+        libraryNavigation = null
         session.finishPlaybackBenchmark("Disposition de l’écran modifiée : essai interrompu")
         cinema?.close(); cinema = null
         if (::playerView.isInitialized) (playerView.parent as? ViewGroup)?.removeView(playerView)
@@ -359,27 +411,79 @@ class MainActivity : ComponentActivity() {
         playerView.subtitleView?.setPadding(0, 0, 0, 0)
         GoogleTranslationAttribution.positionVideoBadge(playerView, captionOverlay)
         val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(18, 18, 18)); setPadding(dp(8), dp(8), dp(8), dp(8))
+            id = R.id.library_root
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSurface))
         }
         root.setOnApplyWindowInsetsListener { view, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
                 val i = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
-                view.setPadding(i.left + dp(8), i.top + dp(8), i.right + dp(8), i.bottom + dp(8))
+                view.setPadding(i.left, i.top, i.right, i.bottom)
             } else {
                 @Suppress("DEPRECATION")
-                view.setPadding(insets.systemWindowInsetLeft + dp(8), insets.systemWindowInsetTop + dp(8),
-                    insets.systemWindowInsetRight + dp(8), insets.systemWindowInsetBottom + dp(8))
+                view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
+                    insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
             }
             insets
         }
-        titleView = text(session.media?.title ?: "Sous-titres en voix — Cinéma", 22f).apply { maxLines = 2 }
-        root.addView(titleView)
-        root.addView(playerView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.9f))
-        statusView = text("En pause", 18f); root.addView(statusView)
+        root.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(8))
+            addView(text("SOUS-TITRES EN VOIX", 12f).apply {
+                letterSpacing = .14f
+                setTextColor(MaterialColors.getColor(this, androidx.appcompat.R.attr.colorPrimary))
+            })
+            addView(text("Ton cinéma, à l’écoute", 25f).apply {
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                ViewCompat.setAccessibilityHeading(this, true)
+            })
+        })
+        val pages = FrameLayout(this).apply { id = R.id.navigation_pages }
+        val pageViews = linkedMapOf<Int, View>()
+        fun page(id: Int, title: String, subtitle: String): LinearLayout {
+            val column = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(24))
+                addView(text(title, 26f).apply { ViewCompat.setAccessibilityHeading(this, true) })
+                addView(text(subtitle, 16f).apply {
+                    setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+                })
+            }
+            val scroll = ScrollView(this).apply {
+                this.id = when (id) {
+                    R.id.navigation_home -> R.id.page_home
+                    R.id.navigation_explore -> R.id.page_explore
+                    R.id.navigation_translation -> R.id.page_translation
+                    else -> R.id.page_settings
+                }
+                isFillViewport = false; addView(column)
+            }
+            pageViews[id] = scroll; pages.addView(scroll, FrameLayout.LayoutParams(-1, -1))
+            return column
+        }
+        fun card(column: LinearLayout, title: String, description: String? = null): LinearLayout {
+            val content = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(12), dp(12), dp(12))
+                addView(text(title, 20f).apply {
+                    setTypeface(typeface, android.graphics.Typeface.BOLD); ViewCompat.setAccessibilityHeading(this, true)
+                })
+                description?.let { addView(text(it, 16f)) }
+            }
+            column.addView(MaterialCardView(this).apply {
+                radius = dp(24).toFloat(); cardElevation = 0f; strokeWidth = 0
+                setCardBackgroundColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorSurfaceContainer))
+                addView(content)
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+            return content
+        }
+        val home = page(R.id.navigation_home, "Accueil", "Ouvre une œuvre et retrouve une lecture à ton rythme.")
+        val playerCard = card(home, "À l’écran")
+        titleView = text(session.media?.title ?: "Aucune vidéo ouverte", 20f).apply { maxLines = 3 }
+        playerCard.addView(titleView)
+        playerCard.addView(playerView, LinearLayout.LayoutParams(-1, dp(200)))
+        statusView = text("En pause", 18f); playerCard.addView(statusView)
         positionView = text("00:00 / 00:00", 16f).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
-        root.addView(positionView)
+        playerCard.addView(positionView)
         positionSlider = SeekBar(this).apply {
-            id = View.generateViewId(); max = 1000; minimumHeight = dp(48); contentDescription = "Position de la vidéo"
+            id = R.id.playback_position; max = 1000; minimumHeight = dp(48); contentDescription = "Position de la vidéo"
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onStartTrackingTouch(seekBar: SeekBar) { scrubbing = true; session.pause() }
                 override fun onStopTrackingTouch(seekBar: SeekBar) { scrubbing = false; seekFraction(seekBar.progress) }
@@ -388,45 +492,91 @@ class MainActivity : ComponentActivity() {
                 }
             })
         }
-        root.addView(positionSlider)
-        val navigation = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        fun addNav(view: View) { navigation.addView(view, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)) }
-        addNav(button("Reculer\n10 s") { session.seek(session.player.currentPosition - 10_000) })
+        playerCard.addView(positionSlider)
+        val transport = LinearLayout(this)
+        transport.addView(button("Reculer\n10 s") { session.seek(session.player.currentPosition - 10_000) }, LinearLayout.LayoutParams(0, -2, 1f))
         playButton = button("Lire") {
             val state = session.machine.snapshot()
             if (state.wantsPlayback || state.speakingId != null) session.pause() else session.play()
         }.apply { id = R.id.play_button }
-        addNav(playButton)
-        addNav(button("Avancer\n10 s") { session.seek(session.player.currentPosition + 10_000) })
-        root.addView(navigation)
-        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        messageView = text(message, 18f).apply {
+        transport.addView(playButton, LinearLayout.LayoutParams(0, -2, 1f))
+        transport.addView(button("Avancer\n10 s") { session.seek(session.player.currentPosition + 10_000) }, LinearLayout.LayoutParams(0, -2, 1f))
+        playerCard.addView(transport)
+        playerCard.addView(button("Plein écran cinéma") { setFullscreen(true) })
+        messageView = text(message, 17f).apply {
+            id = R.id.playback_message
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-            setTextColor(if (messageIsError) Color.rgb(255, 205, 110) else Color.LTGRAY)
+            setTextColor(if (messageIsError) Color.rgb(255, 205, 110)
+                else MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
         }
-        column.addView(messageView)
-        column.addView(button("Plein écran cinéma") { setFullscreen(true) })
-        column.addView(button("Ouvrir une vidéo") { pickDocument(OPEN_VIDEO) }.apply { id = R.id.open_video })
-        column.addView(button("Essai intégré : sous-titres et mire de cadrage") {
-            requestToken++
+        playerCard.addView(messageView)
+        val openCard = card(home, "Commencer une séance")
+        openCard.addView(button("Ouvrir une vidéo") { pickDocument(OPEN_VIDEO) }.apply { id = R.id.open_video })
+        openCard.addView(button("Essai intégré : sous-titres et mire de cadrage") {
+            requestToken++; subtitleReadCancellation?.close()
             session.open(SavedMedia("android.resource://$packageName/${R.raw.demonstration}", "Mire : quatre coins, cercle et sous-titres")); session.play()
         }.apply { id = R.id.demo_button })
-        column.addView(button("Ajouter un fichier de sous-titres") {
+        val tracksCard = card(home, "Pistes et vocalisation")
+        tracksCard.addView(button("Ajouter un fichier de sous-titres") {
             if (session.media == null) showMessage("Ouvre d’abord une vidéo.", false) else pickDocument(OPEN_SUBTITLE)
         })
-        column.addView(button("Choisir la piste de sous-titres") { chooseTrack(C.TRACK_TYPE_TEXT) })
-        column.addView(button("Traduire les sous-titres en français") { translationControls.show() })
-        column.addView(button("Traduire un fichier SRT hors ligne") { localSrtTranslationControls.show() })
-        column.addView(button("Comparer CPU et GPU — essai local intégré") { localGgufBenchmarkControls.show() })
-        column.addView(button("Choisir la piste audio du film") { chooseTrack(C.TRACK_TYPE_AUDIO) })
-        column.addView(button("Répéter la dernière phrase — met en pause") { session.repeatLast() })
-        column.addView(button("Reprendre explicitement la voix") { session.resumeVoice() })
-        column.addView(button("Réglages de la voix et du confort") { settingsDialog() })
-        column.addView(button("Aide et limites de cette version") { helpDialog() })
-        root.addView(ScrollView(this).apply { isFillViewport = false; addView(column) },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.1f))
+        tracksCard.addView(button("Choisir la piste de sous-titres") { chooseTrack(C.TRACK_TYPE_TEXT) })
+        tracksCard.addView(button("Choisir la piste audio du film") { chooseTrack(C.TRACK_TYPE_AUDIO) })
+        tracksCard.addView(button("Répéter la dernière phrase — met en pause") { session.repeatLast() })
+        tracksCard.addView(button("Reprendre explicitement la voix") { session.resumeVoice() })
+
+        val explore = fileExplorer.createView().apply { id = R.id.page_explore }
+        pageViews[R.id.navigation_explore] = explore
+        pages.addView(explore, FrameLayout.LayoutParams(-1, -1))
+
+        val translation = page(R.id.navigation_translation, "Traduction", "Prépare le français, conserve chaque réplique et exporte ta piste.")
+        val videoTranslation = card(translation, "Traduire pour la lecture", "Choisis le moteur, la langue source et les options avant de confirmer le traitement.")
+        videoTranslation.addView(button("Traduire les sous-titres en français") { translationControls.show() })
+        val localTranslation = card(translation, "Travailler hors ligne", "Les modèles GGUF sont importés depuis tes fichiers. Le guide explique les formats et les limites de l’appareil.")
+        localTranslation.addView(button("Traduire un fichier SRT hors ligne") { localSrtTranslationControls.show() })
+        localTranslation.addView(button("Guide des modèles de traduction") { DocumentationLinks.openModelsGuide(this) })
+        localTranslation.addView(button("Comparer CPU et GPU — essai local intégré") { localGgufBenchmarkControls.show() })
+
+        val settings = page(R.id.navigation_settings, "Paramètres", "Huit rubriques, une recherche et des valeurs précises.")
+        val quickSettings = card(settings, "Voix et confort")
+        quickSettings.addView(button("Réglages de la voix et du confort") { settingsDialog() })
+        for (section in SettingsSection.entries) {
+            quickSettings.addView(button("Réglages : ${section.title}") { settingsDialog(section) })
+        }
+        val help = card(settings, "Aide et accompagnement")
+        help.addView(button("Aide et limites de cette version") { helpDialog() })
+        help.addView(button("Guide des modèles GGUF") { DocumentationLinks.openModelsGuide(this) })
+        root.addView(pages, LinearLayout.LayoutParams(-1, 0, 1f))
+        val navigation = BottomNavigationView(this).apply {
+            id = R.id.bottom_navigation
+            inflateMenu(R.menu.library_navigation)
+            labelVisibilityMode = com.google.android.material.navigation.NavigationBarView.LABEL_VISIBILITY_LABELED
+            isItemHorizontalTranslationEnabled = false
+            minimumHeight = dp(88)
+            fun wrapLabels(view: View) {
+                if (view is TextView) { view.setSingleLine(false); view.maxLines = 2; view.ellipsize = null }
+                if (view is ViewGroup) for (index in 0 until view.childCount) wrapLabels(view.getChildAt(index))
+            }
+            wrapLabels(this)
+        }
+        // The root already reserves the system bars and display cutout. Material
+        // otherwise adds the same bottom and side insets to its item container.
+        ViewCompat.setOnApplyWindowInsetsListener(navigation) { _, insets -> insets }
+        fun selectPage(id: Int) {
+            selectedTab = if (pageViews.containsKey(id)) id else R.id.navigation_home
+            pageViews.forEach { (key, view) -> view.visibility = if (key == selectedTab) View.VISIBLE else View.GONE }
+        }
+        navigation.setOnItemSelectedListener { item ->
+            // Tabs only reveal existing controls. They never recreate, pause or
+            // resume the playback session or restart a preparation task.
+            selectPage(item.itemId); true
+        }
+        selectPage(selectedTab); navigation.selectedItemId = selectedTab
+        libraryNavigation = navigation
+        root.addView(navigation, LinearLayout.LayoutParams(-1, -2))
         setContentView(root); root.requestApplyInsets(); refreshUi()
     }
+
     private fun applyCaptionStyle() {
         if (!::playerView.isInitialized) return
         listOfNotNull(playerView.subtitleView, if (::captionOverlay.isInitialized) captionOverlay else null).forEach { view -> view.apply {
@@ -482,7 +632,7 @@ class MainActivity : ComponentActivity() {
         positionSlider.isEnabled = duration > 0 && session.player.isCurrentMediaItemSeekable
         if (!scrubbing && duration > 0) positionSlider.progress = (pos.toDouble() / duration * 1000).toInt().coerceIn(0, 1000)
         positionSlider.contentDescription = "Position ${clock(pos)} sur ${clock(duration)}"
-        titleView.text = session.media?.title ?: "Sous-titres en voix — Cinéma"
+        titleView.text = session.media?.title ?: "Aucune vidéo ouverte"
     }
     private fun clock(ms: Long): String {
         val s = ms.coerceAtLeast(0) / 1000
@@ -498,7 +648,14 @@ class MainActivity : ComponentActivity() {
         if (::messageView.isInitialized) {
             messageView.text = value; messageView.setTextColor(if (error) Color.rgb(255, 205, 110) else Color.LTGRAY)
         }
-        if (error && fullscreen && !closed) setFullscreen(false)
+        if (error && !closed) {
+            if (fullscreen) setFullscreen(false)
+            libraryNavigation?.selectedItemId = R.id.navigation_home
+            if (::messageView.isInitialized) messageView.post {
+                if (!closed && !fullscreen && messageView.isAttachedToWindow)
+                    messageView.requestRectangleOnScreen(android.graphics.Rect(0, 0, messageView.width, messageView.height), true)
+            }
+        }
     }
     private fun requestSubtitleExport(mime: String, name: String, content: String) {
         if (pendingSubtitleExport != null) {
@@ -539,12 +696,15 @@ class MainActivity : ComponentActivity() {
         catch (_: SecurityException) { /* Some providers only grant session access. */ }
     }
     private fun displayName(uri: Uri): String {
+        if (uri.scheme == "file") return File(requireNotNull(uri.path)).name
         contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) return cursor.getString(0) ?: "Fichier"
         }
         return "Fichier"
     }
     private fun openVideo(uri: Uri) {
+        libraryNavigation?.selectedItemId = R.id.navigation_home
+        subtitleReadCancellation?.close()
         session.pause(); val token = ++requestToken; showMessage("Ouverture du fichier…", false)
         val repairUri = pendingRepairUri
         pendingRepairUri = null
@@ -555,7 +715,18 @@ class MainActivity : ComponentActivity() {
                     if (closed || token != requestToken) return@post
                     resumeOfferUri = uri.toString()
                     if (repairUri != null && session.media?.uri == repairUri) {
-                        session.relocateSessionTo(uri.toString(), name)
+                        if (!session.relocateSessionTo(uri.toString(), name)) {
+                            val epoch = session.generation
+                            repairDialog?.dismiss()
+                            repairDialog = AlertDialog.Builder(this)
+                                .setTitle("Confirmer la même vidéo")
+                                .setMessage("L’explorateur et le sélecteur Android ne fournissent pas des métadonnées comparables. Confirme que tu as choisi exactement la même édition pour transférer la position, les pistes, la traduction et la synchronisation. En cas de doute, conserve la séance actuelle.")
+                                .setPositiveButton("Même édition — transférer la séance") { _, _ ->
+                                    if (!closed && session.generation == epoch && session.media?.uri == repairUri)
+                                        session.relocateSessionTo(uri.toString(), name, allowUnverifiedMetadata = true)
+                                }
+                                .setNegativeButton("Conserver la séance actuelle", null).show()
+                        }
                     } else {
                         val previous = prefs.lastMedia()?.takeIf { it.uri == uri.toString() }
                         session.open(previous?.copy(title = name) ?: SavedMedia(uri.toString(), name), restoreSession = true)
@@ -567,22 +738,30 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    private fun importSubtitle(uri: Uri, charset: String? = null) {
+    private fun importSubtitle(uri: Uri, charset: String? = null) = importSubtitle(uri, charset, null)
+    private fun importSubtitle(uri: Uri, charset: String?, selectedName: String?) {
         if (session.media == null) return
+        subtitleReadCancellation?.close()
+        val cancellation = RemoteCancellation().also { subtitleReadCancellation = it }
         session.pause(); val token = ++requestToken; showMessage("Vérification du fichier de sous-titres…", false)
         io.execute {
             var created: File? = null
             try {
-                val bytes = contentResolver.openInputStream(uri)?.use { input ->
+                val bytes = if (RemoteMediaUris.isRemote(uri)) {
+                    NetworkDataSourceFactory(applicationContext).readBounded(uri, SubtitleImport.MAX_BYTES, cancellation)
+                } else (if (uri.scheme == "file") File(requireNotNull(uri.path)).inputStream()
+                    else contentResolver.openInputStream(uri))?.use { input ->
+                    cancellation.register(input)
                     val out = ByteArrayOutputStream(); val buffer = ByteArray(8192)
                     while (true) {
+                        cancellation.ensureActive()
                         val n = input.read(buffer); if (n < 0) break
                         require(out.size() + n <= SubtitleImport.MAX_BYTES) { "Ce fichier dépasse 8 Mio." }
                         out.write(buffer, 0, n)
                     }
                     out.toByteArray()
                 } ?: throw IllegalArgumentException("Impossible d’ouvrir le fichier.")
-                val decoded = SubtitleImport.decode(bytes, displayName(uri), charset)
+                val decoded = SubtitleImport.decode(bytes, selectedName ?: displayName(uri), charset)
                 val directory = File(filesDir, "subtitles").apply { mkdirs() }
                 val file = File.createTempFile("subtitle_", ".${decoded.kind.extension}", directory)
                 created = file; file.writeText(decoded.text, Charsets.UTF_8)
@@ -595,16 +774,19 @@ class MainActivity : ComponentActivity() {
                     showMessage("Sous-titres ajoutés (${decoded.kind.extension.uppercase()}, ${decoded.charset}). Appuie sur Lire. La langue de la voix se choisit dans les réglages.", false)
                 }
             } catch (_: SubtitleImport.EncodingRequired) {
-                main.post { if (!closed && token == requestToken) chooseEncoding(uri) }
+                main.post { if (!closed && token == requestToken) chooseEncoding(uri, selectedName) }
             } catch (e: Exception) {
                 created?.delete()
-                main.post { if (!closed && token == requestToken) showMessage(e.message ?: "Le fichier de sous-titres ne peut pas être importé.", true) }
-            }
+                val problem = if (RemoteMediaUris.isRemote(uri) && e !is RemoteAccessException && e !is IllegalArgumentException)
+                    "Le fichier de sous-titres distant ne peut pas être importé. Vérifie la connexion au serveur."
+                    else e.message ?: "Le fichier de sous-titres ne peut pas être importé."
+                main.post { if (!closed && token == requestToken) showMessage(problem, true) }
+            } finally { cancellation.close() }
         }
     }
-    private fun chooseEncoding(uri: Uri) {
+    private fun chooseEncoding(uri: Uri, selectedName: String? = null) {
         val names = arrayOf("windows-1252", "UTF-8", "UTF-16LE", "UTF-16BE", "Shift_JIS", "GB18030", "Big5", "windows-1256", "windows-1251")
-        AlertDialog.Builder(this).setTitle("Choisir l’encodage du fichier").setItems(names) { _, which -> importSubtitle(uri, names[which]) }
+        AlertDialog.Builder(this).setTitle("Choisir l’encodage du fichier").setItems(names) { _, which -> importSubtitle(uri, names[which], selectedName) }
             .setNegativeButton("Annuler", null).show()
         showMessage("L’encodage n’est pas reconnu automatiquement. Windows-1252 est fréquent pour d’anciens fichiers français.", false)
     }
@@ -627,7 +809,7 @@ class MainActivity : ComponentActivity() {
                 showMessage("Piste choisie. Vérifie sa langue, puis appuie sur Lire.", false)
             }.setNegativeButton("Fermer", null).show()
     }
-    private fun settingsDialog() {
+    private fun settingsDialog(initialSection: SettingsSection = SettingsSection.VOICE) {
         session.pause()
         val originalSettings = prefs.settingsSnapshot()
         val originalDisplayMode = session.translation.displayMode
@@ -791,6 +973,7 @@ class MainActivity : ComponentActivity() {
         AdvancedSettings(this, session, prefs) { seconds ->
             pendingBenchmarkSeconds = seconds; dialog.dismiss()
         }.populate(panel)
+        panel.select(initialSection)
         dialog = object : AlertDialog(this) {
             override fun getButton(whichButton: Int): Button? = panel.actionButton(whichButton) ?: super.getButton(whichButton)
         }.apply { setTitle("Voix et confort"); setView(panel) }
@@ -827,8 +1010,8 @@ class MainActivity : ComponentActivity() {
     }
     private fun helpDialog() {
         session.pause()
-        AlertDialog.Builder(this).setTitle("Sous-titres en voix 0.5.2 : mode d’emploi et limites")
-            .setMessage("Ouvre une vidéo locale, choisis une piste textuelle et une voix installée dans la même langue. Les réglages sont répartis en huit rubriques : Voix, Synchronisation, Traduction, Sous-titres, Image, Son, Stockage et Diagnostic. La recherche ignore les accents et montre les commandes correspondantes. Les valeurs précises acceptent une saisie numérique bornée, des boutons et des préréglages. Les changements prennent effet immédiatement : Fermer les conserve ; Annuler modifications restaure les réglages présents à l’ouverture du panneau, sans annuler un envoi déjà confirmé ni rétablir des fichiers de préparation supprimés.\n\nLecture intégrale : dialogues, panneaux, chansons, indications et répétitions distinctes de la piste choisie restent éligibles à la vocalisation. Les répétitions artificielles d’une même occurrence ne doivent pas être relues. Confort attend la fin de la phrase ; Adaptatif accélère dans la limite réglée et met en pause si nécessaire. Le mode Continu reste un choix explicite pouvant couper les phrases et désactive la lecture intégrale. Aucun profil de compréhension ne choisit Continu : confortable utilise 100 % de base, un plafond de 140 % et 350 ms de pause ; équilibré, 100 % et 180 % sans pause ajoutée ; pauses rares, 100 % et 220 % sans pause ajoutée. La pause après une phrase se règle de 0 à 3 000 ms. Aucun dialogue n’est résumé.\n\nTraduction : dans la rubrique Traduction, choisis Google en ligne sans clé, Google local (ML Kit), Azure, DeepL ou un serveur LibreTranslate HTTPS et vérifie la langue source. L’indexation et l’estimation seules n’envoient pas le texte. Une confirmation autorise les appels au fournisseur ; des caractères déjà traités peuvent être facturés même après annulation. La préparation complète reste le choix initial. Le mode progressif peut démarrer après le tampon choisi (30 secondes par défaut, réglable de 10 à 120). Il attend au premier sous-titre indisponible et reprend seulement une lecture que tu avais demandée ; une pause manuelle annule cette reprise. Les lots validés peuvent être repris après interruption. Le plafond de nouveaux caractères est local, sans connaître le quota réel du compte.\n\nLa narration utilise la traduction validée. L’affichage peut conserver l’original, montrer le français, présenter les deux dans une même zone ou masquer le texte, selon le choix proposé. Le rendu natif et le rendu traduit ne sont pas affichés en double. L’export SRT ou VTT demande un emplacement dans le sélecteur Android et écrit en UTF-8 ; il n’altère pas le fichier original. Les options DeepL de contexte, glossaire existant, modèle et registre dépendent du compte et de la langue : elles ne garantissent pas la fidélité linguistique. Les comparaisons de fournisseurs nécessitent leurs accès et une confirmation. Google ML Kit traduit sur le téléphone après téléchargement des modèles compatibles, en Wi-Fi par défaut. Le texte est traité localement ; le SDK peut transmettre des données techniques et des statistiques à Google. Attribution et liens Google sont disponibles dans les réglages Traduction.\n\nSéance et synchronisation : les choix de pistes, la position et les réglages d’une vidéo peuvent être mémorisés. Reprendre une séance reste une action explicite après vérification de son accès et de ses pistes ; une traduction ou une préparation manquante n’est pas déclarée prête. Si l’autorisation du fichier a expiré ou si la vidéo a été déplacée, le parcours de réparation permet de la sélectionner à nouveau sans effacer les originaux. Les réglages de décalage, dérive et calibration se trouvent dans Synchronisation. Le bilan de vocalisation de Diagnostic distingue les occurrences et les erreurs connues ; il ne prouve pas la qualité acoustique d’une voix ni l’absence universelle de défaut.\n\nStockage : le cache vocal ordinaire reste limité et évictable. Les préparations explicitement conservées pour une écoute hors ligne utilisent un stockage distinct, avec un état à vérifier et une gestion des œuvres conservées. Une préparation peut être reprise ou annulée ; une œuvre n’est prête hors ligne que si toutes ses données nécessaires ont été vérifiées et si la vidéo reste accessible. Préparer toute la vidéo dans le cache ordinaire ne garantit pas de conserver tous ses fichiers. Reste dans l’application pendant les traitements : une lecture ou une préparation durable en arrière-plan n’est pas garantie. Les profils modifient anticipation et mémoire, pas le processeur interne d’un moteur tiers.\n\nImage et son : étirement intégral conserve toute l’image avec proportions modifiées. La protection du cadre empêche les zooms et déplacements accidentels ; retirer des marges exige un aperçu et une confirmation. Les corrections d’image restent protégées pour le HDR/Dolby Vision. Les traitements audio experts du film restent séparés de la voix et limités au PCM16 mono/stéréo compatible ; ils n’annoncent pas de passthrough ou de normalisation du volume perçu.\n\nLimites : les pistes PGS/VobSub et les sous-titres incrustés dans les pixels ne sont pas vocalisés sans OCR, qui reste absent. Pas d’accès aux DRM d’autres applications, d’audiodescription ni de lecture durable en arrière-plan. Les décodeurs dépendent du téléphone ; choisir le secours logiciel n’installe pas un codec absent. Les voix restent fournies par des moteurs Android externes ; aucun runtime vocal neuronal GPU/NPU propre au lecteur n’est embarqué.\n\nConfidentialité : les moteurs en ligne envoient le texte et ses options au fournisseur choisi après confirmation, jamais la vidéo ou son audio. Google local exécute la traduction sur le téléphone ; les téléchargements et la télémétrie technique du SDK restent possibles. Une clé peut être mémorisée chiffrée avec Android Keystore ; ne la publie pas dans un diagnostic. Les données locales de préparation et de traduction peuvent contenir du texte ou de l’audio vocalisé. Aucun fichier original n’est modifié. La 0.5.2 conserve l’identité de l’édition Traduction ; la stable 0.3.2 reste une application distincte.")
+        AlertDialog.Builder(this).setTitle("Sous-titres en voix 1.0.0 : mode d’emploi et limites")
+            .setMessage("Les onglets Accueil, Explorer, Traduction et Paramètres organisent les commandes. Explorer ouvre les fichiers du téléphone avec un accès au stockage partagé facultatif, ou avec le sélecteur Android sans cette autorisation. Il permet aussi les liens directs HTTP(S), HLS, DASH et RTSP, ainsi que les connexions FTP, FTPS, SFTP, WebDAV et SMB. Les fichiers distants progressifs utilisent le même parcours de sous-titres que les fichiers locaux. Les flux HLS/DASH/RTSP ne disposent pas d’indexation complète : leur vocalisation directe dépend des sous-titres fournis par le flux et leur traduction intégrale est indisponible. Les sous-titres sous forme d’images nécessitent encore un OCR externe.\n\nOuvre une vidéo, choisis une piste textuelle et une voix installée dans la même langue. Les réglages sont répartis en huit rubriques : Voix, Synchronisation, Traduction, Sous-titres, Image, Son, Stockage et Diagnostic. La recherche ignore les accents et montre les commandes correspondantes. Les valeurs précises acceptent une saisie numérique bornée, des boutons Minimum et Maximum, des boutons de pas et des préréglages. Les changements prennent effet immédiatement : Fermer les conserve ; Annuler modifications restaure les réglages présents à l’ouverture du panneau, sans annuler un envoi déjà confirmé ni rétablir des fichiers de préparation supprimés.\n\nLecture intégrale : dialogues, panneaux, chansons, indications et répétitions distinctes de la piste choisie restent éligibles à la vocalisation. Les répétitions artificielles d’une même occurrence ne doivent pas être relues. Confort attend la fin de la phrase ; Adaptatif accélère dans la limite réglée et met en pause si nécessaire. Le mode Continu reste un choix explicite pouvant couper les phrases et désactive la lecture intégrale. Aucun profil de compréhension ne choisit Continu : confortable utilise 100 % de base, un plafond de 140 % et 350 ms de pause ; équilibré, 100 % et 180 % sans pause ajoutée ; pauses rares, 100 % et 220 % sans pause ajoutée. La pause après une phrase se règle de 0 à 3 000 ms. Aucun dialogue n’est résumé.\n\nTraduction : dans la rubrique Traduction, choisis Google en ligne sans clé, Google local (ML Kit), Azure, DeepL ou un serveur LibreTranslate HTTPS et vérifie la langue source. L’indexation et l’estimation seules n’envoient pas le texte. Une confirmation autorise les appels au fournisseur ; des caractères déjà traités peuvent être facturés même après annulation. La préparation complète reste le choix initial. Le mode progressif peut démarrer après le tampon choisi (30 secondes par défaut, réglable de 10 à 120). Il attend au premier sous-titre indisponible et reprend seulement une lecture que tu avais demandée ; une pause manuelle annule cette reprise. Les lots validés peuvent être repris après interruption. Le plafond de nouveaux caractères est local, sans connaître le quota réel du compte.\n\nLa narration utilise la traduction validée. L’affichage peut conserver l’original, montrer le français, présenter les deux dans une même zone ou masquer le texte, selon le choix proposé. Le rendu natif et le rendu traduit ne sont pas affichés en double. L’export SRT ou VTT demande un emplacement dans le sélecteur Android et écrit en UTF-8 ; il n’altère pas le fichier original. Les options DeepL de contexte, glossaire existant, modèle et registre dépendent du compte et de la langue : elles ne garantissent pas la fidélité linguistique. Les comparaisons de fournisseurs nécessitent leurs accès et une confirmation. Google ML Kit traduit sur le téléphone après téléchargement des modèles compatibles, en Wi-Fi par défaut. Le texte est traité localement ; le SDK peut transmettre des données techniques et des statistiques à Google. Attribution et liens Google sont disponibles dans les réglages Traduction.\n\nSéance et synchronisation : les choix de pistes, la position et les réglages d’une vidéo peuvent être mémorisés. Reprendre une séance reste une action explicite après vérification de son accès et de ses pistes ; une traduction ou une préparation manquante n’est pas déclarée prête. Si l’autorisation du fichier a expiré ou si la vidéo a été déplacée, le parcours de réparation permet de la sélectionner à nouveau sans effacer les originaux. Les réglages de décalage, dérive et calibration se trouvent dans Synchronisation. Le bilan de vocalisation de Diagnostic distingue les occurrences et les erreurs connues ; il ne prouve pas la qualité acoustique d’une voix ni l’absence universelle de défaut.\n\nStockage : le cache vocal ordinaire reste limité et évictable. Les préparations explicitement conservées pour une écoute hors ligne utilisent un stockage distinct, avec un état à vérifier et une gestion des œuvres conservées. Une préparation peut être reprise ou annulée ; une œuvre n’est prête hors ligne que si toutes ses données nécessaires ont été vérifiées et si la vidéo reste accessible. Préparer toute la vidéo dans le cache ordinaire ne garantit pas de conserver tous ses fichiers. Reste dans l’application pendant les traitements : une lecture ou une préparation durable en arrière-plan n’est pas garantie. Les profils modifient anticipation et mémoire, pas le processeur interne d’un moteur tiers.\n\nImage et son : étirement intégral conserve toute l’image avec proportions modifiées. La protection du cadre empêche les zooms et déplacements accidentels ; retirer des marges exige un aperçu et une confirmation. Les corrections d’image restent protégées pour le HDR/Dolby Vision. Les traitements audio experts du film restent séparés de la voix et limités au PCM16 mono/stéréo compatible ; ils n’annoncent pas de passthrough ou de normalisation du volume perçu.\n\nLimites : les pistes PGS/VobSub et les sous-titres incrustés dans les pixels ne sont pas vocalisés sans OCR, qui reste absent. Pas d’accès aux DRM d’autres applications, d’audiodescription ni de lecture durable en arrière-plan. Les décodeurs dépendent du téléphone ; choisir le secours logiciel n’installe pas un codec absent. Les voix restent fournies par des moteurs Android externes ; aucun runtime vocal neuronal GPU/NPU propre au lecteur n’est embarqué.\n\nConfidentialité : les moteurs en ligne envoient le texte et ses options au fournisseur choisi après confirmation, jamais la vidéo ou son audio. Google local exécute la traduction sur le téléphone ; les téléchargements et la télémétrie technique du SDK restent possibles. Une clé peut être mémorisée chiffrée avec Android Keystore ; ne la publie pas dans un diagnostic. Les données locales de préparation et de traduction peuvent contenir du texte ou de l’audio vocalisé. Aucun fichier original n’est modifié. Cette version conserve l’identité Android de l’édition Traduction pour les mises à jour compatibles.")
             .setPositiveButton("Fermer", null).show()
     }
     companion object { private const val OPEN_VIDEO = 10; private const val OPEN_SUBTITLE = 11 }

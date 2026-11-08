@@ -71,6 +71,63 @@ class MainActivityUiRebuildRobolectricTest {
         assertFalse(activity.session.player.playWhenReady)
     }
 
+    @Config(qualifiers = "notnight") @Test
+    fun lightSystemConfigurationStillUsesADarkReadableMaterialPalette() {
+        val owner = Robolectric.buildActivity(MainActivity::class.java).setup()
+        try {
+            val activity = owner.get()
+            assertEquals("The dark presentation must retain Android’s actual configuration", Configuration.UI_MODE_NIGHT_NO,
+                activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK)
+            val surface = com.google.android.material.color.MaterialColors.getColor(activity,
+                com.google.android.material.R.attr.colorSurface, android.graphics.Color.WHITE)
+            val text = com.google.android.material.color.MaterialColors.getColor(activity,
+                com.google.android.material.R.attr.colorOnSurface, android.graphics.Color.BLACK)
+            assertTrue(androidx.core.graphics.ColorUtils.calculateLuminance(surface) < .1)
+            assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(text, surface) >= 4.5)
+        } finally { owner.pause().stop().destroy() }
+    }
+
+    @Test fun bottomTabsPreserveTheLivePlayerAndControlsWithoutChangingPlaybackIntent() {
+        val owner = Robolectric.buildActivity(MainActivity::class.java).setup().visible()
+        try {
+            val activity = owner.get()
+            val session = activity.session
+            val player = session.player
+            val originalVideo = video(activity)
+            val slider = activity.findViewById<View>(R.id.playback_position)
+            val play = activity.findViewById<View>(R.id.play_button)
+            val navigation = activity.findViewById<com.google.android.material.bottomnavigation.BottomNavigationView>(R.id.bottom_navigation)
+            val generation = session.generation
+            player.playWhenReady = true
+            val narration = session.machine.snapshot()
+            for ((tab, page) in listOf(R.id.navigation_translation to R.id.page_translation,
+                R.id.navigation_explore to R.id.page_explore, R.id.navigation_settings to R.id.page_settings,
+                R.id.navigation_home to R.id.page_home)) {
+                navigation.selectedItemId = tab
+                assertEquals(View.VISIBLE, activity.findViewById<View>(page).visibility)
+                assertSame(session, activity.session)
+                assertSame(player, activity.session.player)
+                assertSame(originalVideo, video(activity))
+                assertSame(slider, activity.findViewById<View>(R.id.playback_position))
+                assertSame(play, activity.findViewById<View>(R.id.play_button))
+                assertEquals(generation, session.generation)
+                assertTrue(player.playWhenReady)
+                assertEquals(narration, session.machine.snapshot())
+            }
+            assertNotNull(activity.findViewById<View>(R.id.open_video))
+            assertNotNull(activity.findViewById<View>(R.id.demo_button))
+            navigation.selectedItemId = R.id.navigation_translation
+            player.playWhenReady = false
+            activity.setFullscreen(true)
+            activity.setFullscreen(false)
+            assertEquals(R.id.navigation_translation,
+                activity.findViewById<com.google.android.material.bottomnavigation.BottomNavigationView>(R.id.bottom_navigation).selectedItemId)
+            assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.page_translation).visibility)
+            assertSame(originalVideo, video(activity))
+            assertFalse(player.playWhenReady)
+        } finally { owner.pause().stop().destroy() }
+    }
+
     @Test fun configurationAndOppositeFullscreenDuringNestedDetachmentUseLatestLayout() {
         val owner = Robolectric.buildActivity(MainActivity::class.java).setup().visible()
         try {

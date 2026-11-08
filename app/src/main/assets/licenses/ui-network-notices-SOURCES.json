@@ -1,0 +1,81 @@
+{
+  "scope": "Direct UI and remote-source dependencies introduced in 1.0.0; not a full transitive SBOM",
+  "license": "Apache-2.0; preserve component NOTICE and embedded third-party terms where present",
+  "dependencies": [
+    {
+      "coordinate": "com.google.android.material:material:1.13.0",
+      "pom_url": "https://dl.google.com/dl/android/maven2/com/google/android/material/material/1.13.0/material-1.13.0.pom",
+      "pom_sha256": "9c1f3c4600295cc5d7f6d6886aea16d497f13f9af4675442ad271e7c2febf772",
+      "notices": [
+        {
+          "file": "material-1.13.0-LICENSE.txt",
+          "source": "https://raw.githubusercontent.com/material-components/material-components-android/1.13.0/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    {
+      "coordinate": "commons-net:commons-net:3.13.0",
+      "pom_url": "https://repo.maven.apache.org/maven2/commons-net/commons-net/3.13.0/commons-net-3.13.0.pom",
+      "pom_sha256": "afdb47981c797b186996d1f98074388d2068901cbec4d6c221d7da7905f96301",
+      "notices": [
+        {
+          "file": "commons-net-3.13.0-LICENSE.txt",
+          "source": "https://repo.maven.apache.org/maven2/commons-net/commons-net/3.13.0/commons-net-3.13.0.jar#META-INF/LICENSE.txt",
+          "sha256": "b1d2870f1a00e4d7f56576e5f0870cba109e041f8af66866cf5b499478e654e7"
+        },
+        {
+          "file": "commons-net-3.13.0-NOTICE.txt",
+          "source": "https://repo.maven.apache.org/maven2/commons-net/commons-net/3.13.0/commons-net-3.13.0.jar#META-INF/NOTICE.txt",
+          "sha256": "edc84ec4795f0a14adc26133c0481bb50bc1ca9517252bf19afa8265da2432ba"
+        }
+      ]
+    },
+    {
+      "coordinate": "com.hierynomus:sshj:0.41.2",
+      "pom_url": "https://repo.maven.apache.org/maven2/com/hierynomus/sshj/0.41.2/sshj-0.41.2.pom",
+      "pom_sha256": "ab0317a53c99b106f0da8c2a26500d7f9e58d02bb969384ca97eb89c2df240e3",
+      "notices": [
+        {
+          "file": "sshj-0.41.2-LICENSE.txt",
+          "source": "https://raw.githubusercontent.com/hierynomus/sshj/v0.41.2/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "file": "sshj-0.41.2-NOTICE.txt",
+          "source": "https://raw.githubusercontent.com/hierynomus/sshj/v0.41.2/NOTICE",
+          "sha256": "28eafe2771c7cce241f05f1a28dfe0fc71c45a107d420b1a80305b487fa2f405"
+        }
+      ]
+    },
+    {
+      "coordinate": "com.hierynomus:smbj:0.14.0",
+      "pom_url": "https://repo.maven.apache.org/maven2/com/hierynomus/smbj/0.14.0/smbj-0.14.0.pom",
+      "pom_sha256": "14c881662ac46a90bceaa0182502303721b67bee942c239a2358d3d6001ccad6",
+      "notices": [
+        {
+          "file": "smbj-0.14.0-LICENSE_HEADER.txt",
+          "source": "https://raw.githubusercontent.com/hierynomus/smbj/v0.14.0/LICENSE_HEADER",
+          "sha256": "179ea5ae4d9d23b56335341e5a5d6effcfdf0125e9f108a8a21b8cec4ade85fc"
+        },
+        {
+          "file": "smbj-0.14.0-Apache-2.0.txt",
+          "source": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    {
+      "coordinate": "com.squareup.okhttp3:okhttp:5.3.0",
+      "pom_url": "https://repo.maven.apache.org/maven2/com/squareup/okhttp3/okhttp/5.3.0/okhttp-5.3.0.pom",
+      "pom_sha256": "6e70e94790d7731c72f61ab45feb34bd13239a6f27414406b3551c21e4091117",
+      "notices": [
+        {
+          "file": "okhttp-5.3.0-LICENSE.txt",
+          "source": "https://raw.githubusercontent.com/square/okhttp/parent-5.3.0/LICENSE.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    }
+  ]
+}

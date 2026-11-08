@@ -24,4 +24,16 @@ class LocalTranslationPerformanceTest {
         assertFalse(report.contains("GPU réellement observé : oui"))
     }
 
+    @Test fun expiredWindowExplainsWhyMatchingTokensCannotReuseMissingMemory() {
+        val report = LocalTranslationPerformance(phase = "occurrence", requestedMode = "HEXAGON",
+            cacheResetReason = "WINDOW_EXPIRED", cacheSharedPrefixTokens = 625,
+            cachePositionMin = 120, cachePositionMax = 640, cacheResets = 120,
+            currentRssBytes = 2048).render()
+        assertTrue(report.contains("préfixe tokenique commun candidat : 625"))
+        assertTrue(report.contains("positions encore conservées : 120 à 640"))
+        assertTrue(report.contains("entrée est recalculée après réinitialisation"))
+        assertTrue(report.contains("Des tokens identiques ne suffisent pas"))
+        assertTrue(report.contains("elle ne comptabilise pas nécessairement toute la mémoire"))
+    }
+
 }

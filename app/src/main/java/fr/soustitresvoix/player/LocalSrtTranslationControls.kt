@@ -134,6 +134,9 @@ internal class LocalSrtTranslationControls(
                     .setPositiveButton("Fermer", null).show()
             }
         }.also { column.addView(it) }
+        column.addView(button("Guide des modèles de traduction") { DocumentationLinks.openModelsGuide(activity) }.apply {
+            id = R.id.translation_models_guide
+        })
         column.addView(button("Choisir le fichier SRT à traduire hors ligne") {
             if (busy || readingMetadata) message("Termine ou annule le traitement en cours avant de choisir un autre SRT.")
             else {

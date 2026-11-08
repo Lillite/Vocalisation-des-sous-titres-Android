@@ -73,6 +73,9 @@ class SubtitleTranslationControls(private val activity: Activity, private val se
         val generation = panelGeneration
         var latestPreview: SubtitleTranslationSession.Preview? = null
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8)) }
+        column.addView(button("Guide des modèles de traduction") { DocumentationLinks.openModelsGuide(activity) }.apply {
+            id = R.id.translation_models_guide
+        })
         column.addView(text("Traduit la piste textuelle choisie vers le français avant lecture, ou progressivement sur choix explicite. Chaque réplique, panneau et répétition conserve son identité et son minutage. Le choix d’affichage est indépendant de la voix. La préparation initiale ne lance jamais la lecture. Seule une attente de traduction pendant une lecture demandée peut reprendre automatiquement."))
         status = text(session.translation.status).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         column.addView(status)

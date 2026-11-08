@@ -144,21 +144,27 @@ class TranslationRunner(private val directory: File,
                     if (contextStart !in 0..batch.firstIndex)
                         throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
                     val sources = plan.cues.subList(contextStart, batch.firstIndex).map { it.text }
-                    val translations = texts.subList(contextStart, batch.firstIndex).toList()
+                    val translations = if (engine.includesPreviousTranslations)
+                        texts.subList(contextStart, batch.firstIndex).toList() else emptyList()
+                    if (engine.followingContextItems !in 0..MAX_BATCH_ITEMS)
+                        throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
+                    val followingStart = batch.firstIndex + batch.texts.size
+                    val followingSources = plan.cues.subList(followingStart,
+                        (followingStart + engine.followingContextItems).coerceAtMost(plan.cues.size)).map { it.text }
                     // Only explicitly opted-in local engines may reuse a whole
                     // linguistic request. Same text with different history is a miss.
                     if (engine.requiresDurableResult && engine.supportsExactRequestCache && !policy.requestMayConsumeRemoteQuota)
                         exactKey = exactRequests.key(engine.id, plan.sourceLanguage, plan.targetLanguage,
-                            batch.texts, sources, translations)
+                            batch.texts, sources, translations, followingSources)
                     val cached = exactKey?.let(exactRequests::read)?.also {
-                        engine.validateExactRequestCacheHit(batch.texts, plan.sourceLanguage, plan.targetLanguage,
-                            sources, translations, cancelled)
+                        engine.validateSurroundingRequestCacheHit(batch.texts, plan.sourceLanguage, plan.targetLanguage,
+                            sources, translations, followingSources, cancelled)
                     }?.takeIf { runCatching { part.complete(it) }.isSuccess }
                     if (cached != null) { exactHit = true; cached }
                     else {
                         beforeRequest(); checkCancelled(cancelled)
-                        engine.translateWithContext(batch.texts, plan.sourceLanguage, plan.targetLanguage,
-                            sources, translations, cancelled).toList()
+                        engine.translateWithSurroundingContext(batch.texts, plan.sourceLanguage, plan.targetLanguage,
+                            sources, translations, followingSources, cancelled).toList()
                     }
                 } else {
                     beforeRequest(); checkCancelled(cancelled)

@@ -955,7 +955,8 @@ class PlaybackSession(
     fun showSynchronization(activity: android.app.Activity) = features.showSynchronization(activity)
     internal fun setTimeline(value: fr.soustitresvoix.core.SubtitleTimeline) = features.applyTimeline(value)
     fun savedSessionRecord(): MediaSessionSnapshot? = media?.let { features.sessionRecord(it.uri) }
-    fun relocateSessionTo(uri: String, title: String) = features.relocate(uri, title)
+    fun relocateSessionTo(uri: String, title: String, allowUnverifiedMetadata: Boolean = false): Boolean =
+        features.relocate(uri, title, allowUnverifiedMetadata)
     fun forgetSession() {
         pause(); media?.let { features.forget(it.uri) }; prefs.clearMedia()
         media = null; player.stop(); completionSequence++; timedCursorMs = null

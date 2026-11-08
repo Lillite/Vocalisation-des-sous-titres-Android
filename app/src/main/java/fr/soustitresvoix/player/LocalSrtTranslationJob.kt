@@ -58,6 +58,7 @@ class LocalSrtTranslationJob(
         val cancelled = AtomicBoolean(false)
         val acceptMeasurements = AtomicBoolean(true)
         val startedAtMs = System.currentTimeMillis()
+        val performanceSession = LocalTranslationSessionMetrics()
         val primaryCause = AtomicReference("")
         val requestedStop = AtomicReference("")
         var engineGeneration = 0L
@@ -260,6 +261,7 @@ class LocalSrtTranslationJob(
                     ensureActive(current)
                     fun createEngine(): TranslationEngine {
                     val engine = engineFactory(config); current.engine = engine
+                    (engine as? LocalGgufTranslationEngine)?.usePerformanceSession(current.performanceSession)
                     val generation = ++current.engineGeneration
                     (engine as? LocalTranslationPerformanceSource)?.setPerformanceListener { performance ->
                         if (!current.acceptMeasurements.get() || current.cancelled.get() || closed ||
@@ -267,7 +269,7 @@ class LocalSrtTranslationJob(
                             return@setPerformanceListener
                         val previousStage = current.journalEntry?.progress?.stage
                         current.journalEntry = current.journalEntry?.measured(performance, System.currentTimeMillis())
-                        if (performance.phase != "generation" && performance.phase != "cache") {
+                        if (performance.phase != "generation" && performance.phase != "occurrence" && performance.phase != "cache") {
                             val criticalStage = performance.progress?.stage in JOURNAL_CRITICAL_STAGES
                             saveAttempt(current, force = criticalStage && performance.progress?.stage != previousStage ||
                                 performance.phase == "load")

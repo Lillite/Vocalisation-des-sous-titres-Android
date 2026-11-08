@@ -64,6 +64,12 @@ struct Response {
     long long gpu_graph_nodes = 0;
     int cached_prompt_tokens = 0;
     int prompt_evaluated_tokens = 0;
+    // Candidate overlap and actual memory bounds are observed before removal
+    // or reset. A lexical prefix is not proof that recurrent/SWA state can be
+    // rewound to it. -1 denotes no position available (or not yet sampled).
+    int cache_shared_prefix_tokens = 0;
+    long long cache_position_min = -1;
+    long long cache_position_max = -1;
     long long resident_bytes = -1;
     long long available_ram_bytes = -1;
     long long model_bytes = 0;

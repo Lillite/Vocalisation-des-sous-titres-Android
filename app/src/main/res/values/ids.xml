@@ -38,4 +38,18 @@
     <item type="id" name="audio_movie_reset" />
     <item type="id" name="audio_duck_reset" />
     <item type="id" name="audio_settings_general_result" />
+    <item type="id" name="library_root" />
+    <item type="id" name="navigation_pages" />
+    <item type="id" name="navigation_home" />
+    <item type="id" name="navigation_explore" />
+    <item type="id" name="navigation_translation" />
+    <item type="id" name="navigation_settings" />
+    <item type="id" name="page_home" />
+    <item type="id" name="page_explore" />
+    <item type="id" name="page_translation" />
+    <item type="id" name="page_settings" />
+    <item type="id" name="bottom_navigation" />
+    <item type="id" name="playback_position" />
+    <item type="id" name="playback_message" />
+    <item type="id" name="translation_models_guide" />
 </resources>

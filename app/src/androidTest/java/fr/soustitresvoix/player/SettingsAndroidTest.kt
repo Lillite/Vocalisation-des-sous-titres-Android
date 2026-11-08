@@ -30,7 +30,10 @@ class SettingsAndroidTest {
         instrument.targetContext.getSharedPreferences("player", 0).edit().clear()
             .putBoolean("narration", false).putInt("orientation", 0).commit()
     }
-    private fun open() { onView(withText("Réglages de la voix et du confort")).perform(scrollTo(), click()) }
+    private fun open() {
+        onView(withId(R.id.navigation_settings)).perform(click())
+        onView(withText("Réglages de la voix et du confort")).perform(scrollTo(), click())
+    }
     private fun search(value: String) {
         onView(withContentDescription("Rechercher dans les huit rubriques de réglages"))
             .inRoot(isDialog()).perform(replaceText(value), closeSoftKeyboard())

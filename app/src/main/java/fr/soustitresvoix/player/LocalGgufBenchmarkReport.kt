@@ -129,7 +129,7 @@ internal object LocalGgufBenchmarkReport {
             append(if (same) "\n\nLes sorties CPU et $accelerator sont identiques sur ces passages ; cela ne prouve pas leur fidélité linguistique."
                 else "\n\nLes sorties CPU et $accelerator diffèrent : examine les textes avant d’interpréter les durées. Aucun classement de qualité automatique.")
         }
-        if (contextComparison && mainRuns.size == LocalGgufContextPolicy.entries.size &&
+        if (contextComparison && mainRuns.size == LocalGgufContextPolicy.comparisonPolicies.size &&
             mainRuns.all { it.failure == null && it.samples.size == it.plannedSamples }) {
             val same = mainRuns.map { it.samples.map { sample -> sample.output } }.distinct().size == 1
             append(if (same) "\n\nLes trois stratégies ont produit les mêmes textes sur ce corpus ; cela ne prouve pas leur fidélité linguistique."

@@ -35,6 +35,25 @@ internal object LocalGgufExtendedPrompts {
             ?: throw TranslationFailure(TranslationFailure.Reason.LANGUAGE)
     }
 
+    /** App adaptation of Index's published source/constraint framing; no translated neighbours. */
+    fun indexSourceWindow(text: String, source: String, target: String,
+        window: LocalGgufSourceWindow, context: String): String {
+        if (window.isEmpty) return index(text, source, target, emptyList(), context)
+        val content = buildString {
+            append("请将以下"); append(indexLanguage(source)); append("字幕翻译成"); append(indexLanguage(target))
+            append("，并且严格遵循所有约束要求。\n\n【源文】\n"); append(text)
+            append("\n\n【约束要求】\n")
+            append("仅翻译【源文】中的当前字幕。以下相邻字幕原文仅供理解人物、指代和语义，不要翻译、复述或合并到当前译文。\n")
+            if (context.isNotBlank()) {
+                append("【背景信息，仅供理解】\n"); append(context); append('\n')
+            }
+            window.previous.forEach { append("【前文原文，仅供理解】\n"); append(it); append('\n') }
+            window.following.forEach { append("【后文原文，仅供理解】\n"); append(it); append('\n') }
+            append("\n只输出当前字幕的完整译文，不要有任何额外说明。")
+        }
+        return "<|im_start|>user\n$content<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+    }
+
     fun index(text: String, source: String, target: String,
         previous: List<LocalGgufPrompts.PairContext>, context: String): String {
         val from = indexLanguage(source)

@@ -78,6 +78,7 @@ private class NativeTranslationBackend(context: Context) : LocalGgufBackend {
             processId = processId, cacheTypeK = cacheTypeK, cacheTypeV = cacheTypeV, flashAttentionPolicy = flashAttentionPolicy,
             startResidentBytes = startResidentBytes, prefillResidentBytes = prefillResidentBytes,
             cacheResetReason = cacheResetReason, cacheResets = cacheResets, workspaceGrowths = workspaceGrowths,
+            cacheSharedPrefixTokens = cacheSharedPrefixTokens, cachePositionMin = cachePositionMin, cachePositionMax = cachePositionMax,
             workspaceBytes = workspaceBytes, npuObserved = npuObserved, npuGraphNodes = npuGraphNodes,
             qualcommCompatibility = qualcommCompatibility, nativeCpuWeights = nativeCpuWeights,
             memoryReserveBytes = memoryReserveBytes, observedPrefillExtraBytes = observedPrefillExtraBytes, memoryTelemetry = memoryTelemetry))
@@ -115,9 +116,12 @@ class LocalGgufTranslationEngine internal constructor(
     override val maxBatchCharacters: Int = TranslationPlan.MAX_CUE_CHARACTERS
     override val requiresDurableResult: Boolean = true
     override val supportsExactRequestCache: Boolean = true
+    override val includesPreviousTranslations: Boolean get() = !contextPolicy.sourceOnly
+    override val followingContextItems: Int get() = contextPolicy.followingItems
     override fun onExactRequestCacheHit() {
         // A reused result has no new runtime observation, including no previous fallback.
-        runCatching { performanceListener?.invoke(LocalTranslationPerformance(phase = "cache", requestedMode = executionMode)) }
+        sessionMetrics.cachedOccurrence()
+        measured(LocalTranslationPerformance(phase = "cache", requestedMode = executionMode))
     }
     override fun contextStartIndex(occurrenceIndex: Int): Int = contextPolicy.contextStartIndex(occurrenceIndex)
     private val closed = AtomicBoolean(false)
@@ -129,6 +133,12 @@ class LocalGgufTranslationEngine internal constructor(
     private var lease: AutoCloseable? = null
     private var family: LocalGgufPrompts.Family? = null
     @Volatile private var performanceListener: ((LocalTranslationPerformance) -> Unit)? = null
+    private var sessionMetrics = LocalTranslationSessionMetrics()
+    /** One offline task may safely replace its native worker without losing its diagnostic totals. */
+    internal fun usePerformanceSession(metrics: LocalTranslationSessionMetrics) {
+        check(!working.get() && backend == null)
+        sessionMetrics = metrics
+    }
     private var openPerformance = LocalTranslationPerformance(phase = "load")
     private var runningMode = executionMode
     private var cpuFallbackAttempted = false
@@ -138,9 +148,11 @@ class LocalGgufTranslationEngine internal constructor(
 
     override fun setPerformanceListener(listener: ((LocalTranslationPerformance) -> Unit)?) { performanceListener = listener }
     private fun measured(value: LocalTranslationPerformance) {
-        val message = if (fallbackMessage.isEmpty()) value.fallbackReason else fallbackMessage
-        runCatching { performanceListener?.invoke(value.copy(requestedMode = executionMode, fallbackReason = message,
-            attemptReport = listOf(fallbackAttemptReport, value.attemptReport).filter(String::isNotBlank).joinToString("\n\n"))) }
+        val message = if (value.phase == "cache") "" else if (fallbackMessage.isEmpty()) value.fallbackReason else fallbackMessage
+        val observation = sessionMetrics.record(value.copy(requestedMode = executionMode, fallbackReason = message,
+            attemptReport = if (value.phase == "cache") "" else
+                listOf(fallbackAttemptReport, value.attemptReport).filter(String::isNotBlank).joinToString("\n\n")))
+        runCatching { performanceListener?.invoke(observation) }
     }
 
     override fun translate(texts: List<String>, sourceLanguage: String, targetLanguage: String,
@@ -152,12 +164,33 @@ class LocalGgufTranslationEngine internal constructor(
         checkCancelled(cancelled)
         if (working.get()) throw TranslationFailure(TranslationFailure.Reason.LOCAL_BUSY)
         validateRequest(texts, sourceLanguage, targetLanguage, previousSources, previousTranslations, cancelled)
+        sourceWindow(previousSources, emptyList())
+    }
+
+    override fun validateSurroundingRequestCacheHit(texts: List<String>, sourceLanguage: String, targetLanguage: String,
+        previousSources: List<String>, previousTranslations: List<String>, followingSources: List<String>, cancelled: () -> Boolean) {
+        validateExactRequestCacheHit(texts, sourceLanguage, targetLanguage, previousSources, previousTranslations, cancelled)
+        sourceWindow(previousSources, followingSources)
+    }
+
+    private fun sourceWindow(previousSources: List<String>, followingSources: List<String>): LocalGgufSourceWindow {
+        if (!contextPolicy.sourceOnly) return LocalGgufSourceWindow(emptyList(), emptyList())
+        if (profile != LocalGgufProfile.AUTO && profile != LocalGgufProfile.INDEX_TRANSLATE)
+            throw TranslationFailure(TranslationFailure.Reason.LOCAL_CONTEXT)
+        val knownFamily = family ?: LocalGgufProfiles.preflight(model, profile)
+        if (knownFamily != null && knownFamily != LocalGgufPrompts.Family.INDEX_TRANSLATE)
+            throw TranslationFailure(TranslationFailure.Reason.LOCAL_CONTEXT)
+        (previousSources.takeLast(2) + followingSources.take(2)).forEach {
+            if (!validText(it) || it.isBlank()) throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
+            if (LocalGgufPrompts.hasControlTokens(it)) throw TranslationFailure(TranslationFailure.Reason.LOCAL_CONTEXT)
+        }
+        return LocalGgufSourceWindow.bounded(previousSources, followingSources)
     }
 
     private fun validateRequest(texts: List<String>, sourceLanguage: String, targetLanguage: String,
         previousSources: List<String>, previousTranslations: List<String>, cancelled: () -> Boolean): List<LocalGgufPrompts.PairContext> {
         checkCancelled(cancelled)
-        if (texts.size != 1 || previousSources.size != previousTranslations.size)
+        if (texts.size != 1 || !contextPolicy.sourceOnly && previousSources.size != previousTranslations.size)
             throw TranslationFailure(TranslationFailure.Reason.CONFIGURATION)
         validateSettings(threads, context, executionMode)
         loadSettings.validate()
@@ -187,26 +220,37 @@ class LocalGgufTranslationEngine internal constructor(
     }
 
     override fun translateWithContext(texts: List<String>, sourceLanguage: String, targetLanguage: String,
-        previousSources: List<String>, previousTranslations: List<String>, cancelled: () -> Boolean): List<String> {
+        previousSources: List<String>, previousTranslations: List<String>, cancelled: () -> Boolean): List<String> =
+        translateWithSurroundingContext(texts, sourceLanguage, targetLanguage, previousSources, previousTranslations, emptyList(), cancelled)
+
+    override fun translateWithSurroundingContext(texts: List<String>, sourceLanguage: String, targetLanguage: String,
+        previousSources: List<String>, previousTranslations: List<String>, followingSources: List<String>, cancelled: () -> Boolean): List<String> {
         val occurrenceStart = System.nanoTime()
         checkCancelled(cancelled)
         if (!working.compareAndSet(false, true)) throw TranslationFailure(TranslationFailure.Reason.LOCAL_BUSY)
         try {
             val history = validateRequest(texts, sourceLanguage, targetLanguage, previousSources, previousTranslations, cancelled)
+            val neighbours = sourceWindow(previousSources, followingSources)
             val source = texts.single()
             val alreadyOpen = backend != null
             var worker = openWithFallback(cancelled)
             var occurrenceLoadMs = if (alreadyOpen) 0 else openPerformance.loadMs
             val kind = requireNotNull(family)
+            if (contextPolicy.sourceOnly && kind != LocalGgufPrompts.Family.INDEX_TRANSLATE)
+                throw TranslationFailure(TranslationFailure.Reason.LOCAL_CONTEXT)
             LocalGgufPrompts.validateLanguage(kind, sourceLanguage)
             LocalGgufPrompts.validateLanguage(kind, targetLanguage)
             var requests = 0
-            fun generate(text: String, preceding: List<LocalGgufPrompts.PairContext>, depth: Int): String {
+            var lastPerformance: LocalTranslationPerformance? = null
+            fun generate(text: String, preceding: List<LocalGgufPrompts.PairContext>, window: LocalGgufSourceWindow, depth: Int): String {
                 checkCancelled(cancelled)
                 if (++requests > MAX_REQUESTS_PER_CUE || depth > 64)
                     throw TranslationFailure(TranslationFailure.Reason.LOCAL_CONTEXT)
-                val prompt = LocalGgufPrompts.render(kind, text, sourceLanguage, targetLanguage, preceding, context)
+                val prompt = if (contextPolicy.sourceOnly)
+                    LocalGgufExtendedPrompts.indexSourceWindow(text, sourceLanguage, targetLanguage, window, context)
+                else LocalGgufPrompts.render(kind, text, sourceLanguage, targetLanguage, preceding, context)
                 try {
+                    sessionMetrics.nativeCallStarted()
                     val result = if (kind.usesChatTemplate)
                         worker.generateChat(prompt, OUTPUT_TOKENS) { closed.get() || cancelled() }
                     else worker.generate(prompt, OUTPUT_TOKENS) { closed.get() || cancelled() }
@@ -217,24 +261,27 @@ class LocalGgufTranslationEngine internal constructor(
                     if (output.isBlank() || !validText(output) || output.length > TranslationPlan.MAX_CUE_CHARACTERS ||
                         LocalGgufPrompts.hasControlTokens(output))
                         throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
-                    measured(result.performance.copy(phase = "generation", loadMs = occurrenceLoadMs,
-                        endToEndMs = ((System.nanoTime() - occurrenceStart) / 1_000_000).coerceAtLeast(0)))
+                    lastPerformance = result.performance.copy(phase = "generation", loadMs = occurrenceLoadMs,
+                        endToEndMs = ((System.nanoTime() - occurrenceStart) / 1_000_000).coerceAtLeast(0))
+                    measured(requireNotNull(lastPerformance))
                     return output
                 } catch (failure: LocalGgufRuntime.Failure) {
                     if (canRetryCpu(failure, cancelled)) {
                         worker = retryCpu(failure, cancelled)
                         occurrenceLoadMs += openPerformance.loadMs
-                        return generate(text, preceding, depth + 1)
+                        return generate(text, preceding, window, depth + 1)
                     }
+                    if (failure.code == LocalGgufRuntime.Code.INPUT_TOO_LONG && !window.isEmpty)
+                        return generate(text, preceding, window.reduced(), depth + 1)
                     if (failure.code == LocalGgufRuntime.Code.INPUT_TOO_LONG && preceding.isNotEmpty())
-                        return generate(text, preceding.drop(1), depth + 1)
+                        return generate(text, preceding.drop(1), window, depth + 1)
                     if (failure.code == LocalGgufRuntime.Code.INPUT_TOO_LONG || failure.code == LocalGgufRuntime.Code.OUTPUT_LIMIT) {
                         val parts = split(text)
                         if (parts == null) throw TranslationFailure(if (failure.code == LocalGgufRuntime.Code.OUTPUT_LIMIT)
                             TranslationFailure.Reason.LOCAL_TRUNCATED else TranslationFailure.Reason.LOCAL_CONTEXT)
-                        val left = generate(parts.first, preceding, depth + 1)
+                        val left = generate(parts.first, preceding, window, depth + 1)
                         val nextContext = (preceding + LocalGgufPrompts.PairContext(parts.first, left)).takeLast(contextPolicy.maximumPreviousPairs.coerceAtLeast(1))
-                        val right = generate(parts.second, nextContext, depth + 1)
+                        val right = generate(parts.second, if (contextPolicy.sourceOnly) emptyList() else nextContext, window, depth + 1)
                         return "$left\n$right".also {
                             if (it.length > TranslationPlan.MAX_CUE_CHARACTERS)
                                 throw TranslationFailure(TranslationFailure.Reason.RESPONSE)
@@ -243,7 +290,12 @@ class LocalGgufTranslationEngine internal constructor(
                     throw failure
                 }
             }
-            return listOf(generate(source, history, 0))
+            val translated = generate(source, history, neighbours, 0)
+            checkCancelled(cancelled)
+            sessionMetrics.completedOccurrence()
+            lastPerformance?.let { measured(it.copy(phase = "occurrence",
+                endToEndMs = ((System.nanoTime() - occurrenceStart) / 1_000_000).coerceAtLeast(0))) }
+            return listOf(translated)
         } catch (failure: TranslationFailure) { throw failure }
           catch (_: LocalGgufModelBusyException) { throw TranslationFailure(TranslationFailure.Reason.LOCAL_BUSY) }
           catch (_: LocalGgufModelMissingException) { throw TranslationFailure(TranslationFailure.Reason.LOCAL_MODEL_MISSING) }

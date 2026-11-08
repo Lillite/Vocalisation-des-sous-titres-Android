@@ -1,8 +1,16 @@
 package fr.soustitresvoix.player
 
+import android.content.ContentProvider
+import android.content.ContentValues
 import android.content.Context
+import android.content.pm.ProviderInfo
+import android.database.Cursor
+import android.database.MatrixCursor
 import android.net.Uri
 import android.os.Looper
+import android.os.ParcelFileDescriptor
+import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
@@ -16,6 +24,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
+import org.robolectric.shadows.ShadowContentResolver
 import java.io.File
 import java.time.Duration
 import java.util.Collections
@@ -32,6 +41,33 @@ import java.util.concurrent.atomic.AtomicReference
 @LooperMode(LooperMode.Mode.PAUSED)
 class SessionTranslationRestoreRobolectricTest {
     private val context get() = ApplicationProvider.getApplicationContext<Context>()
+
+    /** The same synthetic video exposed through a SAF-style metadata schema. */
+    class RelocatedMediaProvider : ContentProvider() {
+        var sourceFile: File? = null
+        var fileOpens = 0
+        override fun onCreate() = true
+        override fun getType(uri: Uri) = "video/x-matroska"
+        override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor {
+            val file = requireNotNull(sourceFile)
+            val columns = projection ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
+            return MatrixCursor(columns).apply {
+                addRow(columns.map { when (it) {
+                    OpenableColumns.DISPLAY_NAME -> file.name
+                    OpenableColumns.SIZE -> file.length()
+                    DocumentsContract.Document.COLUMN_LAST_MODIFIED -> file.lastModified()
+                    else -> null
+                } }.toTypedArray())
+            }
+        }
+        override fun insert(uri: Uri, values: ContentValues?): Uri? = throw UnsupportedOperationException()
+        override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?) = 0
+        override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0
+        override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
+            fileOpens++
+            return ParcelFileDescriptor.open(requireNotNull(sourceFile), ParcelFileDescriptor.MODE_READ_ONLY)
+        }
+    }
 
     @Before fun resetOwnedData() {
         context.getSharedPreferences("player", Context.MODE_PRIVATE).edit().clear()
@@ -206,6 +242,56 @@ class SessionTranslationRestoreRobolectricTest {
                 assertEquals(2000L, recreated.player.currentPosition)
                 assertFalse(recreated.machine.snapshot().wantsPlayback)
             } finally { release.countDown(); recreated.close(); repairedFile.delete() }
+        }
+    }
+
+    @Test fun fileToSafRepairPreservesTheOriginalSessionUntilExplicitConfirmationThenRestoresItsTranslation() {
+        Fixture().use { fixture ->
+            val metadata = fixture.translateEnglish()
+            val session = fixture.session
+            val correction = fr.soustitresvoix.core.SubtitleTimeline(500, 75)
+            session.setTimeline(correction)
+            session.player.seekTo(2000)
+            session.savePosition()
+            val previous = requireNotNull(session.savedSessionRecord())
+            assertTrue(previous.fingerprint.startsWith("file-metadata-v1:"))
+            val generation = session.generation
+            val authority = "session-repair-saf.fixture"
+            val provider = RelocatedMediaProvider().apply { sourceFile = fixture.file }
+            provider.attachInfo(context, ProviderInfo().apply { this.authority = authority })
+            ShadowContentResolver.registerProviderInternal(authority, provider)
+            val repairedUri = "content://$authority/same-video.mkv"
+
+            assertFalse(session.relocateSessionTo(repairedUri, "Same video through Android"))
+            assertEquals(fixture.media.uri, session.media?.uri)
+            assertEquals(generation, session.generation)
+            val unchanged = requireNotNull(session.savedSessionRecord())
+            // Pausing may refresh the save timestamp; every session choice and
+            // association must remain exactly the same before confirmation.
+            assertEquals(previous.copy(updatedAtMs = unchanged.updatedAtMs), unchanged)
+            assertEquals(fixture.media.uri, PlayerPreferences(context).lastMedia()?.uri)
+            assertNull(MediaSessionStore(context).get(repairedUri))
+            assertTrue(session.translation.complete && session.translation.ready)
+            assertEquals(metadata, session.translation.selectionMetadata())
+            assertEquals(2000L, session.player.currentPosition)
+            assertFalse(session.machine.snapshot().wantsPlayback)
+
+            assertTrue(session.relocateSessionTo(repairedUri, "Same video through Android", allowUnverifiedMetadata = true))
+            await("Explicit SAF repair did not restore the exact local translation: ${fixture.messages}") {
+                session.media?.uri == repairedUri && fixture.selectedLanguage().startsWith("en") &&
+                    session.translation.complete && session.translation.ready
+            }
+            val restored = requireNotNull(session.savedSessionRecord())
+            assertTrue(restored.fingerprint.startsWith("metadata-v1:"))
+            assertEquals(correction, restored.timeline)
+            assertEquals(previous.textTrackId, restored.textTrackId)
+            assertEquals(metadata, restored.translationIdentity)
+            assertTrue(session.translation.editableCues().any { it.text.contains("Hello in English") })
+            assertEquals(2000L, session.player.currentPosition)
+            assertEquals(repairedUri, PlayerPreferences(context).lastMedia()?.uri)
+            assertTrue(provider.fileOpens > 0)
+            assertFalse(session.machine.snapshot().wantsPlayback)
+            assertFalse(session.player.playWhenReady)
         }
     }
 

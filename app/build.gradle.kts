@@ -108,8 +108,8 @@ android {
         applicationId = "fr.soustitresvoix.player.translation"
         minSdk = 26
         targetSdk = 36
-        versionCode = 22
-        versionName = "0.5.15-loading"
+        versionCode = 23
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild { cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" } }
@@ -154,6 +154,12 @@ android {
     testBuildType = if (providers.gradleProperty("verifyRelease").orNull == "true") "release" else "debug"
     testOptions { unitTests.isIncludeAndroidResources = true }
     lint { abortOnError = true; checkReleaseBuilds = true }
+    packaging {
+        resources {
+            // OSGi JVM module metadata is unused on Android; keep licenses and class files.
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
+    }
 }
 tasks.named("preBuild") { dependsOn(generateDemo); dependsOn(generateDiagnosticModel); dependsOn(verifyHexagonAssets) }
 // AGP's legacy AndroidTest asset source set does not preserve a mapped task
@@ -168,6 +174,14 @@ tasks.configureEach {
 }
 kotlin { jvmToolchain(17) }
 dependencies {
+    implementation("com.google.android.material:material:1.13.0")
+    implementation("androidx.media3:media3-exoplayer-hls:1.11.1")
+    implementation("androidx.media3:media3-exoplayer-dash:1.11.1")
+    implementation("androidx.media3:media3-exoplayer-rtsp:1.11.1")
+    implementation("commons-net:commons-net:3.13.0")
+    implementation("com.hierynomus:sshj:0.41.2")
+    implementation("com.hierynomus:smbj:0.14.0")
+    implementation("com.squareup.okhttp3:okhttp:5.3.0")
     implementation(project(":core"))
     implementation("androidx.activity:activity:1.11.0")
     implementation("androidx.media3:media3-exoplayer:1.11.1")

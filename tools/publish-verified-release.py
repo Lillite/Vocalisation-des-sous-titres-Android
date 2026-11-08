@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish only the signed 0.5.15-loading candidate already validated on main.
+"""Publish only the signed 1.0.0 candidate already validated on main.
 
 The temporary branch contains only bounded release data, never a signing key. This script
 does not compile or sign an APK, delete a release/tag, replace an asset, execute a
@@ -32,15 +32,15 @@ import zipfile
 
 
 REPOSITORY = "Lillite/Vocalisation-des-sous-titres-Android"
-BRANCH = "release-upload/v0.5.15-loading"
-TAG = "v0.5.15-loading"
-TITLE = 'Sous-titres en voix 0.5.15 — Chargement et diagnostics mémoire (préversion)'
-PRERELEASE = True
+BRANCH = "release-upload/v1.0.0"
+TAG = "v1.0.0"
+TITLE = 'Sous-titres en voix 1.0 — Bibliothèque, réseau et traduction contextuelle'
+PRERELEASE = False
 APPLICATION_ID = "fr.soustitresvoix.player.translation"
-VERSION_NAME = "0.5.15-loading"
-VERSION_CODE = "22"
+VERSION_NAME = "1.0.0"
+VERSION_CODE = "23"
 EXPECTED_SIGNER_SHA256 = "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d"
-APK_PATH = "release-upload/SousTitresVoix-0.5.15-loading.apk"
+APK_PATH = "release-upload/SousTitresVoix-1.0.0.apk"
 NOTES_PATH = "release-upload/notes.md"
 METADATA_PATH = "release-upload/release.json"
 APK_PARTS_DIRECTORY = "release-upload/apk-parts"
@@ -359,13 +359,18 @@ def verify_signed_apk(apk: Path, value: dict[str, str]) -> None:
             manifest.get(ns + "versionCode") == VERSION_CODE, "APK application identity or version mismatch.")
     application = manifest.find("application")
     require(application is not None and application.get(ns + "debuggable", "false") == "false" and
-            application.get(ns + "allowBackup") == "false" and application.get(ns + "usesCleartextTraffic") == "false",
-            "APK debug, backup or cleartext-network protection mismatch.")
+            application.get(ns + "allowBackup") == "false" and application.get(ns + "usesCleartextTraffic") == "true",
+            "APK debug, backup or explicit network-media configuration mismatch.")
     permissions = {item.get(ns + "name") for item in manifest if item.tag.startswith("uses-permission")}
     require("android.permission.INTERNET" in permissions and permissions <= {
         "android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE", "android.permission.WAKE_LOCK",
+        "android.permission.READ_EXTERNAL_STORAGE", "android.permission.MANAGE_EXTERNAL_STORAGE",
         APPLICATION_ID + ".DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"},
-        "APK permissions exceed the translation edition allow-list.")
+        "APK permissions exceed the network-player edition allow-list.")
+    legacy_read = manifest.find("uses-permission[@" + ns + "name='android.permission.READ_EXTERNAL_STORAGE']")
+    require(legacy_read is not None and legacy_read.get(ns + "maxSdkVersion") == "29" and
+            "android.permission.MANAGE_EXTERNAL_STORAGE" in permissions,
+            "APK shared-storage browser permissions mismatch.")
     require(not any("Fixture" in item.get(ns + "name", "") for item in application),
             "A test fixture leaked into the production APK.")
     output = run([str(tools / "apksigner"), "verify", "--verbose", "--print-certs", str(apk)])

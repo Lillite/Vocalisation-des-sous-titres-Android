@@ -33,15 +33,24 @@ interface SubtitleSource {
 /** Uses the existing parsers and full scanner without changing their algorithms. */
 @UnstableApi
 class Media3SubtitleSource(private val context: Context) : SubtitleSource {
+    private val dataSources = NetworkDataSourceFactory(context)
     override fun createMediaSource(item: MediaItem, onCue: IndexedCueListener): MediaSource {
         val tap = CueAheadFactory { track, cues -> onCue(track, cues, null) }
             .setOccurrenceListener { track, cues, origins -> onCue(track, cues, origins) }
-        return DefaultMediaSourceFactory(context, tap).setSubtitleParserFactory(tap.sidecarParsers())
-            .createMediaSource(item)
+        val uri = item.localConfiguration?.uri
+        // RTSP owns its socket transport in Media3 and must see the real scheme.
+        // This internal MediaItem is never passed to history or session storage.
+        val sourceItem = if (uri?.scheme == RemoteMediaUris.DIRECT_SCHEME) {
+            val direct = RemoteConnectionStore(context).directUrl(uri)
+            if (android.net.Uri.parse(direct).scheme.equals("rtsp", true)) item.buildUpon().setUri(direct).setMediaId(item.mediaId).build() else item
+        } else item
+        val mediaDataSources = if (uri != null) dataSources.forMediaUri(uri) else dataSources
+        return DefaultMediaSourceFactory(mediaDataSources, tap).setSubtitleParserFactory(tap.sidecarParsers())
+            .createMediaSource(sourceItem)
     }
 
     override fun createIndexer(): SubtitleIndexer {
-        val indexer = FullSubtitleIndexer(context)
+        val indexer = FullSubtitleIndexer(context, dataSources)
         return object : SubtitleIndexer {
             override fun scan(media: SavedMedia, progress: (Int) -> Unit) = indexer.scan(media, progress)
             override fun cancel() = indexer.cancel()

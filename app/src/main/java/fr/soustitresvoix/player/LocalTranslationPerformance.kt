@@ -50,7 +50,11 @@ data class LocalTranslationPerformance(
     val nativeCpuWeights: Boolean = false,
     val memoryReserveBytes: Long = 0,
     val observedPrefillExtraBytes: Long = 0,
-    val memoryTelemetry: LocalGgufMemoryTelemetry? = null
+    val memoryTelemetry: LocalGgufMemoryTelemetry? = null,
+    val cacheSharedPrefixTokens: Int = 0,
+    val cachePositionMin: Long = -1,
+    val cachePositionMax: Long = -1,
+    val session: LocalTranslationSessionSummary? = null
 ) {
     /** Throughput of the last native call, not an aggregate of split/retried fragments. */
     val tokensPerSecond: Double get() = if (generationMs > 0) generatedTokens * 1000.0 / generationMs else 0.0
@@ -58,6 +62,7 @@ data class LocalTranslationPerformance(
     fun render(): String = buildString {
         if (phase == "cache") {
             append("Traduction réutilisée depuis le cache exact de requêtes. Aucun nouveau calcul CPU, GPU ou Hexagon, chargement, débit ou temps de génération n’est mesuré pour cette occurrence.")
+            session?.let { append("\n\n"); append(it.render()) }
             return@buildString
         }
         append("Calcul demandé : "); append(requestedMode)
@@ -87,7 +92,7 @@ data class LocalTranslationPerformance(
             requestedGpuLayers?.let { append("\nCouches GPU demandées : "); append(if (it == -1) "toutes" else it.toString()) }
             actualGpuLayers?.let { append(" ; couches GPU chargées observées : "); append(if (it < 0) "non établies" else it.toString()); append('.') }
         }
-        if (phase == "generation") {
+        if (phase == "generation" || phase == "occurrence") {
             append(".\nMesures du dernier appel natif ; une occurrence peut nécessiter plusieurs appels.")
             append("\nEntrée : "); append(promptMs); append(" ms ; "); append(promptEvaluatedTokens)
             append(" tokens calculés, "); append(cachedPromptTokens); append(" réutilisés sur "); append(promptTokens)
@@ -102,14 +107,21 @@ data class LocalTranslationPerformance(
                 append(" (la politique demandée ne prouve pas son exécution effective)")
             }
         }
-        if (phase == "generation" && cacheResetReason.isNotEmpty()) {
+        if ((phase == "generation" || phase == "occurrence") && cacheResetReason.isNotEmpty()) {
             append("\nÉtat du préfixe : "); append(cacheResetReason)
             append(" ; réinitialisations cumulées : "); append(cacheResets)
+            if (cacheSharedPrefixTokens > 0) {
+                append(" ; préfixe tokenique commun candidat : "); append(cacheSharedPrefixTokens)
+                append(" tokens ; positions encore conservées : "); append(cachePositionMin)
+                append(" à "); append(cachePositionMax)
+            }
+            if (cacheResetReason == "WINDOW_EXPIRED")
+                append(". L’état mémoire nécessaire au préfixe n’est plus disponible ; l’entrée est recalculée après réinitialisation. Des tokens identiques ne suffisent pas à rendre cet état réutilisable.")
             append(". Buffers texte/tokens réutilisables : "); append(workspaceBytes)
             append(" octets ; agrandissements cumulés : "); append(workspaceGrowths)
             append(". Ces buffers ne représentent pas toute la mémoire du moteur.")
         }
-        if (phase == "generation" && startResidentBytes >= 0 && prefillResidentBytes >= 0) {
+        if ((phase == "generation" || phase == "occurrence") && startResidentBytes >= 0 && prefillResidentBytes >= 0) {
             append("\nRSS au début de l’appel : ")
             append(String.format(Locale.FRANCE, "%.2f Gio", startResidentBytes / 1_073_741_824.0))
             append(" ; après traitement de l’entrée : ")
@@ -137,9 +149,12 @@ data class LocalTranslationPerformance(
             append(". RAM disponible au relevé : ")
             append(String.format(Locale.FRANCE, "%.2f Gio", availableRamBytes / 1_073_741_824.0))
         }
+        if (currentRssBytes > 0 || peakRssBytes > 0)
+            append(". La RSS mesure les pages résidentes de ce processus ; elle ne comptabilise pas nécessairement toute la mémoire des pilotes, du GPU ou du NPU. Les buffers texte/tokens sont un relevé distinct.")
         if (fallbackReason.isNotEmpty()) { append(".\nRepli de calcul : "); append(fallbackDescription()) }
         diagnostic?.let { append('\n'); append(it.render()) }
         if (attemptReport.isNotEmpty()) { append('\n'); append(attemptReport) }
+        session?.let { append("\n\n"); append(it.render()) }
     }
 
     private fun fallbackDescription(): String = when (fallbackReason) {

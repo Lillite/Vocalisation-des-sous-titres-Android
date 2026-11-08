@@ -443,6 +443,23 @@ class LocalGgufRuntimeRobolectricTest {
         }
     }
 
+    @Test fun candidatePrefixAndActualSequencePositionsRemainSeparateFromReusedTokens() {
+        val value = JSONObject(generation()).put("cacheResetReason", "WINDOW_EXPIRED")
+            .put("cacheSharedPrefixTokens", 12).put("cachePositionMin", 19).put("cachePositionMax", 24)
+        val parsed = LocalGgufRuntime.generation(value.toString())
+        assertEquals(12, parsed.cacheSharedPrefixTokens); assertEquals(19L, parsed.cachePositionMin)
+        assertEquals(24L, parsed.cachePositionMax); assertEquals(0, parsed.cachedPromptTokens)
+        assertEquals(-1L, LocalGgufRuntime.generation(generation()).cachePositionMin)
+        for (invalid in listOf(
+            JSONObject(value.toString()).put("cacheSharedPrefixTokens", 20),
+            JSONObject(value.toString()).put("cacheSharedPrefixTokens", "12"),
+            JSONObject(value.toString()).put("cachePositionMin", -2),
+            JSONObject(value.toString()).put("cachePositionMin", 25))) {
+            try { LocalGgufRuntime.generation(invalid.toString()); fail("Invalid cache position accepted") }
+            catch (failure: LocalGgufRuntime.Failure) { assertEquals(LocalGgufRuntime.Code.RESPONSE, failure.code) }
+        }
+    }
+
     @Test fun clientOpenRequiresExplicitQ8EvidenceAndRejectsAnotherPrecisionBeforeOpening() {
         for ((requested, reported) in listOf("Q8_0" to null, "Q8_0" to "F16", "F16" to "Q8_0")) {
             withRuntimeResponses(reported, emptyList()) { client, file, _ ->

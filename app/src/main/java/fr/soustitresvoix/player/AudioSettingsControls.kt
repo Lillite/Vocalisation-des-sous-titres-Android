@@ -87,6 +87,9 @@ internal class AudioSettingsControls(
             }
         }
         view.addView(row)
+        val minimum = button("Minimum : 0 %") { change(0f) }.apply { contentDescription = "$title : régler au minimum, zéro pour cent" }
+        val maximum = button("Maximum : 100 %") { change(1f) }.apply { contentDescription = "$title : régler au maximum, cent pour cent" }
+        view.addView(minimum); view.addView(maximum)
         view.addView(button(activity.getString(R.string.audio_numeric_title, title),
             if (normal) R.id.audio_movie_edit else R.id.audio_duck_edit) {
             AudioNumberDialog.show(activity, view, title, AudioNumericInput.PERCENT,
@@ -103,6 +106,7 @@ internal class AudioSettingsControls(
             // Keep the last step available until the actual level reaches it.
             controls[0].isEnabled = level > 0f
             controls[1].isEnabled = level < 1f
+            minimum.isEnabled = level > 0f; maximum.isEnabled = level < 1f
         }
     }
 
@@ -135,6 +139,9 @@ internal class AudioSettingsControls(
             }
         }
         view.addView(row)
+        val minimum = button("Minimum : 0 ms") { change(0) }.apply { contentDescription = "$title : régler au minimum, zéro milliseconde" }
+        val maximum = button("Maximum : 2 000 ms") { change(2000) }.apply { contentDescription = "$title : régler au maximum, deux mille millisecondes" }
+        view.addView(minimum); view.addView(maximum)
         view.addView(button(activity.getString(R.string.audio_numeric_title, title), timing.editId) {
             AudioNumberDialog.show(activity, view, title, AudioNumericInput.MILLISECONDS,
                 value(port.snapshot().context.requested).toString(), description) { change(it.intValueExact()) }
@@ -145,6 +152,7 @@ internal class AudioSettingsControls(
             caption.text = activity.getString(R.string.audio_timing_caption, title, current)
             controls[0].isEnabled = current > 0
             controls[1].isEnabled = current < 2000
+            minimum.isEnabled = current > 0; maximum.isEnabled = current < 2000
         }
     }
 
@@ -195,6 +203,7 @@ internal class AudioSettingsControls(
     }
     private fun button(value: String, viewId: Int = View.NO_ID, action: () -> Unit) = Button(activity).apply {
         id = viewId; text = value; textSize = 17f; isAllCaps = false; minHeight = dp(56)
+        setSingleLine(false); maxLines = Int.MAX_VALUE; ellipsize = null
         setOnClickListener { if (!activity.isFinishing && !activity.isDestroyed) action() }
     }
 }

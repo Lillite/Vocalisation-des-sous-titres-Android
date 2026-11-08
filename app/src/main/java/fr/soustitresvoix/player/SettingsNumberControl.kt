@@ -39,6 +39,8 @@ internal class SettingsNumberControl(
     } else null
     private val minus = button("− $step $unit") { applyValue((read() - step).coerceAtLeast(minimum)) }
     private val plus = button("+ $step $unit") { applyValue((read() + step).coerceAtMost(maximum)) }
+    private val minimumButton = button("Minimum : $minimum $unit") { applyValue(minimum) }
+    private val maximumButton = button("Maximum : $maximum $unit") { applyValue(maximum) }
     init {
         require(minimum <= maximum && step > 0)
         orientation = VERTICAL; setPadding(0, dp(8), 0, dp(8))
@@ -56,6 +58,8 @@ internal class SettingsNumberControl(
         addView(LinearLayout(context).apply {
             addView(minus, LayoutParams(0, -2, 1f)); addView(plus, LayoutParams(0, -2, 1f))
         })
+        addView(minimumButton, LayoutParams(-1, -2))
+        addView(maximumButton, LayoutParams(-1, -2))
         if (presets.isNotEmpty()) addView(LinearLayout(context).apply {
             orientation = VERTICAL
             presets.filter { it in minimum..maximum }.distinct().forEach { value ->
@@ -68,7 +72,8 @@ internal class SettingsNumberControl(
     }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun button(value: String, action: () -> Unit) = Button(context).apply {
-        text = value; textSize = 17f; isAllCaps = false; minHeight = dp(56); setOnClickListener { action() }
+        text = value; textSize = 17f; isAllCaps = false; minHeight = dp(56)
+        setSingleLine(false); maxLines = Int.MAX_VALUE; ellipsize = null; setOnClickListener { action() }
     }
     fun commitField(): Boolean {
         val value = field.text.toString().trim().toIntOrNull()
@@ -95,6 +100,9 @@ internal class SettingsNumberControl(
         }
         minus.contentDescription = "$label : diminuer de $step $unit, valeur actuelle $value $unit"
         plus.contentDescription = "$label : augmenter de $step $unit, valeur actuelle $value $unit"
+        minimumButton.contentDescription = "$label : régler au minimum, $minimum $unit"
+        maximumButton.contentDescription = "$label : régler au maximum, $maximum $unit"
         minus.isEnabled = value > minimum; plus.isEnabled = value < maximum
+        minimumButton.isEnabled = value > minimum; maximumButton.isEnabled = value < maximum
     }
 }

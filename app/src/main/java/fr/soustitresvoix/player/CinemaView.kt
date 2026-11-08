@@ -70,7 +70,7 @@ class CinemaView(
         text = value; textSize = 17f; setTextColor(Color.WHITE); setPadding(dp(8), dp(4), dp(8), dp(4))
     }
     private fun button(value: String, action: () -> Unit) = Button(activity).apply {
-        text = value; textSize = 16f; isAllCaps = false; minHeight = dp(52)
+        text = value; textSize = 16f; isAllCaps = false; minHeight = dp(56)
         setTextColor(Color.WHITE); backgroundTintList = android.content.res.ColorStateList.valueOf(Color.rgb(45, 45, 45))
         setOnClickListener { if (!disposed) { action(); scheduleHide() } }
     }
@@ -476,12 +476,18 @@ class CinemaView(
         column.addView(label(ImageSettingsDescriptions.ZOOM))
         column.addView(imageButton("Zoom +") { setImageZoom(zoom + .25f) })
         column.addView(imageButton("Zoom −") { setImageZoom(zoom - .25f) })
+        column.addView(imageButton("Zoom : Minimum, 100 %") { setImageZoom(1f) })
+        column.addView(imageButton("Zoom : Maximum, 400 %") { setImageZoom(4f) })
         column.addView(imageButton("Recentrer / réinitialiser") { zoom = 1f; dx = 0f; dy = 0f; applyImage() })
         column.addView(label(ImageSettingsDescriptions.PAN))
         column.addView(imageButton("Déplacer l’image à gauche") { dx -= dp(40); applyImage() })
         column.addView(imageButton("Déplacer l’image à droite") { dx += dp(40); applyImage() })
         column.addView(imageButton("Déplacer l’image vers le haut") { dy -= dp(40); applyImage() })
         column.addView(imageButton("Déplacer l’image vers le bas") { dy += dp(40); applyImage() })
+        column.addView(imageButton("Déplacement horizontal : Minimum, bord gauche") { dx = -width * (zoom - 1) / 2; applyImage() })
+        column.addView(imageButton("Déplacement horizontal : Maximum, bord droit") { dx = width * (zoom - 1) / 2; applyImage() })
+        column.addView(imageButton("Déplacement vertical : Minimum, bord supérieur") { dy = -height * (zoom - 1) / 2; applyImage() })
+        column.addView(imageButton("Déplacement vertical : Maximum, bord inférieur") { dy = height * (zoom - 1) / 2; applyImage() })
         column.addView(heading("Luminosité de l’écran"))
         val screenState = label("").apply { id = R.id.image_screen_state }
         column.addView(screenState)
@@ -491,6 +497,12 @@ class CinemaView(
         })
         column.addView(imageButton("Écran : luminosité −10 points") {
             activity.window.attributes = activity.window.attributes.apply { screenBrightness = ((screenBrightness.takeIf { it >= 0 } ?: 0.5f) - 0.1f).coerceIn(0.01f, 1f) }
+        })
+        column.addView(imageButton("Écran : luminosité Minimum, 1 %") {
+            activity.window.attributes = activity.window.attributes.apply { screenBrightness = 0.01f }
+        })
+        column.addView(imageButton("Écran : luminosité Maximum, 100 %") {
+            activity.window.attributes = activity.window.attributes.apply { screenBrightness = 1f }
         })
         column.addView(label(ImageSettingsDescriptions.SCREEN_SYSTEM))
         column.addView(imageButton("Écran : reprendre le réglage système") {

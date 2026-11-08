@@ -8,7 +8,7 @@ import androidx.media3.common.Format
 import androidx.media3.common.util.Consumer
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSpec
-import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DataSource
 import androidx.media3.extractor.*
 import androidx.media3.extractor.text.SubtitleParser
 import java.io.File
@@ -17,12 +17,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** Sequential demux only: discarded audio/video samples are never decoded or copied to RAM. */
 @UnstableApi
-class FullSubtitleIndexer(private val context: Context) {
+class FullSubtitleIndexer(private val context: Context, private val dataSources: DataSource.Factory = NetworkDataSourceFactory(context)) {
     companion object {
         private const val CANCELLED = "Indexation annulée"
         private const val FILE_LIMIT = "Fichier de sous-titres hors limite (8 Mio)."
         private const val TEXT_LIMIT = "Indexation textuelle au-delà des limites de sécurité"
         private const val LOCAL_ONLY = "Indexation locale uniquement"
+        private const val STREAM_UNAVAILABLE = "Indexation complète indisponible pour HLS, DASH ou RTSP : le flux ne peut pas être traité comme un fichier complet. La vocalisation directe reste partielle et sa traduction intégrale n’est pas disponible."
+        private const val SOURCE_UNAVAILABLE = "Cette source ne permet pas une indexation complète."
         private const val READ_LIMIT = "Indexation limitée à 32 Gio lus. Lecture directe conservée."
         private const val CONTAINER_UNAVAILABLE = "Indexation complète indisponible pour ce conteneur. La lecture directe reste disponible."
         private const val INCOMPLETE = "Indexation incomplète : limites de sécurité ou sous-titre textuel illisible. Lecture directe conservée."
@@ -30,7 +32,7 @@ class FullSubtitleIndexer(private val context: Context) {
         private const val SEEK_LIMIT = "Trop de déplacements dans ce conteneur"
         private const val INDEX_LIMIT = "Index au-delà de 100 000 répliques / 12 millions de caractères. Prélecture directe conservée."
         private val controlledFailureMessages = setOf(
-            CANCELLED, FILE_LIMIT, TEXT_LIMIT, LOCAL_ONLY, READ_LIMIT, CONTAINER_UNAVAILABLE, INCOMPLETE, NO_PROGRESS, SEEK_LIMIT, INDEX_LIMIT
+            CANCELLED, FILE_LIMIT, TEXT_LIMIT, LOCAL_ONLY, STREAM_UNAVAILABLE, SOURCE_UNAVAILABLE, READ_LIMIT, CONTAINER_UNAVAILABLE, INCOMPLETE, NO_PROGRESS, SEEK_LIMIT, INDEX_LIMIT
         )
         /** Never expose a provider/parser exception message in a copied diagnostic.
          * Retain only exact, application-owned explanations; scan() keeps its
@@ -38,13 +40,15 @@ class FullSubtitleIndexer(private val context: Context) {
          */
         internal fun safeFailureMessage(error: Exception): String =
             error.message?.takeIf { it in controlledFailureMessages } ?: when (error) {
+                is RemoteAccessException -> "Indexation réseau impossible : connexion interrompue, accès refusé ou fichier indisponible. Vérifie le lien et la connexion enregistrée, puis réessaie."
                 is SecurityException -> "Indexation impossible : accès au fichier refusé. Rouvre la vidéo et autorise son accès."
                 is IOException -> "Indexation impossible : fichier indisponible ou lecture du fichier échouée. Rouvre-le puis réessaie ; la lecture directe reste disponible."
                 else -> "Indexation impossible : ce fichier n’a pas pu être analysé. La lecture directe reste disponible."
             }
     }
     private val cancelled = AtomicBoolean(false)
-    fun cancel() { cancelled.set(true) }
+    @Volatile private var activeSource: DataSource? = null
+    fun cancel() { cancelled.set(true); runCatching { activeSource?.close() } }
     private fun ensureActive() {
         if (cancelled.get() || Thread.currentThread().isInterrupted) throw IOException(CANCELLED)
     }
@@ -65,8 +69,12 @@ class FullSubtitleIndexer(private val context: Context) {
             progress(100); ensureActive(); return result
         }
         val uri = Uri.parse(media.uri)
-        require(uri.scheme in setOf("content", "android.resource", "file")) { LOCAL_ONLY }
-        val source = DefaultDataSource(context, false)
+        require(uri.scheme in setOf("content", "android.resource", "file", "http", "https", RemoteMediaUris.SERVER_SCHEME, RemoteMediaUris.DIRECT_SCHEME, "rtsp")) { SOURCE_UNAVAILABLE }
+        val resolved = if (uri.scheme == RemoteMediaUris.DIRECT_SCHEME) Uri.parse(RemoteConnectionStore(context).directUrl(uri)) else uri
+        if (resolved.scheme.equals("rtsp", true) || resolved.lastPathSegment?.lowercase()?.let { it.endsWith(".m3u8") || it.endsWith(".mpd") } == true)
+            throw IOException(STREAM_UNAVAILABLE)
+        val source = dataSources.createDataSource()
+        activeSource = source
         var extractor: Extractor? = null
         var reads = 0L; var seeks = 0; var lastPercent = -1; var idleReads = 0
         val guardedReader = DataReader { buffer, offset, length ->
@@ -120,6 +128,6 @@ class FullSubtitleIndexer(private val context: Context) {
             ensureActive()
             if (result.truncated || factory.truncated) throw IOException(INDEX_LIMIT)
             return result
-        } finally { runCatching { extractor?.release() }; runCatching { source.close() } }
+        } finally { activeSource = null; runCatching { extractor?.release() }; runCatching { source.close() } }
     }
 }

@@ -378,6 +378,8 @@ std::string Response::json() const {
         << ",\"chatTemplateAvailable\":" << (chat_template_available ? "true" : "false")
         << ",\"chatTemplateMode\":" << quote(chat_template_mode)
         << ",\"cachedPromptTokens\":" << cached_prompt_tokens << ",\"promptEvaluatedTokens\":" << prompt_evaluated_tokens
+        << ",\"cacheSharedPrefixTokens\":" << cache_shared_prefix_tokens
+        << ",\"cachePositionMin\":" << cache_position_min << ",\"cachePositionMax\":" << cache_position_max
         << ",\"residentBytes\":" << resident_bytes << ",\"availableRamBytes\":" << available_ram_bytes;
     if (memory_admission.present) {
         out << ",\"memoryAdmission\":{\"policy\":\"SYSTEM_RESERVE\",\"availableBytes\":" << memory_admission.available_bytes
@@ -736,12 +738,17 @@ Response Session::generate(const std::string & prompt, int output_tokens, bool a
         // Evaluate at least one token again: cached KV entries alone do not
         // provide the final logits for this new request.
         while (shared < tokens.size() - 1 && shared < previous_size && state_->decoded_tokens[shared] == tokens[shared]) ++shared;
+        result.cache_shared_prefix_tokens = static_cast<int>(shared);
+        result.cache_position_min = llama_memory_seq_pos_min(memory, 0);
+        result.cache_position_max = llama_memory_seq_pos_max(memory, 0);
         // SWA/recurrent memories can have discarded earlier positions. Only the
         // actual contiguous [min,max] range from llama.cpp proves availability.
+        // Keep these pre-reset observations: otherwise WINDOW_EXPIRED alone
+        // cannot distinguish a discarded prefix from an absent source context.
         result.cache_reset_reason = previous_size == 0 ? "EMPTY" : "PREFIX_CHANGED";
         if (shared > 0) {
-            if (llama_memory_seq_pos_min(memory, 0) != 0 ||
-                llama_memory_seq_pos_max(memory, 0) < static_cast<llama_pos>(shared - 1)) {
+            if (result.cache_position_min != 0 ||
+                result.cache_position_max < static_cast<llama_pos>(shared - 1)) {
                 shared = 0; result.cache_reset_reason = "WINDOW_EXPIRED";
             } else if (!llama_memory_seq_rm(memory, 0, static_cast<llama_pos>(shared), -1)) {
                 shared = 0; result.cache_reset_reason = "REMOVE_FAILED";
