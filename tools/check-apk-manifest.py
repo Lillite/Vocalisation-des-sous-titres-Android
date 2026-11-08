@@ -6,25 +6,27 @@ import xml.etree.ElementTree as ET
 if len(sys.argv) != 2:
     raise SystemExit('Usage: check-apk-manifest.py manifest.xml')
 ns = '{http://schemas.android.com/apk/res/android}'
-EXPECTED_VERSION_CODE = '22'
-EXPECTED_VERSION_NAME = '0.5.15-loading'
+EXPECTED_VERSION_CODE = '23'
+EXPECTED_VERSION_NAME = '1.0.0'
 root = ET.parse(Path(sys.argv[1])).getroot()
 assert root.get('package') == 'fr.soustitresvoix.player.translation', 'Unexpected application identity'
 assert root.get(ns + 'versionCode') == EXPECTED_VERSION_CODE and root.get(ns + 'versionName') == EXPECTED_VERSION_NAME, 'Unexpected version'
 app = root.find('application')
 assert app is not None and app.get(ns + 'allowBackup') == 'false', 'Backup must remain disabled'
-assert app.get(ns + 'usesCleartextTraffic') == 'false', 'Cleartext network traffic must remain disabled'
+assert app.get(ns + 'usesCleartextTraffic') == 'true', 'Explicit HTTP/FTP media access requires cleartext network support'
 permissions = {node.get(ns + 'name', '') for node in root if node.tag.startswith('uses-permission')}
 forbidden = {
     'android.permission.RECORD_AUDIO',
     'android.permission.CAMERA', 'android.permission.READ_CONTACTS',
-    'android.permission.WRITE_CONTACTS', 'android.permission.READ_EXTERNAL_STORAGE',
-    'android.permission.WRITE_EXTERNAL_STORAGE', 'android.permission.MANAGE_EXTERNAL_STORAGE',
+    'android.permission.WRITE_CONTACTS',
+    'android.permission.WRITE_EXTERNAL_STORAGE',
     'android.permission.READ_MEDIA_AUDIO', 'android.permission.READ_MEDIA_VIDEO',
     'android.permission.READ_MEDIA_IMAGES', 'android.permission.READ_MEDIA_VISUAL_USER_SELECTED',
 }
 assert not permissions.intersection(forbidden), f'Forbidden permissions: {permissions.intersection(forbidden)}'
-assert 'android.permission.INTERNET' in permissions, 'Explicit translation requires Internet permission'
+assert {'android.permission.INTERNET', 'android.permission.MANAGE_EXTERNAL_STORAGE', 'android.permission.READ_EXTERNAL_STORAGE'} <= permissions
+legacy = root.find("uses-permission[@" + ns + "name='android.permission.READ_EXTERNAL_STORAGE']")
+assert legacy is not None and legacy.get(ns + 'maxSdkVersion') == '29', 'Legacy read permission must stop at API 29'
 assert root.find("queries/intent/action[@" + ns + "name='android.intent.action.TTS_SERVICE']") is not None
 assert not any('Fixture' in x.get(ns + 'name', '') for x in app), 'Test service leaked into production APK'
 diagnostic = app.findall("service[@" + ns + "name='fr.soustitresvoix.player.LocalModelProbeService']")
@@ -38,6 +40,6 @@ assert len(opencl) == 1 and opencl[0].get(ns + 'required') == 'false', 'OpenCL m
 assert all(provider.get(ns + 'name') != 'com.google.mlkit.common.internal.MlKitInitProvider'
            for provider in app.findall('provider')), 'ML Kit must initialize only after explicit translation confirmation'
 print('PASS compiled cinema APK: identity, backup disabled, TTS query, no test service')
-print('PASS translation Internet permission, HTTPS only, no microphone, camera, contacts or broad storage permission')
+print('PASS explicit network media and optional all-files access, legacy read limited to API29; no microphone, camera, contacts or write permission')
 print('Actual permissions:', ', '.join(sorted(permissions)) or '(none)')
 print('NOTE offline speech engines are external applications.')

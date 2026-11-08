@@ -368,18 +368,36 @@
       },
       "id": 437677403,
       "source_commit": "7b397ca539460e0a75d6f10643dd87eb3fc1b3cc"
+    },
+    {
+      "tag": "v0.5.15-loading",
+      "title": "Sous-titres en voix 0.5.15 — Chargement et diagnostics mémoire (préversion)",
+      "prerelease": true,
+      "latest": false,
+      "notes": "docs/releases/0.5.15-loading.md",
+      "asset": {
+        "name": "SousTitresVoix-0.5.15-loading.apk",
+        "version_name": "0.5.15-loading",
+        "version_code": 22,
+        "application_id": "fr.soustitresvoix.player.translation",
+        "id": 721833062,
+        "size": 79319029,
+        "sha256": "934197c4ad198caa9dfc27c5f90a7f80c3f52c338d8604410d610d2a27986e1e"
+      },
+      "id": 437819954,
+      "source_commit": "bc678e26aef233b6ee5f0e366bd717b0ba0027ed"
     }
   ],
   "next_release": {
-    "tag": "v0.5.15-loading",
-    "title": "Sous-titres en voix 0.5.15 — Chargement et diagnostics mémoire (préversion)",
-    "prerelease": true,
-    "latest": false,
-    "notes": "docs/releases/0.5.15-loading.md",
+    "tag": "v1.0.0",
+    "title": "Sous-titres en voix 1.0 — Bibliothèque, réseau et traduction contextuelle",
+    "prerelease": false,
+    "latest": true,
+    "notes": "docs/releases/1.0.0.md",
     "asset": {
-      "name": "SousTitresVoix-0.5.15-loading.apk",
-      "version_name": "0.5.15-loading",
-      "version_code": 22,
+      "name": "SousTitresVoix-1.0.0.apk",
+      "version_name": "1.0.0",
+      "version_code": 23,
       "application_id": "fr.soustitresvoix.player.translation"
     }
   }

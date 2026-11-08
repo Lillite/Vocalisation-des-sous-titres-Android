@@ -18,7 +18,7 @@ class LocalGgufContextPolicyTest {
         for (policy in LocalGgufContextPolicy.entries) for (index in 0..200) {
             val start = policy.contextStartIndex(index)
             assertTrue(start in 0..index)
-            assertTrue(index - start <= policy.maximumPreviousPairs)
+            assertTrue(index - start <= if (policy.sourceOnly) 2 else policy.maximumPreviousPairs)
         }
     }
     @Test fun negativeOccurrenceIndicesAreRefused() {

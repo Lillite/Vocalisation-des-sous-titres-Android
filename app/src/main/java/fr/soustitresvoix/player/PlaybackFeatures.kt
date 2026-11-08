@@ -440,6 +440,18 @@ internal class PlaybackFeatures(
     fun sourceFingerprint(uri: String): String {
         return try {
             val parsed = Uri.parse(uri)
+            // No network I/O on the player thread. A connection edit changes
+            // its encrypted store revision, invalidating choices for the old server.
+            if (RemoteMediaUris.isRemote(parsed)) {
+                return "remote-config-v1:" + SpeechTools.key("remote-config-v1",
+                    uri + "\n" + RemoteConnectionStore(context).sourceRevision(parsed))
+            }
+            if (parsed.scheme == "file") {
+                val file = File(parsed.path ?: return "")
+                if (!file.isFile) return ""
+                return "file-metadata-v1:" + SpeechTools.key("file-metadata-v1",
+                    "${file.length()}\n${file.lastModified()}")
+            }
             var size: Long? = null
             var modified: Long? = null
             val columns = arrayOf(OpenableColumns.SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED)
@@ -584,7 +596,12 @@ internal class PlaybackFeatures(
         try {
             writer.execute {
                 val accessible = runCatching {
-                    context.contentResolver.openAssetFileDescriptor(Uri.parse(uri), "r")?.use { true } ?: false
+                    val parsed = Uri.parse(uri)
+                    when {
+                        parsed.scheme == "file" -> File(parsed.path ?: "").let { it.isFile && it.canRead() }
+                        RemoteMediaUris.isRemote(parsed) -> false // A stored URL alone does not prove offline access.
+                        else -> context.contentResolver.openAssetFileDescriptor(parsed, "r")?.use { true } ?: false
+                    }
                 }.getOrDefault(false)
                 main.post { checked(accessible) }
             }
@@ -735,16 +752,23 @@ internal class PlaybackFeatures(
             } catch (_: Exception) { postStorageProblem() }
         }
     }
-    fun relocate(uri: String, title: String) {
-        val previous = session.media ?: return
+    /** False leaves the current source intact until its owner confirms incomparable metadata. */
+    fun relocate(uri: String, title: String, allowUnverifiedMetadata: Boolean = false): Boolean {
+        val previous = session.media ?: return true
         session.pause()
         val record = sessionRecord(previous.uri)
-        if (record == null) { session.open(SavedMedia(uri, title)); return }
+        if (record == null) { session.open(SavedMedia(uri, title)); return true }
         val fingerprint = sourceFingerprint(uri)
         if (record.fingerprint.isNotEmpty() && fingerprint.isNotEmpty() && record.fingerprint != fingerprint) {
-            message("Les métadonnées du fichier sélectionné diffèrent de la séance. Les anciens minutages, pistes et traduction ne sont pas transférés ; ouverture en pause au début.", true)
-            session.open(SavedMedia(uri, title), restoreSession = false)
-            return
+            // A SAF provider and a direct file path expose different metadata
+            // schemas. Their hashes cannot establish either equality or change.
+            val comparable = record.fingerprint.substringBefore(':') == fingerprint.substringBefore(':')
+            if (!comparable && !allowUnverifiedMetadata) return false
+            if (comparable) {
+                message("Les métadonnées du fichier sélectionné diffèrent de la séance. Les anciens minutages, pistes et traduction ne sont pas transférés ; ouverture en pause au début.", true)
+                session.open(SavedMedia(uri, title), restoreSession = false)
+                return true
+            }
         }
         val moved = record.copy(uri = uri, title = title, fingerprint = fingerprint, updatedAtMs = System.currentTimeMillis())
         val tracks = (record.timelines.keys + listOfNotNull(record.textTrackId, session.selectedTextId())).filter { it != "__disabled__" }.toSet()
@@ -791,6 +815,7 @@ internal class PlaybackFeatures(
             } catch (_: Exception) { postStorageProblem() }
         }
         session.open(SavedMedia(uri, title, moved.positionMs, moved.subtitlePath, moved.subtitleMime), restoreSession = true)
+        return true
     }
     private fun postStorageProblem() {
         android.os.Handler(android.os.Looper.getMainLooper()).post {

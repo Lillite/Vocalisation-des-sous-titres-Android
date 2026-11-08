@@ -286,7 +286,7 @@ internal class LocalGgufBenchmark(
             } finally {
                 val copy = results.toList()
                 val expected = if (options.scenario == Scenario.PROFILES) executionPlans(options).size
-                    else if (options.scenario == Scenario.CONTEXT_POLICIES) LocalGgufContextPolicy.entries.size
+                    else if (options.scenario == Scenario.CONTEXT_POLICIES) LocalGgufContextPolicy.comparisonPolicies.size
                     else if (options.reopenForLoad) 4 else 2
                 post(owner) {
                     it.copy(busy = false, runs = copy, currentPerformance = null, status = when {
@@ -359,7 +359,7 @@ internal class LocalGgufBenchmark(
                 }
             }
             if (options.scenario == Scenario.CONTEXT_POLICIES)
-                return LocalGgufContextPolicy.entries.map { ExecutionPlan(options.gpuMode, it, options.loadSettings) }
+                return LocalGgufContextPolicy.comparisonPolicies.map { ExecutionPlan(options.gpuMode, it, options.loadSettings) }
             val modes = if (options.order == Order.CPU_THEN_GPU) listOf("CPU", options.gpuMode) else listOf(options.gpuMode, "CPU")
             return modes.map { ExecutionPlan(it, options.contextPolicy, options.loadSettings) }
         }

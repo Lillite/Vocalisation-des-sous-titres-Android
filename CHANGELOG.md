@@ -2,6 +2,20 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
+## 1.0.0 — bibliothèque, réseau et traduction contextuelle
+
+Version **1.0.0**, code **23**, identité `fr.soustitresvoix.player.translation` et certificat durable conservés. [Notes et critères de validation](docs/releases/1.0.0.md) ; [preuves propres à la distribution](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v1.0.0). Aucun résultat antérieur n’est présenté comme preuve de la 1.0.0.
+
+- Navigation Material 3 sombre en quatre onglets, avec session et tâches conservées ; réglages à pas complétés par Minimum/Maximum dans leurs bornes.
+- Explorer : stockage partagé et SD accessibles, SAF conservé sans autorisation générale, accès spécial facultatif sous Android 11+, dossiers privés exclus et listes bornées.
+- Liens HTTP/HTTPS, modules HLS/DASH/RTSP et serveurs FTP/FTPS explicite, SFTP, WebDAV, SMB2/3 ; Keystore, références opaques et transport commun pour lecture/indexation progressive. Index complet des manifestes/directs non garanti et limite explicite.
+- Contexte Index `SOURCE_WINDOW_TWO` : deux sources avant/deux après au plus, sans traductions voisines ; voisins entiers et source courante complète. Trois stratégies historiques, contexte 2 048, sortie 512 et greedy conservés.
+- Identité du cache exact incluant le contexte futur ; diagnostics du préfixe natif et garde `WINDOW_EXPIRED` conservée pour l’exactitude.
+- Cumuls d’une séance du moteur distinguant chargements, occurrences, appels tentés/réponses mesurées, tokens, caches, observations GPU/NPU et mémoires.
+- Guide utilisateur, sources médias, modèles et carte du code réorganisés ; anciennes vues et preuves conservées. Aucun nouveau modèle recommandé, gain NPU ou stabilisation Vulkan physique revendiqué.
+
+Les entrées suivantes sont historiques : leur état de candidate ou de recommandation reste celui de leur rédaction.
+
 ## 0.5.15-loading — candidate de correction du chargement et des diagnostics mémoire
 
 VersionCode **22**, identité Traduction et certificat durable conservés. [Notes et limites](docs/releases/0.5.15-loading.md). Validation et publication propres à cette candidate à établir.

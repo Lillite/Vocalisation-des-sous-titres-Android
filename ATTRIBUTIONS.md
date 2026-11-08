@@ -1,8 +1,26 @@
-# Attributions du calcul GGUF natif
+# Attributions des composants tiers
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Sources de compilation épinglées](app/src/main/cpp/CMakeLists.txt)
 
 Le travail propre à cette application est réalisé par IA à partir des demandes et retours de son utilisateur. Les composants ci-dessous sont les créations de leurs auteurs respectifs. Leurs textes de licence et mentions de copyright sont conservés dans les assets de l’APK ; cette page ne les remplace pas.
+
+## Interface et sources réseau — 1.0.0
+
+Les versions ci-dessous sont celles déclarées dans [Gradle](app/build.gradle.kts). Les licences ont été rapprochées des POM publiés par les éditeurs et des textes aux tags indiqués ; les notices Commons Net proviennent du JAR exact 3.13.0. Le [manifeste des notices](app/src/main/assets/licenses/ui-network-notices-SOURCES.json) conserve les URL primaires et SHA-256 des POM et fichiers embarqués. Ce périmètre des nouvelles dépendances directes n’est pas un inventaire exhaustif de toutes les dépendances transitives.
+
+| Composant et auteurs | Version / rôle | Licence et notices embarquées |
+| --- | --- | --- |
+| [Material Components for Android](https://github.com/material-components/material-components-android), auteurs du projet Android/Google | `com.google.android.material:material:1.13.0` ; composants Material 3 | [Apache 2.0](app/src/main/assets/licenses/material-1.13.0-LICENSE.txt), [source 1.13.0](https://github.com/material-components/material-components-android/blob/1.13.0/LICENSE) |
+| [Apache Commons Net](https://commons.apache.org/proper/commons-net/), Apache Software Foundation et contributeurs | `commons-net:commons-net:3.13.0` ; FTP/FTPS | [Apache 2.0](app/src/main/assets/licenses/commons-net-3.13.0-LICENSE.txt), [NOTICE](app/src/main/assets/licenses/commons-net-3.13.0-NOTICE.txt), extraits de `META-INF` du JAR publié |
+| [SSHJ](https://github.com/hierynomus/sshj), contributeurs SSHJ | `com.hierynomus:sshj:0.41.2` ; SFTP/SSH | [Apache 2.0](app/src/main/assets/licenses/sshj-0.41.2-LICENSE.txt), [NOTICE complète](app/src/main/assets/licenses/sshj-0.41.2-NOTICE.txt), [source v0.41.2](https://github.com/hierynomus/sshj/tree/v0.41.2) |
+| [SMBJ](https://github.com/hierynomus/smbj), contributeurs SMBJ | `com.hierynomus:smbj:0.14.0` ; SMB2/3 | [Apache 2.0](app/src/main/assets/licenses/smbj-0.14.0-Apache-2.0.txt), [en-tête officiel v0.14.0](app/src/main/assets/licenses/smbj-0.14.0-LICENSE_HEADER.txt), [POM 0.14.0](https://repo.maven.apache.org/maven2/com/hierynomus/smbj/0.14.0/smbj-0.14.0.pom) |
+| [OkHttp](https://square.github.io/okhttp/), Square et contributeurs | `com.squareup.okhttp3:okhttp:5.3.0` ; WebDAV | [Apache 2.0](app/src/main/assets/licenses/okhttp-5.3.0-LICENSE.txt), [source parent-5.3.0](https://github.com/square/okhttp/blob/parent-5.3.0/LICENSE.txt) |
+
+La NOTICE SSHJ conserve notamment les mentions des dérivations Apache MINA SSHD/Commons Net, les conditions JCraft et les mentions Bouncy Castle. La licence principale Apache 2.0 ne permet pas de retirer ces mentions spécifiques. Le tag SMBJ v0.14.0 contient un `LICENSE_HEADER` et sa licence est déclarée dans le POM ; le texte complet Apache joint provient de l’Apache Software Foundation, sans inventer un fichier `LICENSE` absent de ce tag.
+
+Media3 et ses modules HLS/DASH/RTSP sont en version **1.11.1**, AndroidX Activity **1.11.0**, Tracing **1.3.0**, ML Kit Translation **17.0.3**. AndroidX/Media3 et les bibliothèques Kotlin conservent leurs licences et notices ; le SDK ML Kit et ses modèles gardent les [conditions Google](https://developers.google.com/ml-kit/terms). L’application conserve son attribution Google dédiée. Les noms de protocoles ne signifient pas que les auteurs de ces bibliothèques ont écrit ou validé l’intégration propre au lecteur.
+
+## Calcul GGUF natif
 
 | Composant tiers | Source utilisée | Licence et mentions conservées |
 | --- | --- | --- |
@@ -16,9 +34,9 @@ Les versions et SHA-256 des archives de compilation sont fixés dans CMake. Depu
 
 Depuis la 0.5.12, le backend Vulkan facultatif ARM64 utilise des en-têtes épinglés : archive Vulkan-Headers SHA-256 `8876aad926b2e72bdefddc34885472d5332e2d20aa3ed57313466f0bc982cf3f` et archive SPIRV-Headers SHA-256 `cab0a654c4917e16367483296b44cdb1d614e3120c721beafcd37e3a8580486c`. Les shaders sont compilés lors de la construction avec le `glslc` hôte fourni par le NDK `27.2.12479018`. Le compilateur et les en-têtes ne sont pas téléchargés ni exécutés par l’application sur le téléphone. Le chargeur Vulkan système est chargé dynamiquement seulement après une demande explicite ; ni ce chargeur ni un pilote GPU ne sont distribués dans l’APK.
 
-Cette liste concerne le calcul GGUF natif. Android, Kotlin, Media3, ML Kit et les autres dépendances gardent également leurs auteurs et conditions propres. Aucun modèle de production n’est distribué : le choix et l’import d’un GGUF ne remplacent pas ses conditions d’utilisation. Les licences tierces n’accordent pas de licence générale au code propre de ce dépôt.
+Cette section concerne le calcul GGUF natif. Android, Kotlin et les autres dépendances gardent également leurs auteurs et conditions propres. Aucun modèle de production n’est distribué : le choix et l’import d’un GGUF ne remplacent pas ses conditions d’utilisation. Les licences tierces n’accordent pas de licence générale au code propre de ce dépôt.
 
-## Hexagon/HTP dans la candidate 0.5.14
+## Hexagon/HTP — intégration conservée depuis la 0.5.14
 
 Les cinq programmes DSP v73/v75/v79/v81/v85 proviennent des sources MIT de llama.cpp/ggml épinglées et sont construits avant Gradle par [l’outil de préparation](tools/prepare-hexagon.py). Le SDK sert uniquement à la compilation : archive publique Snapdragon Toolchain **6.7.0.0**, SHA-256 **00725fc449916d7b9af2c2a3c6b54d61f3c872d5dbc1d3ca3fd2f839b1d5dc70**, outils Hexagon **21.0.04**. Les métadonnées internes du SDK indiquent 6.7.0.1 ; elles ne changent pas l’identité de l’archive contrôlée.
 

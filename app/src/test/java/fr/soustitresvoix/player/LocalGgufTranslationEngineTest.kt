@@ -573,7 +573,7 @@ class LocalGgufTranslationEngineTest {
         val source = " \nThe original letter belongs to Maya. 😀\n "
         val previousSources = (1..5).map { "Earlier source $it " + "s".repeat(350) }
         val previousOutputs = (1..5).map { "Traduction précédente $it " + "t".repeat(350) }
-        for (policy in LocalGgufContextPolicy.entries) {
+        for (policy in LocalGgufContextPolicy.comparisonPolicies) {
             val fixture = fixture(); val backend = Backend()
             val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { backend }, contextPolicy = policy)
             try {
@@ -593,7 +593,7 @@ class LocalGgufTranslationEngineTest {
         val identities = LocalGgufContextPolicy.entries.map { policy ->
             LocalGgufTranslationEngine.identity(fixture.model, contextPolicy = policy)
         }
-        assertEquals(3, identities.distinct().size)
+        assertEquals(LocalGgufContextPolicy.entries.size, identities.distinct().size)
         val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { factories++; Backend() }, executionMode = "OPENCL")
         val frames = mutableListOf<LocalTranslationPerformance>()
         engine.setPerformanceListener { frames += it }
@@ -659,6 +659,59 @@ class LocalGgufTranslationEngineTest {
             assertEquals(1, backend.opens); assertTrue(backend.chatPrompts.isEmpty())
             assertEquals("<|im_start|>user\n请将以下英语文本翻译为法语，直接输出翻译结果，不要进行任何解释。\n\n" +
                 "Keep the original letter.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n", backend.prompts.single())
+        } finally { engine.close() }
+    }
+
+    @Test fun indexSourceWindowUsesOnlyWholeBoundedSourcesAndNeverNeighbourTranslations() {
+        val fixture = fixture(); val backend = Backend(LocalGgufBackend.Info("9b", "qwen35"))
+        val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { backend },
+            profile = LocalGgufProfile.INDEX_TRANSLATE, contextPolicy = LocalGgufContextPolicy.SOURCE_WINDOW_TWO)
+        val current = " \nShe left it there. 😀\n "
+        try {
+            engine.translateWithSurroundingContext(listOf(current), "en", "fr", listOf("Maya arrived.", "The letter was blue."),
+                listOf("NEVER INCLUDE THIS TRANSLATION", "NOR THIS"), listOf("She returned.", "The letter had gone.")) { false }
+            val prompt = backend.prompts.single()
+            assertTrue(prompt.contains("【源文】\n$current\n\n【约束要求】"))
+            for (source in listOf("Maya arrived.", "The letter was blue.", "She returned.", "The letter had gone.")) assertTrue(prompt.contains(source))
+            assertFalse(prompt.contains("NEVER INCLUDE")); assertFalse(prompt.contains("NOR THIS"))
+            assertFalse(engine.includesPreviousTranslations); assertEquals(2, engine.followingContextItems)
+            val bounded = LocalGgufSourceWindow.bounded(listOf("a".repeat(2001), "near before"), listOf("near after", "b".repeat(2001)))
+            assertEquals(listOf("near before"), bounded.previous); assertEquals(listOf("near after"), bounded.following)
+        } finally { engine.close() }
+    }
+
+    @Test fun tokenBudgetDropsWholeSourceNeighboursBeforeSplittingTheCurrentOccurrence() {
+        val fixture = fixture(); val backend = Backend(LocalGgufBackend.Info("9b", "qwen35"))
+        backend.generate = { prompt, _ ->
+            if ("distant before" in prompt || "distant after" in prompt)
+                throw LocalGgufRuntime.Failure(LocalGgufRuntime.Code.INPUT_TOO_LONG)
+            LocalGgufBackend.Generation("Elle l’a laissé là.")
+        }
+        val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { backend },
+            profile = LocalGgufProfile.INDEX_TRANSLATE, contextPolicy = LocalGgufContextPolicy.SOURCE_WINDOW_TWO)
+        val observations = mutableListOf<LocalTranslationPerformance>()
+        engine.setPerformanceListener { observations += it }
+        try {
+            assertEquals(listOf("Elle l’a laissé là."), engine.translateWithSurroundingContext(listOf("Current complete source."), "en", "fr",
+                listOf("distant before", "near before"), emptyList(), listOf("near after", "distant after")) { false })
+            assertEquals(3, backend.prompts.size)
+            assertTrue(backend.prompts.all { "Current complete source." in it })
+            assertTrue(backend.prompts.last().contains("near before")); assertTrue(backend.prompts.last().contains("near after"))
+            val summary = requireNotNull(observations.last().session)
+            assertEquals(3L, summary.nativeCalls); assertEquals(1L, summary.measuredNativeCalls)
+            assertEquals(1L, summary.completedOccurrences)
+        } finally { engine.close() }
+    }
+
+    @Test fun sourceWindowCannotInjectUnsupportedInstructionsIntoTranslateGemma() {
+        val fixture = fixture(); val backend = Backend()
+        val engine = LocalGgufTranslationEngine(fixture.model, fixture.store, { backend },
+            profile = LocalGgufProfile.TRANSLATE_GEMMA, contextPolicy = LocalGgufContextPolicy.SOURCE_WINDOW_TWO)
+        try {
+            assertEquals(TranslationFailure.Reason.LOCAL_CONTEXT, fails<TranslationFailure> {
+                engine.translateWithSurroundingContext(listOf("Current"), "en", "fr", listOf("Previous"), emptyList(), listOf("Next")) { false }
+            }.reason)
+            assertEquals(0, backend.opens); assertTrue(backend.prompts.isEmpty())
         } finally { engine.close() }
     }
 

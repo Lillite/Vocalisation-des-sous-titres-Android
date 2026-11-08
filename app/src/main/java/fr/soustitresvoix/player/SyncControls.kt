@@ -35,6 +35,7 @@ class SyncControls(
     }
     private fun button(value: String, action: () -> Unit) = Button(activity).apply {
         text = value; textSize = 17f; isAllCaps = false; minHeight = dp(56)
+        setSingleLine(false); maxLines = Int.MAX_VALUE; ellipsize = null
         setOnClickListener { action() }
     }
     private fun number(label: String, value: Long, signed: Boolean): EditText = EditText(activity).apply {
@@ -76,6 +77,12 @@ class SyncControls(
             row.addView(button("− 50 ms") { step(-50) }.apply { contentDescription = "Diminuer $label de 50 millisecondes" }, LinearLayout.LayoutParams(0, -2, 1f))
             row.addView(button("+ 50 ms") { step(50) }.apply { contentDescription = "Augmenter $label de 50 millisecondes" }, LinearLayout.LayoutParams(0, -2, 1f))
             column.addView(row)
+            column.addView(button("Minimum : −$limit ms") { input.setText((-limit).toString()) }.apply {
+                contentDescription = "$label : régler au minimum, moins $limit millisecondes"
+            })
+            column.addView(button("Maximum : +$limit ms") { input.setText(limit.toString()) }.apply {
+                contentDescription = "$label : régler au maximum, $limit millisecondes"
+            })
             val choices = LinearLayout(activity)
             presets.forEach { preset ->
                 choices.addView(button("$preset ms") { input.setText(preset.toString()) }.apply {
@@ -158,6 +165,12 @@ class SyncControls(
                 contentDescription = "Retarder cette portion de 50 millisecondes"
             }, LinearLayout.LayoutParams(0, -2, 1f))
             row.addView(steps)
+            row.addView(button("Minimum du décalage : −${SubtitleTimeline.MAX_TIME_MS} ms") {
+                offset.setText((-SubtitleTimeline.MAX_TIME_MS).toString())
+            }.apply { contentDescription = "Décalage de cette portion : régler au minimum, moins ${SubtitleTimeline.MAX_TIME_MS} millisecondes" })
+            row.addView(button("Maximum du décalage : +${SubtitleTimeline.MAX_TIME_MS} ms") {
+                offset.setText(SubtitleTimeline.MAX_TIME_MS.toString())
+            }.apply { contentDescription = "Décalage de cette portion : régler au maximum, ${SubtitleTimeline.MAX_TIME_MS} millisecondes" })
             val item = PortionRow(start, end, offset, row)
             row.addView(button("Retirer cette portion") { portionRows.remove(item); portionsColumn.removeView(row) })
             portionRows += item; portionsColumn.addView(row)

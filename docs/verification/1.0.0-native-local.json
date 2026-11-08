@@ -1,0 +1,128 @@
+{
+  "status": "passed",
+  "realHostInference": true,
+  "gpuExecutionValidated": false,
+  "phonePerformanceValidated": false,
+  "linguisticQualityValidated": false,
+  "steps": [
+    {
+      "step": "configure",
+      "exitCode": 0,
+      "elapsedMs": 315,
+      "log": "configure.log"
+    },
+    {
+      "step": "build",
+      "exitCode": 0,
+      "elapsedMs": 26753,
+      "log": "build.log"
+    },
+    {
+      "step": "fixture-repeat",
+      "exitCode": 0,
+      "elapsedMs": 32,
+      "log": "fixture-repeat.log"
+    },
+    {
+      "step": "fixture-eos",
+      "exitCode": 0,
+      "elapsedMs": 34,
+      "log": "fixture-eos.log"
+    },
+    {
+      "step": "fixture-context",
+      "exitCode": 0,
+      "elapsedMs": 65,
+      "log": "fixture-context.log"
+    },
+    {
+      "step": "fixture-chat-formats",
+      "exitCode": 0,
+      "elapsedMs": 68,
+      "log": "fixture-chat-formats.log"
+    },
+    {
+      "step": "fixture-gemma-swa",
+      "exitCode": 0,
+      "elapsedMs": 33,
+      "log": "fixture-gemma-swa.log"
+    },
+    {
+      "step": "fixture-cache-q8",
+      "exitCode": 0,
+      "elapsedMs": 66,
+      "log": "fixture-cache-q8.log"
+    },
+    {
+      "step": "fixture-gemma-cache-q8",
+      "exitCode": 0,
+      "elapsedMs": 65,
+      "log": "fixture-gemma-cache-q8.log"
+    },
+    {
+      "step": "translation",
+      "exitCode": 0,
+      "elapsedMs": 4271,
+      "log": "translation.log"
+    },
+    {
+      "step": "probe",
+      "exitCode": 0,
+      "elapsedMs": 16,
+      "log": "probe.log"
+    },
+    {
+      "step": "diagnostic",
+      "exitCode": 0,
+      "elapsedMs": 4,
+      "log": "diagnostic.log"
+    }
+  ],
+  "loadingAdmissionRegressionsPassed": true,
+  "cachedVsFreshMaxLogitError": 0.0,
+  "changedContextDelta": 0.000209779,
+  "builtinChatFormatValidation": {
+    "fixtureModels": 14,
+    "exactPromptFamilies": 3,
+    "literalUserChecks": 3,
+    "successfulGenerations": 55,
+    "rejectedRequests": 18,
+    "boundaryChecks": 5
+  },
+  "chatTemplateMode": "BUILTIN_FORMAT",
+  "embeddedJinjaExecuted": false,
+  "compactSwaValidation": {
+    "requests": 6,
+    "safeRecompute": true,
+    "shortPrefixReuse": true,
+    "cachedVsFreshMaxLogitError": 0.0,
+    "compactVsFullMaxLogitError": 2.69338e-05,
+    "compactVsFullRelativeLogitError": 1.68453e-06
+  },
+  "runtimeOptimizationValidation": {
+    "movingWindow": {
+      "requests": 25,
+      "workspaceGrowthsAfterWarmup": 0,
+      "workspaceBytes": 4352,
+      "cacheResets": 23,
+      "cachedVsFreshMaxLogitError": 0.0,
+      "elapsedIncludingLoadMicroseconds": 293813
+    },
+    "quantizedCache": {
+      "Llama": {
+        "requests": 25,
+        "cachedVsFreshMaxLogitError": 0.0,
+        "q8VsF16MaxLogitError": 0.00262184,
+        "syntheticOutputTokensEqual": true
+      },
+      "Gemma-SWA": {
+        "requests": 25,
+        "cachedVsFreshMaxLogitError": 0.0,
+        "q8VsF16MaxLogitError": 0.00023362,
+        "syntheticOutputTokensEqual": true
+      }
+    },
+    "phoneSpeedupMeasured": false,
+    "linguisticEquivalenceEstablished": false
+  }
+}

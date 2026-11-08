@@ -42,6 +42,21 @@ void check_output(const subtitle_local::Response & response) {
     assert(response.stop_reason == "end_of_generation");
     assert(response.prompt_tokens == response.cached_prompt_tokens + response.prompt_evaluated_tokens);
     assert(response.prompt_evaluated_tokens >= 1);
+    assert(response.cache_shared_prefix_tokens >= response.cached_prompt_tokens);
+    assert(response.cache_shared_prefix_tokens < response.prompt_tokens);
+    assert(response.cache_position_min >= -1 && response.cache_position_max >= -1);
+    if (response.cached_prompt_tokens > 0) {
+        assert(response.cache_reset_reason == "REUSED");
+        assert(response.cache_position_min == 0);
+        assert(response.cache_position_max >= response.cache_shared_prefix_tokens - 1);
+    }
+    if (response.cache_reset_reason == "WINDOW_EXPIRED") {
+        assert(response.cache_shared_prefix_tokens > 0 && response.cached_prompt_tokens == 0);
+        assert(response.cache_position_min != 0 || response.cache_position_max < response.cache_shared_prefix_tokens - 1);
+    }
+    assert(response.json().find("\"cacheSharedPrefixTokens\":" + std::to_string(response.cache_shared_prefix_tokens)) != std::string::npos);
+    assert(response.json().find("\"cachePositionMin\":" + std::to_string(response.cache_position_min)) != std::string::npos);
+    assert(response.json().find("\"cachePositionMax\":" + std::to_string(response.cache_position_max)) != std::string::npos);
     assert(response.backend == "CPU" && !response.gpu_observed && response.gpu_graph_nodes == 0);
     assert(!response.npu_observed && response.npu_graph_nodes == 0 && response.actual_npu_layers == 0);
     assert(response.opencl_transport.empty());
@@ -738,8 +753,18 @@ int main(int argc, char ** argv) {
             for (size_t i = 0; i < prompts.size(); ++i) {
                 const auto response = warm.generate(prompts[i], 1, true);
                 check_output(response);
-                if (i == 1) saw_recompute_after_wrap = response.cached_prompt_tokens == 0;
-                if (i == 4) saw_short_prefix_reuse = response.cached_prompt_tokens > 0;
+                if (i == 1) {
+                    // The real compact SWA ring has discarded the beginning.
+                    // Preserve the lexical overlap as evidence while evaluating
+                    // the entire input again; never turn it into a false hit.
+                    assert(response.cache_reset_reason == "WINDOW_EXPIRED");
+                    assert(response.cache_shared_prefix_tokens > 0 && response.cache_position_min > 0);
+                    saw_recompute_after_wrap = response.cached_prompt_tokens == 0;
+                }
+                if (i == 4) {
+                    assert(response.cache_reset_reason == "REUSED" && response.cache_position_min == 0);
+                    saw_short_prefix_reuse = response.cached_prompt_tokens > 0;
+                }
                 compact_logits.push_back(warm.test_logits());
             }
         }

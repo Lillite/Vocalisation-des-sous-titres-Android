@@ -3,6 +3,8 @@ package fr.soustitresvoix.player
 import android.app.AlertDialog
 import android.content.Context
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import com.google.android.material.color.MaterialColors
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.MotionEvent
@@ -50,6 +52,7 @@ internal class SettingsPanel(context: Context) : LinearLayout(context) {
     }
     init {
         orientation = VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8))
+        setBackgroundColor(MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurface, Color.rgb(20, 18, 24)))
         // AlertDialog initially measures custom content with AT_MOST. A real
         // minimum gives the weighted scroll area space in portrait and landscape.
         minimumHeight = (resources.displayMetrics.heightPixels * .65f).toInt()
@@ -77,7 +80,13 @@ internal class SettingsPanel(context: Context) : LinearLayout(context) {
         content.addView(sections); content.addView(results)
         content.addView(semantics)
         SettingsSection.values().forEach { section ->
-            val group = LinearLayout(context).apply { orientation = VERTICAL }
+            val group = LinearLayout(context).apply {
+                orientation = VERTICAL; setPadding(dp(12), dp(4), dp(12), dp(12))
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(20).toFloat()
+                    setColor(MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurfaceContainer, Color.rgb(33, 31, 38)))
+                }
+            }
             group.addView(TextView(context).apply {
                 text = section.title; textSize = 23f; setTextColor(Color.WHITE)
                 setPadding(0, dp(12), 0, dp(8)); ViewCompat.setAccessibilityHeading(this, true)

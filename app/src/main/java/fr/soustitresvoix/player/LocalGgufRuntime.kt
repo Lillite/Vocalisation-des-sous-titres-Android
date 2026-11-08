@@ -57,7 +57,8 @@ internal object LocalGgufRuntime {
         val requestedNpuLayers: Int = 0, val actualNpuLayers: Int = 0,
         val qualcommCompatibility: Boolean = false, val nativeCpuWeights: Boolean = false,
         val memoryReserveBytes: Long = 0, val observedPrefillExtraBytes: Long = 0,
-        val memoryTelemetry: LocalGgufMemoryTelemetry? = null)
+        val memoryTelemetry: LocalGgufMemoryTelemetry? = null,
+        val cacheSharedPrefixTokens: Int = 0, val cachePositionMin: Long = -1, val cachePositionMax: Long = -1)
     private val loaded by lazy {
         try { System.loadLibrary("subtitle_model_probe"); true }
         catch (_: LinkageError) { false }
@@ -126,7 +127,9 @@ internal object LocalGgufRuntime {
                 optionalLayers(x, "requestedNpuLayers"), optionalLayers(x, "actualNpuLayers"),
                 optionalBoolean(x, "qualcommCompatibility"), optionalBoolean(x, "nativeCpuWeights"),
                 optionalMemoryBytes(x, "memoryReserveBytes"), optionalMemoryBytes(x, "observedPrefillExtraBytes"),
-                LocalGgufMemoryTelemetry.parse(x)).also {
+                LocalGgufMemoryTelemetry.parse(x), optionalNonNegativeLong(x, "cacheSharedPrefixTokens").let {
+                    if (it > 2048) throw Failure(Code.RESPONSE); it.toInt()
+                }, optionalNonNegativeLong(x, "cachePositionMin", -1), optionalNonNegativeLong(x, "cachePositionMax", -1)).also {
                 if (it.stopReason != "end_of_generation" || it.output.toByteArray(Charsets.UTF_8).size > 65536 ||
                     it.promptTokens !in 1..2048 || it.generatedTokens !in 0..1024 ||
                     it.promptMs < 0 || it.generationMs < 0 || it.peakRssBytes < 0 || !validBackend(it.backend, it.requestedMode) ||
@@ -137,6 +140,8 @@ internal object LocalGgufRuntime {
                     it.requestedMode == "HEXAGON" && !it.npuObserved ||
                     it.cachedPromptTokens < 0 || it.promptEvaluatedTokens < 1 ||
                     it.cachedPromptTokens + it.promptEvaluatedTokens != it.promptTokens ||
+                    it.cacheSharedPrefixTokens >= it.promptTokens ||
+                    it.cachePositionMin > it.cachePositionMax || it.cachePositionMax >= 2048 ||
                     it.actualGpuLayers !in -1..1024 || it.requestedGpuLayers !in -1..1024 ||
                     it.residentBytes < -1 || it.availableRamBytes < -1 || !validTransport(it.backend, it.openClTransport) ||
                     !validSettings(it.batchTokens, it.microBatchTokens, it.compactSwa, 2048) ||

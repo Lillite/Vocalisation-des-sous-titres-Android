@@ -100,6 +100,7 @@ class ExpertAudioAndroidTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             var original = AudioDspSettings()
             scenario.onActivity { original = it.session.audioCommands.snapshot().context.requested.dsp }
+            onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.navigation_settings)).perform(click())
             onView(withText("Réglages de la voix et du confort")).perform(scrollTo(), click())
             onView(withContentDescription("Choisir une rubrique de réglages"))
                 .inRoot(isDialog()).perform(scrollTo(), click())

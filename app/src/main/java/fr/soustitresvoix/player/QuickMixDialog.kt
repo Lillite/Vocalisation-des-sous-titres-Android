@@ -33,7 +33,21 @@ object QuickMixDialog {
                     update()
                 }
             }, LinearLayout.LayoutParams(0, -2, 1f))
-            voiceColumn.addView(row); update()
+            voiceColumn.addView(row)
+            for ((name, bound) in listOf("Minimum" to minimum, "Maximum" to 100)) {
+                voiceColumn.addView(Button(activity).apply {
+                    text = "$name : $bound %"; isAllCaps = false; minHeight = dp(56)
+                    setSingleLine(false); maxLines = Int.MAX_VALUE; ellipsize = null
+                    contentDescription = "$label : régler au ${name.lowercase()}, $bound pour cent"
+                    setOnClickListener {
+                        val state = session.audioCommands.snapshot().context
+                        if (!activity.isFinishing && !activity.isDestroyed && !state.closed && state.generation == generation)
+                            set(bound / 100f)
+                        update()
+                    }
+                })
+            }
+            update()
         }
         level("Volume de la voix — prochain segment", 10, { prefs.voiceVolume }) {
             session.finishPlaybackBenchmark("Volume vocal modifié : essai interrompu"); prefs.voiceVolume = it

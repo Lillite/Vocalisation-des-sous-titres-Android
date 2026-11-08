@@ -238,7 +238,7 @@ class LocalGgufVariedBenchmarkRobolectricTest {
         val environment = LocalGgufBenchmark.Environment(Long.MAX_VALUE, 6, Int.MAX_VALUE)
         val playback = LocalGgufBenchmark.PlaybackObservation(1_000, Long.MAX_VALUE, true, true,
             Long.MAX_VALUE, Long.MAX_VALUE, true, true, true)
-        val contextRuns = LocalGgufContextPolicy.entries.map { policy ->
+        val contextRuns = LocalGgufContextPolicy.comparisonPolicies.map { policy ->
             val gpuRun = fullRuns.single { it.requestedMode == "OPENCL" && !it.reopening }
             gpuRun.copy(contextPolicy = policy, before = environment, after = environment,
                 samples = gpuRun.samples.map { it.copy(environment = environment, playback = playback, finishedAtMs = 2_000) },
@@ -280,7 +280,7 @@ class LocalGgufVariedBenchmarkRobolectricTest {
             benchmark.start(model, 4, LocalGgufProfile.AUTO, LocalGgufBenchmark.Options(
                 LocalGgufBenchmark.Scenario.CONTEXT_POLICIES, LocalGgufBenchmark.Order.CPU_THEN_GPU, true))
             await(benchmark)
-            assertEquals(LocalGgufContextPolicy.entries, configurations.map { it.localContextPolicy })
+            assertEquals(LocalGgufContextPolicy.comparisonPolicies, configurations.map { it.localContextPolicy })
             assertTrue(configurations.all { it.localExecution == "OPENCL" && it.localContext.isEmpty() })
             assertEquals(3, benchmark.state.runs.size)
             benchmark.state.runs.zip(engines).forEach { (run, engine) ->

@@ -18,7 +18,7 @@ import java.security.MessageDigest
  */
 internal class ExactTranslationRequestCache(private val directory: File) {
     fun key(engineId: String, sourceLanguage: String, targetLanguage: String, texts: List<String>,
-        previousSources: List<String>, previousTranslations: List<String>): String {
+        previousSources: List<String>, previousTranslations: List<String>, followingSources: List<String> = emptyList()): String {
         val digest = MessageDigest.getInstance("SHA-256")
         val encodedNumber = ByteArray(4)
         fun number(value: Int) {
@@ -30,6 +30,8 @@ internal class ExactTranslationRequestCache(private val directory: File) {
         fun fields(values: List<String>) { number(values.size); values.forEach(::field) }
         field("exact-local-translation-request-v1"); field(engineId); field(sourceLanguage); field(targetLanguage)
         fields(texts); fields(previousSources); fields(previousTranslations)
+        // Preserve byte-identical legacy keys when no future context is used.
+        if (followingSources.isNotEmpty()) { field("following-source-context-v1"); fields(followingSources) }
         val bytes = digest.digest()
         return CharArray(bytes.size * 2).also { result ->
             bytes.forEachIndexed { index, byte ->

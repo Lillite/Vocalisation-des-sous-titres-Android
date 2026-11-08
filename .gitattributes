@@ -1,0 +1,2 @@
+# Upstream legal notices retain their original bytes, including trailing spaces.
+app/src/main/assets/licenses/*NOTICE* whitespace=-blank-at-eol

@@ -98,6 +98,12 @@ internal class ExpertImageControls(
             val decrease = button("Diminuer ${field.subject} de 0,01", field.decreaseId) { changeBy(field, -1) }
             val increase = button("Augmenter ${field.subject} de 0,01", field.increaseId) { changeBy(field, 1) }
             addView(decrease); addView(increase)
+            addView(button("Minimum : ${field.minimum.replace('.', ',')}") { change(field, field.minimum.toFloat()) }.apply {
+                contentDescription = "${field.title} : régler au minimum, ${field.minimum.replace('.', ',')}"
+            })
+            addView(button("Maximum : +${field.maximum.replace('.', ',')}") { change(field, field.maximum.toFloat()) }.apply {
+                contentDescription = "${field.title} : régler au maximum, ${field.maximum.replace('.', ',')}"
+            })
             addView(button("Saisir ${field.subject}", field.editId) { edit(field) })
             addView(button("Remettre ${field.subject} à zéro", field.resetId) { change(field, 0f) })
             fields[field] = Controls(value, decrease, increase)
@@ -266,7 +272,7 @@ internal class ExpertImageControls(
         if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
     }
     private fun button(value: String, viewId: Int = View.NO_ID, action: () -> Unit) = Button(activity).apply {
-        id = viewId; text = value; textSize = 16f; isAllCaps = false; minHeight = dp(52)
+        id = viewId; text = value; textSize = 16f; isAllCaps = false; minHeight = dp(56)
         setSingleLine(false); maxLines = Int.MAX_VALUE; ellipsize = null
         setTextColor(Color.WHITE); backgroundTintList = ColorStateList.valueOf(Color.rgb(45, 45, 45))
         setOnClickListener { if (alive()) action() }

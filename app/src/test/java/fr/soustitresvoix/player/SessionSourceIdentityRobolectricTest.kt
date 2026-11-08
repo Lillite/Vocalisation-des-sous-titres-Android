@@ -114,6 +114,34 @@ class SessionSourceIdentityRobolectricTest {
         provider.sourceFile?.delete()
     }
 
+    @Test fun fileBrowserSourcesInvalidateSavedChoicesWhenMetadataChanges() = withFeatures { features, _, _ ->
+        val file = File.createTempFile("file-browser-source-", ".mkv", context.cacheDir)
+        try {
+            file.writeBytes(byteArrayOf(1, 2, 3))
+            val uri = Uri.fromFile(file).toString()
+            val first = features.sourceFingerprint(uri)
+            assertTrue(first.startsWith("file-metadata-v1:"))
+            assertEquals(first, features.sourceFingerprint(uri))
+            file.appendBytes(byteArrayOf(4))
+            assertNotEquals(first, features.sourceFingerprint(uri))
+            file.delete()
+            assertEquals("", features.sourceFingerprint(uri))
+            assertEquals(0, provider.fileOpens)
+        } finally { file.delete() }
+    }
+
+    @Test fun storedNetworkLinkDoesNotClaimOfflineMediaAccess() = withFeatures { features, _, _ ->
+        var accessible: Boolean? = null
+        features.checkOfflineMediaAccess("network-media://synthetic-id/media.mkv") { accessible = it }
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (accessible == null && System.nanoTime() < deadline) {
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            Thread.sleep(5)
+        }
+        assertEquals(false, accessible)
+        assertEquals(0, provider.fileOpens)
+    }
+
     @Test fun providersWithoutModifiedColumnStillSupplyAnExplicitPartialSizeIdentity() = withFeatures { features, _, _ ->
         provider.rejectsModified = true
         val first = features.sourceFingerprint("content://$AUTHORITY/first")

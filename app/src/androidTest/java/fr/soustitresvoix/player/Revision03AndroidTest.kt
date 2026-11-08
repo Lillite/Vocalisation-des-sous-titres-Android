@@ -1007,6 +1007,8 @@ class Revision03AndroidTest {
                 if (scroll) interaction.perform(androidx.test.espresso.action.ViewActions.scrollTo())
                 interaction.perform(androidx.test.espresso.action.ViewActions.click())
             }
+            androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.navigation_settings))
+                .perform(androidx.test.espresso.action.ViewActions.click())
             click("Réglages de la voix et du confort", true)
             androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withContentDescription("Rechercher dans les huit rubriques de réglages"))
                 .perform(androidx.test.espresso.action.ViewActions.replaceText("Banc d’essai de lecture"), androidx.test.espresso.action.ViewActions.closeSoftKeyboard())

@@ -41,6 +41,20 @@ class SyncControlsRobolectricTest {
         .single { it.text.toString() == value }
     private fun messages(dialog: AlertDialog) = views(dialog).filterIsInstance<TextView>().joinToString("\n") { it.text.toString() }
 
+    @Test fun minimumAndMaximumRemainDraftsUntilExplicitConfirmation() {
+        Fixture().use { fixture ->
+            val initial = fixture.current
+            button(fixture.dialog, "Minimum : −${SubtitleTimeline.MAX_TIME_MS} ms").performClick()
+            button(fixture.dialog, "Maximum : +${SubtitleTimeline.MAX_NARRATION_OFFSET_MS} ms").performClick()
+            assertEquals(initial, fixture.current)
+            assertTrue(fixture.changes.isEmpty())
+            fixture.dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+            assertEquals(-SubtitleTimeline.MAX_TIME_MS, fixture.current.globalOffsetMs)
+            assertEquals(SubtitleTimeline.MAX_NARRATION_OFFSET_MS, fixture.current.narrationOffsetMs)
+            assertEquals(0, fixture.previews)
+        }
+    }
+
     @Test fun draftIsLocalAndExplicitPreviewIsRevertedOnCancellation() {
         Fixture().use { fixture ->
             val initial = fixture.current

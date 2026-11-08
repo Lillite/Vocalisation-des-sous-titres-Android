@@ -148,6 +148,7 @@ class PlaybackDiagnosticsAndroidTest {
 
                 // The general settings panel already pauses on entry. Capture
                 // the baseline after that existing action, never weaken it.
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.navigation_settings)).perform(click())
                 onView(withText("Réglages de la voix et du confort")).perform(scrollTo(), click())
                 onView(androidx.test.espresso.matcher.ViewMatchers.withContentDescription("Rechercher dans les huit rubriques de réglages"))
                     .inRoot(isDialog()).perform(androidx.test.espresso.action.ViewActions.replaceText("diagnostic"), androidx.test.espresso.action.ViewActions.closeSoftKeyboard())

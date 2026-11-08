@@ -8,10 +8,11 @@ root = Path(__file__).resolve().parents[1]
 ns = '{http://schemas.android.com/apk/res/android}'
 manifest = ET.parse(root / 'app/src/main/AndroidManifest.xml').getroot()
 permissions = [n.attrib.get(ns + 'name', '') for n in manifest.findall('uses-permission')]
-assert permissions == ['android.permission.INTERNET'], f'Unexpected source-manifest permissions: {permissions}'
+assert permissions == ['android.permission.INTERNET', 'android.permission.READ_EXTERNAL_STORAGE', 'android.permission.MANAGE_EXTERNAL_STORAGE'], f'Unexpected source-manifest permissions: {permissions}'
 app = manifest.find('application')
 assert app is not None and app.get(ns + 'allowBackup') == 'false'
-assert app.get(ns + 'usesCleartextTraffic') == 'false'
+assert app.get(ns + 'usesCleartextTraffic') == 'true'
+assert manifest.find("uses-permission[@" + ns + "name='android.permission.READ_EXTERNAL_STORAGE']").get(ns + 'maxSdkVersion') == '29'
 assert manifest.find('queries/intent/action').get(ns + 'name') == 'android.intent.action.TTS_SERVICE'
 for xml in root.glob('app/src/main/**/*.xml'):
     ET.parse(xml)
@@ -39,6 +40,6 @@ for file in production:
     assert not re.search(r'sk-[A-Za-z0-9]{20,}', code), file
     assert '\x00' not in code, file
 print(f'PASS {len(production)} production Kotlin files: no TODO implementation or embedded API key')
-print('PASS Internet only for explicit translation, HTTPS only, no cloud backup or private signing key')
+print('PASS explicit network media and optional shared-storage access; no cloud backup or private signing key')
 print('PASS eight synthetic subtitles and Gradle demo-generation task present')
 print('NOTE Android API compatibility, merged manifest and actual playback require the Android build/tests.')

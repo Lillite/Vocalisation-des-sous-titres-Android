@@ -453,7 +453,7 @@ class PublicationGitHub:
             return [{'id': 99, 'tag_name': publisher.TAG, 'draft': True}] if self.draft_collision else []
         if suffix == '/releases' and method == 'POST':
             assert data['draft'] is True
-            assert data['prerelease'] is True, 'The performance candidate must remain a prerelease'
+            assert data['prerelease'] is False, 'The verified stable release must not be a prerelease'
             self.draft = {**deepcopy(data), 'id': 12, 'assets': []}
             return deepcopy(self.draft)
         if suffix.startswith('/actions/workflows/release-build.yml/runs?'):
@@ -467,8 +467,8 @@ class PublicationGitHub:
                 result['assets'].append({'id': 99})
             return result
         if suffix == '/releases/12' and method == 'PATCH':
-            assert data == {'draft': False, 'prerelease': True, 'make_latest': 'false'}
-            self.draft.update(draft=False, prerelease=True, html_url=PUBLIC_URL)
+            assert data == {'draft': False, 'prerelease': False, 'make_latest': 'true'}
+            self.draft.update(draft=False, prerelease=False, html_url=PUBLIC_URL)
             return deepcopy(self.draft)
         raise AssertionError(f'Unexpected mocked GitHub operation: {method} {suffix}')
 
@@ -586,9 +586,9 @@ class PublishBehaviorTests(unittest.TestCase):
         self.assertTrue(max(downloads) < public)
         self.assertEqual(['POST', 'UPLOAD', 'UPLOAD', 'PATCH'], [item[0] for item in self.github.mutations])
         self.assertFalse(self.github.draft['draft'])
-        self.assertTrue(self.github.draft['prerelease'])
-        self.assertEqual({'draft': False, 'prerelease': True, 'make_latest': 'false'},
-                         self.github.mutations[-1][2], 'The stable release must remain latest')
+        self.assertFalse(self.github.draft['prerelease'])
+        self.assertEqual({'draft': False, 'prerelease': False, 'make_latest': 'true'},
+                         self.github.mutations[-1][2], 'The verified stable release must become latest')
 
     def test_optional_verified_apk_path_is_used_without_whole_apk_in_checkout(self):
         original = self.root / publisher.APK_PATH
@@ -616,13 +616,13 @@ class PublishBehaviorTests(unittest.TestCase):
             self.publish()
         self.assert_never_public()
 
-    def test_creation_as_stable_is_refused_before_asset_upload(self):
+    def test_creation_as_prerelease_is_refused_before_asset_upload(self):
         original_api = self.github.api
         def wrong_creation(path, method='GET', data=None, expected=(200,), absent=False):
             result = original_api(path, method, data, expected, absent)
             if path == publisher.PREFIX + '/releases' and method == 'POST':
-                self.github.draft['prerelease'] = False
-                result['prerelease'] = False
+                self.github.draft['prerelease'] = True
+                result['prerelease'] = True
             return result
         self.github.api = wrong_creation
         with self.assertRaisesRegex(publisher.Refusal, 'creation was not confirmed'):
@@ -673,7 +673,7 @@ class PublishBehaviorTests(unittest.TestCase):
             'wrong-notes': lambda draft: draft.update(body='Notes changed after verification'),
             'wrong-tag': lambda draft: draft.update(tag_name='v9.9.9'),
             'wrong-release-id': lambda draft: draft.update(id=99),
-            'wrong-prerelease': lambda draft: draft.update(prerelease=False),
+            'wrong-prerelease': lambda draft: draft.update(prerelease=True),
             'asset-name': lambda draft: draft['assets'][0].update(name='different.apk'),
             'asset-size': lambda draft: draft['assets'][0].update(size=999),
             'asset-state': lambda draft: draft['assets'][0].update(state='starter'),

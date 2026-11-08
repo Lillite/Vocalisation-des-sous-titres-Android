@@ -1,94 +1,60 @@
 # Contribuer à Sous-titres en voix
 
-[Accueil](README.md) · [Documentation](docs/README.md) · [Validation](TESTING.md) · [Consignes](AGENTS.md)
+[Accueil](README.md) · [Documentation](docs/README.md) · [Architecture](docs/ARCHITECTURE.md) · [Validation](TESTING.md) · [Consignes](AGENTS.md)
 
-La branche **`main` est la référence du projet**. Chaque modification terminée et vérifiée doit y être fusionnée avant d’être annoncée comme livrée. Cette règle s’applique aussi au travail réalisé par les agents d’intelligence artificielle.
+`main` est la référence du projet. Un travail terminé et vérifié doit y être fusionné avant d’être annoncé comme livré. La 1.0.0 conserve l’identité `fr.soustitresvoix.player.translation`, le code 23 et le certificat durable de la série Traduction. Une release stable ne transforme pas les backends expérimentaux en matériel universellement qualifié.
 
-## Préparer et intégrer une modification
+## Préparer une modification
 
-1. Partir de l’état à jour de `main` et lire les [consignes de développement](AGENTS.md).
-2. Préparer le changement sur une branche de travail. Vérifier ce que contiennent les branches existantes avant de les réutiliser.
-3. Préserver la vocalisation des événements textuels distincts : une correction de doublons ne doit pas supprimer des répliques, des panneaux ou des répétitions réelles.
-4. Exécuter les contrôles applicables décrits dans [TESTING.md](TESTING.md). Avant chaque fusion, construire les APK de test dans GitHub Actions et exécuter la validation JVM, lint et les tests instrumentés sur l’APK release de test. Chaque suite complète ne passe qu’une fois ; ses résultats sont conservés. Conserver les échecs et les limites constatées.
-5. Mettre à jour la documentation concernée, le [journal des changements](CHANGELOG.md) et, lorsqu’une version change, les liens de téléchargement et les repères de version.
-6. Ouvrir une demande de fusion vers `main` avec le problème traité, le comportement obtenu, les vérifications réellement exécutées et les limites restantes.
-7. Fusionner le travail achevé lorsque les contrôles requis réussissent. Utiliser une fusion avec commit de merge. Vérifier ensuite la construction de release sur `main`, sans rejouer les tests : elle doit prouver le même arbre et les mêmes parents que la fusion provisoire testée, puis le même contenu applicatif hors signature. Ne pas laisser une version terminée uniquement sur une branche secondaire.
+1. Partir du `main` à jour, lire `AGENTS.md` et vérifier l’état des branches avant de réutiliser une branche de travail.
+2. Définir le comportement observable et sa couche dans la [carte du code](docs/ARCHITECTURE.md#carte-du-code). Préserver les identifiants et minutages de chaque occurrence, y compris panneaux, répétitions et chevauchements.
+3. Ajouter une régression utile pour un défaut corrigé. Conserver Pause, déplacement, callback périmé, fin, reprise et annulation ; ne pas retirer un contrôle pour faire passer une suite.
+4. Faire les vérifications locales pertinentes puis réunir code, tests, README, index, journal et notes de release dans la même PR.
+5. Exécuter la campagne complète GitHub Actions sur le changement final **avant chaque fusion** : construction des APK, JVM/lint et instrumentation du release de test. Contrôler les XML frais par rapport à l’inventaire source ; une compilation seule ou un ancien commit ne suffit pas.
+6. Décrire dans la PR le problème, le comportement obtenu, les vérifications réellement exécutées et les limites. Résoudre les conflits en préservant les corrections récentes.
+7. Après réussite des contrôles requis, fusionner par **commit de merge à deux parents**. Une protection de branche, un test en échec ou une provenance différente reste bloquant ; ne pas contourner la règle ni annoncer la livraison.
 
-Un test en échec, une protection de branche ou un conflit non résolu empêche de présenter la livraison comme terminée. Résoudre le problème ou expliquer précisément le blocage ; ne pas contourner les contrôles et ne pas annoncer une fusion qui n’a pas eu lieu.
+Le projet doit rester utilisable en CPU sans pilote GPU/NPU. Aucune baisse de précision, réduction silencieuse de texte, perte d’occurrence, acceptation arbitraire d’un certificat ou changement opaque de fournisseur ne peut servir d’optimisation. Le texte des sous-titres est une donnée, pas une instruction.
 
-## Préserver l’historique
+## Compiler et interpréter les résultats
 
-- Utiliser des commits et des demandes de fusion aux titres explicites.
-- Lors d’une consolidation de branches anciennes, conserver l’historique et documenter les variantes remplacées. Ne pas réintroduire une ancienne implémentation à la place de correctifs plus récents.
-- Conserver les tests de non-régression. Une simplification de la présentation du dépôt ne justifie pas de retirer une fonction ou une preuve de validation.
-- Ne pas déplacer un tag de version correct déjà publié. Pour corriger des tags historiques mal nommés, créer des tags canoniques sur les sources vérifiées, conserver les APK et documenter la correspondance avant de retirer les anciens noms.
+Les versions Java/Android/Gradle, commandes et niveaux de preuve sont dans [TESTING.md](TESTING.md). Le code se partage entre noyau Kotlin pur `core`, adaptateurs Android `app`, JNI/C++ et outils de provenance. Les dépendances Gradle et natives sont épinglées ; tout changement doit mettre à jour les notices pertinentes et leur [attribution](ATTRIBUTIONS.md).
 
-## Préparer une version installable
+Une réussite JVM n’est pas une instrumentation Android. Une inférence native hôte n’est pas un essai d’accélérateur physique. TalkBack, vraie voix, codec, serveur réseau, température, stabilité et fidélité linguistique demandent des essais identifiés. Conserver les échecs intermédiaires et les séparer des résultats finaux ; ne pas compter des XML périmés comme nouvelle exécution.
 
-La compilation et la publication d’un APK sont deux opérations distinctes. Après fusion, le workflow `release-build.yml` construit un APK release non signé sans relancer les suites déjà validées ; la publication exige ensuite la clé durable existante et un contrôle du fichier signé. Les artefacts de validation CI utilisent une signature éphémère ; ils ne remplacent pas automatiquement l’APK distribué avec sa clé durable.
+Ne pas lire ni téléverser de vidéos personnelles pour déboguer. Employer d’abord la démonstration et les corpus synthétiques. Ne pas ajouter un service, une collecte ou des accès secrets hors du périmètre expressément autorisé. Un rapport doit être expurgé de secrets, liens personnels, texte et chemins de films privés.
 
-Pour une nouvelle publication, suivre [TESTING.md](TESTING.md), conserver la même identité et la même clé pour les mises à jour, vérifier le fichier distribué, et fournir dans les notes de version le commit source, les résultats de validation, le SHA-256 et les limites connues. Utiliser un tag correspondant à la version réelle, par exemple `v0.5.2` pour une application versionnée 0.5.2, ou un suffixe explicite pour une préversion.
+## Préserver l’historique et la documentation
 
-Les secrets, mots de passe, vidéos personnelles et clés privées ne doivent pas être versionnés. Les déclarations sur les tests doivent distinguer compilation, tests JVM, instrumentation Android et essais manuels sur un téléphone.
+Les pages courantes sont le README, l’index, le guide utilisateur, les sources médias, les modèles, l’architecture, la validation et cette contribution. Les documents datés/de version conservent leurs constats d’origine. Les anciennes vues de README, architecture et validation ont été préservées dans `docs/archives` lors de la réorganisation 1.0.0. Ne pas transformer une ancienne attente de test en réussite actuelle.
 
-### Transport temporaire de l’APK déjà vérifié
+Conserver les commits et PR explicites ; ne pas réintroduire une ancienne implémentation en consolidant des branches. Ne pas déplacer un tag correct publié. Pour corriger un ancien nom, établir d’abord la correspondance avec sa source et ses APK, conserver les preuves puis créer le tag canonique approprié.
 
-Le workflow `publish-apk.yml` reçoit les données sur la branche temporaire
-`release-upload/v0.5.15-loading`. Son commit doit avoir pour seul parent le commit
-source validé sur `main` et ne modifier que les fichiers de transport prévus.
-Le commit source reste dépourvu de `release-upload`. L’APK a déjà été signé
-avec le certificat durable hors de ce transport ; aucune clé, aucun mot de
-passe ni jeton n’est ajouté aux fichiers. Les métadonnées ne permettent pas
-de fournir une commande ou une URL de téléchargement au workflow.
+Le manifeste [`.github/release-history.json`](.github/release-history.json) décrit l’historique et `next_release`. Pour 1.0.0, le tag déclaré est `v1.0.0`, `prerelease=false`, `latest=true`. Ne pas inventer d’identifiant GitHub, de run ni de SHA-256 inconnu. La synchronisation conserve la recommandation publiée existante avant la publication, puis vérifie la source sur `main` et les assets avant de l’actualiser.
 
-Deux formats sont acceptés par `tools/publish-verified-release.py` :
+## Publier un APK vérifié
 
-| Format | Fichiers temporaires | Métadonnées |
-| --- | --- | --- |
-| APK unique | `release-upload/release.json`, `release-upload/notes.md` et `release-upload/SousTitresVoix-0.5.15-loading.apk` | Les sept champs `tag`, `source_sha`, `apk_sha256`, `signer_sha256`, `apk_file`, `notes_file` et `title`. Aucun répertoire `apk-parts` n’est accepté. |
-| Fragments binaires | `release-upload/release.json`, `release-upload/notes.md` et `release-upload/apk-parts/0000.part`, `0001.part`, etc. | Les mêmes sept champs, plus `apk_chunks`, liste ordonnée des SHA-256 de chaque partie. Le fichier APK complet est absent du checkout. |
+La compilation après fusion et la publication sont distinctes. `release-build.yml` reconstruit sur `main` **sans rejouer les suites déjà réussies** : contrôler arbre et parents par rapport à la proposition testée, puis contenu applicatif identique de l’APK hors seules métadonnées de signature autorisées. Une provenance ou un contenu différent interdit de réutiliser les résultats.
 
-Le second format permet de transmettre les mêmes octets en plusieurs petits
-blobs lorsque le moyen d’envoi ne permet pas de transférer l’APK en une seule
-requête. Les parties contiennent des octets binaires, sans encodage base64 dans
-les fichiers. Il y a **1 à 512 parties**, numérotées à partir de `0000` sans trou,
-de **1 048 576 octets** chacune ; la dernière contient **1 à 1 048 576 octets**.
-La taille totale de l’APK reste limitée à **512 Mio**. Les empreintes sont
-hexadécimales minuscules de 64 caractères ; `apk_chunks` conserve leur ordre de
-concaténation. Les métadonnées sont bornées à **64 Kio**. Dans les deux formats,
-`apk_file` reste `release-upload/SousTitresVoix-0.5.15-loading.apk` et
-`apk_sha256` désigne l’empreinte de l’APK signé complet.
+Signer ensuite avec la **clé durable existante**, conservée hors dépôt. `SUBTITRES_SIGNING_PROPERTIES` désigne les propriétés externes ; PKCS12, mots de passe et jetons restent hors versionnement. Ne jamais générer une nouvelle clé en remplacement pour la même application. Vérifier manifeste, version/code/applicationId, certificat, alignement et empreinte de l’APK exact avant son transport.
 
-Le format fragmenté refuse un mélange avec l’APK complet, les parties
-supplémentaires, les liens symboliques et les fichiers hors de la liste
-attendue. Le réassemblage s’effectue dans un répertoire temporaire **hors du
-checkout**, après vérification de la taille et de l’empreinte de chaque partie ;
-l’empreinte globale est contrôlée avant les vérifications de l’APK. Les deux
-formats imposent les mêmes contrôles de provenance, manifeste, certificat,
-alignement et contenu applicatif par comparaison avec l’artefact CI validé.
-Ils produisent les mêmes fichiers publics : l’APK installable et
-`SHA256SUMS`. Les fragments ne sont pas une distribution à installer. La branche
-de transport est supprimée après vérification de la publication publique.
+Pour 1.0.0, `publish-apk.yml` reçoit l’APK déjà signé sur la branche temporaire `release-upload/v1.0.0`. Son unique parent doit être la source validée sur `main` ; son diff ne contient que le transport prévu. La source de `main` reste sans `release-upload`. Aucun secret ni URL de téléchargement fourni par les métadonnées ne devient une instruction du workflow.
 
-### Préparer la documentation avant les tests
+| Format | Fichiers |
+| --- | --- |
+| APK unique | `release-upload/release.json`, `release-upload/notes.md`, `release-upload/SousTitresVoix-1.0.0.apk` |
+| Fragments binaires | Même JSON et notes ; `release-upload/apk-parts/0000.part`, `0001.part`, etc., sans APK complet dans le checkout |
 
-Réunir code, tests utiles et documentation dans la même PR. Le manifeste
-`.github/release-history.json` conserve les identifiants et empreintes des
-publications historiques. Son champ `next_release` déclare la prochaine version,
-ses notes et son identité Android avant la validation : aucun identifiant de
-release ni SHA-256 encore inconnu ne doit être inventé. Avant publication, la
-synchronisation conserve la version recommandée existante. Après publication,
-elle résout le tag déclaré, vérifie que sa source appartient à `main`, puis
-contrôle les sources, les fichiers publics, leur taille et leur empreinte avant
-toute modification. Une publication non déclarée reste bloquante.
+Les champs sont exactement `tag`, `source_sha`, `apk_sha256`, `signer_sha256`, `apk_file`, `notes_file`, `title`, plus `apk_chunks` pour les fragments. Dans les deux formats, `apk_file` vaut `release-upload/SousTitresVoix-1.0.0.apk` et l’empreinte globale porte sur l’APK signé entier.
 
-Ce parcours évite une seconde campagne Android uniquement pour ajouter les
-identifiants que GitHub attribue après publication. Les résultats et empreintes
-propres à l’exécution figurent dans les preuves de la release et les artefacts
-Actions, avec leurs limites de conservation.
+Les métadonnées sont bornées à 64 Kio. Le transport fragmenté comporte **1 à 512 parties**, numérotées sans trou à partir de `0000`, de **1 048 576 octets** chacune sauf la dernière, de 1 à 1 048 576 octets. Taille totale maximale : **512 Mio**. Les SHA-256 sont minuscules, sur 64 caractères ; `apk_chunks` conserve l’ordre. Le mélange des formats, les fichiers supplémentaires et les liens symboliques sont refusés. Le réassemblage a lieu hors checkout après contrôle de chaque partie, puis de l’empreinte globale.
+
+Les deux formats passent les mêmes contrôles de provenance, certificat durable, manifeste, alignement et contenu comparé à l’APK CI validé. Les seuls fichiers publics destinés à l’installation sont l’APK et `SHA256SUMS` ; les fragments ne s’installent pas. Après publication, télécharger indépendamment les fichiers publics et revérifier taille, empreinte, identité et certificat avant de supprimer la branche de transport et d’annoncer la livraison.
+
+Compléter les [notes 1.0.0](docs/releases/1.0.0.md#validation-et-publication) avec les résultats observés et les liens propres à cette version. Les suites validées n’ont pas à être répétées pour ajouter les identifiants attribués après publication ; la provenance et l’égalité de contenu doivent néanmoins rester démontrées.
 
 ## Signaler un problème
 
-Indiquer la version de l’application, la version Android, le modèle du téléphone, le moteur et la voix utilisés, le format de la vidéo et des sous-titres, les réglages concernés et les étapes de reproduction. Décrire le résultat attendu et le résultat observé. Un diagnostic ou un petit exemple synthétique peut aider ; ne pas joindre de vidéo personnelle ni d’information privée.
+Fournir version/code, Android, appareil, moteur/voix, modèle/SHA si GGUF, mode demandé, réglages, format/protocole, étapes et résultat attendu/observé. Joindre si possible un petit exemple synthétique et un rapport expurgé. Un arrêt Android de motif 6/ANR ne prouve pas un OOM ni la responsabilité d’un pilote ; conserver la cause indéterminée si les données ne permettent pas de conclure.
 
-Le dépôt ne définit pas actuellement de licence générale de redistribution. La présence publique du code et la mention de réalisation par IA ne remplacent pas une licence.
+Le dépôt ne définit pas de licence générale de redistribution du code propre au projet. La réalisation par IA et les licences tierces ne remplacent pas une telle licence.
