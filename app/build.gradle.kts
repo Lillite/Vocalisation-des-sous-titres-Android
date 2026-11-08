@@ -154,6 +154,12 @@ android {
     testBuildType = if (providers.gradleProperty("verifyRelease").orNull == "true") "release" else "debug"
     testOptions { unitTests.isIncludeAndroidResources = true }
     lint { abortOnError = true; checkReleaseBuilds = true }
+    packaging {
+        resources {
+            // OSGi JVM module metadata is unused on Android; keep licenses and class files.
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
+    }
 }
 tasks.named("preBuild") { dependsOn(generateDemo); dependsOn(generateDiagnosticModel); dependsOn(verifyHexagonAssets) }
 // AGP's legacy AndroidTest asset source set does not preserve a mapped task
