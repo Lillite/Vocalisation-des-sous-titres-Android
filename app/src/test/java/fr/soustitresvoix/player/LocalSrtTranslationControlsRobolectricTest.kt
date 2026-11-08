@@ -371,7 +371,9 @@ class LocalSrtTranslationControlsRobolectricTest {
                     assertTrue(input.textSize >= 18 * density)
                 }
                 val actions = descendants(scroll).filterIsInstance<Button>().toList()
-                assertEquals(21, actions.size)
+                assertEquals(22, actions.size)
+                val guide = actions.single { it.id == R.id.translation_models_guide }
+                assertEquals("Guide des modèles de traduction", guide.text.toString())
                 for (label in listOf("Compatibilité Vulkan Qualcomm", "Poids CPU natifs", "Profil mémoire prudent"))
                     assertEquals("New loading action remains accessible: $label", 1, actions.count { it.text.toString().startsWith(label) })
                 assertEquals(1, actions.count { it.text.toString() == "Cache d’attention K/V en 8 bits — expérimental ; F16 si désactivé" })
@@ -382,6 +384,10 @@ class LocalSrtTranslationControlsRobolectricTest {
                     val layout = requireNotNull(action.layout)
                     for (line in 0 until layout.lineCount) assertEquals(0, layout.getEllipsisCount(line))
                 }
+                guide.performClick()
+                val openedGuide = requireNotNull(shadowOf(f.activity).nextStartedActivity)
+                assertEquals(android.content.Intent.ACTION_VIEW, openedGuide.action)
+                assertEquals(DocumentationLinks.MODELS_GUIDE, openedGuide.data.toString())
                 assertEquals(0, f.subtitlePicks)
                 assertEquals(0, f.modelPicks)
                 assertEquals(0, f.exports)
