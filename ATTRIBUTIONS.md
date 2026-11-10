@@ -20,6 +20,10 @@ La NOTICE SSHJ conserve notamment les mentions des dérivations Apache MINA SSHD
 
 Media3 et ses modules HLS/DASH/RTSP sont en version **1.11.1**, AndroidX Activity **1.11.0**, Tracing **1.3.0**, ML Kit Translation **17.0.3**. AndroidX/Media3 et les bibliothèques Kotlin conservent leurs licences et notices ; le SDK ML Kit et ses modèles gardent les [conditions Google](https://developers.google.com/ml-kit/terms). L’application conserve son attribution Google dédiée. Les noms de protocoles ne signifient pas que les auteurs de ces bibliothèques ont écrit ou validé l’intégration propre au lecteur.
 
+## Reconnaissance locale de texte — 1.1.0
+
+[Tesseract4Android 4.9.0](https://github.com/adaptech-cz/Tesseract4Android/tree/4.9.0) exécute le moteur OCR dans l’application. L’archive AAR est épinglée dans Gradle par version et SHA-256. Les notices conservées dans les assets identifient le code d’intégration et les bibliothèques natives de reconnaissance et de décodage. Les modèles entraînés importés restent soumis à leurs propres conditions. Le lecteur traite localement les images soumises à ce moteur.
+
 ## Calcul GGUF natif
 
 | Composant tiers | Source utilisée | Licence et mentions conservées |

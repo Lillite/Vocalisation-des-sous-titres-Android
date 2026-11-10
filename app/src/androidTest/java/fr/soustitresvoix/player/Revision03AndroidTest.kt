@@ -1037,9 +1037,13 @@ class Revision03AndroidTest {
     @Test fun anActualOversizedSubtitleStopsTheBenchmarkWithItsErrorReason() {
         val context = instrument.targetContext
         val external = java.io.File(context.cacheDir, "benchmark-overflow.srt")
+        val integralBefore = PlayerPreferences(context).bool("integralReading", true)
         external.writeText("1\n00:00:00,100 --> 00:00:03,000\n" + "texte ".repeat(5000) + "\n")
         PlayerPreferences(context).apply {
             enginePackage = instrument.context.packageName; narration = true; putBool("cache", false)
+            // The oversized cue deliberately exceeds the complete index's
+            // source bound. Exercise the direct renderer overflow instead.
+            putBool("integralReading", false)
         }
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
@@ -1065,7 +1069,13 @@ class Revision03AndroidTest {
                     assertTrue(a.session.playbackBenchmarkReport().contains("Trop de texte"))
                 }
             }
-        } finally { external.delete(); PlayerPreferences(context).enginePackage = "" }
+        } finally {
+            external.delete()
+            PlayerPreferences(context).apply {
+                enginePackage = ""
+                putBool("integralReading", integralBefore)
+            }
+        }
     }
     @Test fun benchmarkFinishingAtFileEndStopsAnOngoingCachedReply() {
         val context = instrument.targetContext

@@ -1,4 +1,5 @@
 import java.util.Properties
+import java.security.MessageDigest
 
 plugins {
     id("com.android.application")
@@ -99,6 +100,30 @@ val verifyHexagonAssets = tasks.register<Exec>("verifyHexagonAssets") {
     commandLine("python3", rootProject.file("tools/prepare-hexagon.py").absolutePath,
         "--verify-only", "--assets", hexagonAssets.get().absolutePath)
 }
+val localOcrCoordinate = "cz.adaptech.tesseract4android:tesseract4android:4.9.0"
+val localOcrArchive = configurations.create("localOcrArchive") {
+    isCanBeConsumed = false
+    isTransitive = false
+}
+dependencies.add(localOcrArchive.name, "$localOcrCoordinate@aar")
+val verifyLocalOcr = tasks.register("verifyLocalOcr") {
+    inputs.files(localOcrArchive)
+    doLast {
+        val sha = MessageDigest.getInstance("SHA-256")
+        localOcrArchive.singleFile.inputStream().buffered().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                sha.update(buffer, 0, count)
+            }
+        }
+        require(sha.digest().joinToString("") { "%02x".format(it) } ==
+            "bce5d6413a1a5ae3d7240033fbbc851ba3217d0a08d9769400e17a077f42cb2a") {
+            "Le binaire OCR local ne correspond pas à l’archive vérifiée."
+        }
+    }
+}
 android {
     namespace = "fr.soustitresvoix.player"
     compileSdk = 36
@@ -108,8 +133,8 @@ android {
         applicationId = "fr.soustitresvoix.player.translation"
         minSdk = 26
         targetSdk = 36
-        versionCode = 23
-        versionName = "1.0.0"
+        versionCode = 24
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild { cmake { arguments += "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON" } }
@@ -161,15 +186,28 @@ android {
         }
     }
 }
-tasks.named("preBuild") { dependsOn(generateDemo); dependsOn(generateDiagnosticModel); dependsOn(verifyHexagonAssets) }
+tasks.named("preBuild") {
+    dependsOn(generateDemo)
+    dependsOn(generateDiagnosticModel)
+    dependsOn(verifyHexagonAssets)
+    dependsOn(verifyLocalOcr)
+}
 // AGP's legacy AndroidTest asset source set does not preserve a mapped task
 // provider as its producer. All AndroidTest consumers, including lint model
 // generation, must depend on this small deterministic test-only asset.
+val generateOcrTestModel = tasks.register<Exec>("generateOcrTestModel") {
+    val generator = rootProject.file("tools/prepare-ocr-test-model.py")
+    val model = translationTestAssets.map { it.file("ocr-test/eng.traineddata") }
+    inputs.file(generator)
+    outputs.file(model)
+    commandLine("python3", generator.absolutePath, model.get().asFile.absolutePath)
+}
 tasks.configureEach {
     if (name.contains("AndroidTest")) {
         dependsOn(generateTranslationTestModel)
         dependsOn(generateTranslationChatTestModel)
         dependsOn(generateTranslationQ8TestModel)
+        dependsOn(generateOcrTestModel)
     }
 }
 kotlin { jvmToolchain(17) }
@@ -190,6 +228,7 @@ dependencies {
     // Instrumentation exercises both debug and the exact release variant.
     implementation("androidx.tracing:tracing:1.3.0")
     implementation("com.google.mlkit:translate:17.0.3")
+    implementation(localOcrCoordinate)
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.17")
     testImplementation("androidx.test:core:1.7.0")

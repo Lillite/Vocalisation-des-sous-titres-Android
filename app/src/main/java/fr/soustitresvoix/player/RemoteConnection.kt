@@ -56,6 +56,11 @@ data class RemoteConnection(
 data class RemoteEntry(val name: String, val path: String, val isDirectory: Boolean,
     val sizeBytes: Long? = null, val modifiedMs: Long? = null)
 
+internal data class DirectNetworkLink(val uri: Uri, val title: String, val lastOpenedMs: Long,
+    val customTitle: String?) {
+    fun media() = SavedMedia(uri.toString(), title)
+}
+
 class RemoteAccessException(message: String, cause: Throwable? = null) : IOException(message, cause)
 
 /** A task may close this handle from its UI owner to interrupt sockets and reads. */
@@ -149,6 +154,12 @@ internal class KeystoreRemoteSecretCipher : RemoteSecretCipher {
 class RemoteConnectionStore private constructor(context: Context, private val cipher: RemoteSecretCipher) {
     constructor(context: Context) : this(context, KeystoreRemoteSecretCipher())
     private val prefs = context.getSharedPreferences("remote-connections-private-v1", Context.MODE_PRIVATE)
+
+    private data class DirectRecord(val url: String, val lastOpenedMs: Long = 0, val customTitle: String? = null,
+        val metadataTitle: String? = null, val headerTitle: String? = null) {
+        override fun toString() = "DirectRecord(<private>)"
+    }
+
     fun list(): List<RemoteConnection> = synchronized(LOCK) {
         prefs.all.keys.filter { it.startsWith("connection.") }.map { readConnection(it.removePrefix("connection.")) }
             .sortedBy { it.label.lowercase() }
@@ -166,30 +177,71 @@ class RemoteConnectionStore private constructor(context: Context, private val ci
         write("connection.${value.id}", json.toString())
     }
     fun delete(id: String) = synchronized(LOCK) { check(prefs.edit().remove("connection.$id").commit()) { "La suppression de la connexion a échoué." } }
-    fun saveDirectUrl(rawUrl: String): Uri = synchronized(LOCK) {
+    fun saveDirectUrl(rawUrl: String, title: String = ""): Uri = synchronized(LOCK) {
         val url = validatedDirectUrl(rawUrl)
         require(prefs.all.keys.count { it.startsWith("direct.") } < 256) { "La limite de 256 liens enregistrés est atteinte. Supprime un lien ancien." }
         val id = UUID.randomUUID().toString()
-        write("direct.$id", url)
+        writeDirect(id, DirectRecord(url, System.currentTimeMillis(), validatedTitle(title)))
         directUri(id, url)
     }
     /** Generic opaque identities only; callers must never display the underlying URL. */
-    fun listDirectUrls(): List<Uri> = synchronized(LOCK) {
-        prefs.all.keys.filter { it.startsWith("direct.") }.sorted().map { key ->
-            directUri(key.removePrefix("direct."), read(key) ?: throw RemoteAccessException("Un lien enregistré est inaccessible."))
+    fun listDirectUrls(): List<Uri> = listDirectLinks().map { it.uri }
+
+    internal fun listDirectLinks(): List<DirectNetworkLink> = synchronized(LOCK) {
+        prefs.all.keys.filter { it.startsWith("direct.") }.map { key ->
+            val id = key.removePrefix("direct.")
+            directLink(id, readDirect(id))
+        }.sortedWith(compareByDescending<DirectNetworkLink> { it.lastOpenedMs }.thenBy { it.title }.thenBy { it.uri.toString() })
+    }
+
+    internal fun directLink(uri: Uri): DirectNetworkLink = synchronized(LOCK) {
+        val id = directId(uri)
+        directLink(id, readDirect(id))
+    }
+
+    internal fun reopenDirectLink(uri: Uri): DirectNetworkLink = synchronized(LOCK) {
+        val id = directId(uri)
+        val record = readDirect(id)
+        val reopened = record.copy(lastOpenedMs = System.currentTimeMillis())
+        // The address is already protected. A timestamp write failure need not block playback.
+        val result = runCatching { writeDirect(id, reopened); reopened }.getOrDefault(record)
+        directLink(id, result)
+    }
+
+    internal fun renameDirectLink(uri: Uri, title: String): DirectNetworkLink = synchronized(LOCK) {
+        val id = directId(uri)
+        val renamed = readDirect(id).copy(customTitle = validatedTitle(title))
+        writeDirect(id, renamed)
+        directLink(id, renamed)
+    }
+
+    /** Only the initial request can name a saved film. Ignore names on manifest children. */
+    internal fun offerDirectHeaderTitle(uri: Uri, title: String) = synchronized(LOCK) {
+        val id = directId(uri)
+        val record = readDirect(id)
+        val safeTitle = NetworkMediaTitles.metadata(title)
+        if (safeTitle != null && uri == directUri(id, record.url) && record.headerTitle != safeTitle) {
+            writeDirect(id, record.copy(headerTitle = safeTitle))
         }
     }
+
+    internal fun offerDirectMetadataTitle(uri: Uri, title: String): DirectNetworkLink = synchronized(LOCK) {
+        val id = directId(uri)
+        val record = readDirect(id)
+        val safeTitle = NetworkMediaTitles.metadata(title) ?: return@synchronized directLink(id, record)
+        val updated = record.copy(metadataTitle = safeTitle)
+        if (updated != record) writeDirect(id, updated)
+        directLink(id, updated)
+    }
+
     fun deleteDirectUrl(uri: Uri) = synchronized(LOCK) {
-        require(uri.scheme == RemoteMediaUris.DIRECT_SCHEME)
-        check(prefs.edit().remove("direct.${uri.host}").commit()) { "La suppression du lien a échoué." }
+        check(prefs.edit().remove("direct.${directId(uri)}").commit()) { "La suppression du lien a échoué." }
     }
     internal fun directUrl(uri: Uri): String = synchronized(LOCK) {
-        require(uri.scheme == RemoteMediaUris.DIRECT_SCHEME)
-        val root = read("direct.${uri.host}") ?: throw RemoteAccessException("Ce lien réseau a été supprimé. Ouvre un nouveau lien.")
-        val original = Uri.parse(root)
+        val id = directId(uri)
+        val root = readDirect(id).url
         // Manifest children keep their relative identity; credentials stay in the vault.
-        val initialPath = "/media" + original.lastPathSegment?.substringAfterLast('.', "")?.lowercase()
-            ?.takeIf { it.matches(Regex("[a-z0-9]{1,8}")) }?.let { ".$it" }.orEmpty()
+        val initialPath = directUri(id, root).path
         if (uri.path == initialPath && uri.query == null) root else {
             val base = java.net.URI(root)
             val relative = (uri.encodedPath ?: "/").removePrefix("/") + (uri.encodedQuery?.let { "?$it" } ?: "")
@@ -215,6 +267,38 @@ class RemoteConnectionStore private constructor(context: Context, private val ci
                 json.getString("rootPath"), json.getString("share"), json.getString("domain"), json.getBoolean("tls"), json.getString("hostKeySha256")).validated()
         } catch (_: Exception) { throw RemoteAccessException("Une connexion enregistrée est illisible. Supprime-la puis recrée-la ; les fichiers du serveur sont conservés.") }
     }
+    private fun directId(uri: Uri): String {
+        require(uri.scheme == RemoteMediaUris.DIRECT_SCHEME)
+        return requireNotNull(uri.host)
+    }
+
+    private fun readDirect(id: String): DirectRecord {
+        val stored = read("direct.$id") ?: throw RemoteAccessException("Ce lien réseau a été supprimé. Ouvre un nouveau lien.")
+        try {
+            // 1.0.0 stored the complete URL as encrypted text, with the same key and ID.
+            if (!stored.startsWith('{')) return DirectRecord(validatedDirectUrl(stored))
+            val json = JSONObject(stored)
+            fun optionalTitle(key: String) = json.optString(key).let(NetworkMediaTitles::userTitle)
+            return DirectRecord(validatedDirectUrl(json.getString("url")), json.optLong("lastOpenedMs", 0),
+                optionalTitle("customTitle"), optionalTitle("metadataTitle"), optionalTitle("headerTitle"))
+        } catch (_: Exception) {
+            throw RemoteAccessException("Un lien enregistré est illisible sur cet appareil.")
+        }
+    }
+
+    private fun writeDirect(id: String, record: DirectRecord) {
+        val json = JSONObject().put("url", record.url).put("lastOpenedMs", record.lastOpenedMs)
+            .put("customTitle", record.customTitle).put("metadataTitle", record.metadataTitle).put("headerTitle", record.headerTitle)
+        write("direct.$id", json.toString())
+    }
+
+    private fun directLink(id: String, record: DirectRecord) = DirectNetworkLink(directUri(id, record.url),
+        record.customTitle ?: record.metadataTitle ?: record.headerTitle ?: NetworkMediaTitles.urlPath(record.url) ?: NetworkMediaTitles.FALLBACK,
+        record.lastOpenedMs, record.customTitle)
+
+    private fun validatedTitle(title: String): String? = if (title.isBlank()) null else
+        requireNotNull(NetworkMediaTitles.userTitle(title)) { "Saisis un titre de 200 caractères au maximum, sans adresse ni identifiants." }
+
     private fun directUri(id: String, rawUrl: String): Uri {
         val extension = Uri.parse(rawUrl).lastPathSegment?.substringAfterLast('.', "")?.lowercase()
             ?.takeIf { it.matches(Regex("[a-z0-9]{1,8}")) }

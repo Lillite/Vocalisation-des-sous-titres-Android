@@ -16,6 +16,14 @@ L’onglet **Explorer** ajoute une navigation dans le stockage partagé et les v
 
 Explorer liste **un niveau à la fois**, hors du thread d’interface. Dossiers d’abord, tri par nom, pages de 100 éléments par défaut. Un dossier dépassant **10 000 entrées brutes** est refusé explicitement : aucun résultat partiel n’est présenté comme exhaustif. Choisir un sous-dossier ou passer par le sélecteur Android. Les liens sortant de la racine choisie et les dossiers privés exclus ne permettent pas de contourner cette limite.
 
+**Ajouter un dossier avec Android** ouvre la navigation dans le dossier accordé par le sélecteur système, sans accès général au stockage. Un fournisseur peut accorder un accès durable ou limité à la session. Les dossiers autorisés reviennent dans la liste des stockages lorsque leur accès est conservé. Les restrictions de sélection imposées par Android s’appliquent à ce parcours. [Règles d’accès d’Android](https://developer.android.com/training/data-storage/shared/documents-files)
+
+Le chemin courant, **Dossier parent** et **Tous les stockages** permettent de remonter. **Filtrer les noms du dossier** recherche parmi tous les éléments de la liste chargée, y compris ceux des autres pages. Les noms commençant par un point apparaissent si le système ou le serveur les expose. Une liste qu’un fournisseur charge encore est indiquée comme partielle. **Choisir avec Android** présente tous les types de fichiers autorisés par le fournisseur.
+
+L’explorateur ouvre les médias reconnus par leur nom ou leur type fourni par Android et propose directement l’import de SRT, VTT, ASS ou SSA dans la vidéo ouverte. Pour un nom sans extension ou un type inconnu, **Lire comme média** laisse le lecteur examiner le fichier, et **Importer comme sous-titres** vérifie le texte et son minutage. Le décodage reste soumis au contenu du fichier et aux codecs disponibles.
+
+Sur un serveur, **Aller à un dossier** accepte un chemin à partir de la racine configurée. Le mode FTP/FTPS demande `LIST -a` lorsque le serveur ne gère pas `MLSD`, puis se replie sur `LIST` si l’option est refusée. La visibilité des entrées dépend des droits et de la liste renvoyée par le serveur.
+
 ## Configurer un serveur ou un lien
 
 Renseigner un nom de connexion, l’hôte sans préfixe de protocole, le port, les identifiants et le dossier de départ. Le nom SMB du partage et, si nécessaire, le domaine doivent être saisis séparément. L’application ne découvre pas automatiquement les serveurs ou partages sur le réseau.
@@ -36,6 +44,8 @@ Les connexions enregistrées sont limitées à **64**, les liens directs à **25
 
 Le lien direct est une URL média, pas une page de lecteur Web. L’application n’intègre pas d’API UltraDebrid ou d’extraction de liens d’un compte tiers. Un lien temporaire fourni par l’utilisateur reste soumis à sa validité, ses droits et ses restrictions réseau.
 
+Dans l’historique réseau, appuyer sur le titre pour rouvrir le média. Renommer et supprimer sont des commandes distinctes. Le titre choisi a priorité, puis le titre embarqué, le nom transmis par le serveur et le nom de fichier. Un média dont la source ne fournit pas de nom peut être renommé manuellement.
+
 ## Secrets et identité d’une source
 
 Les connexions et URL complètes sont chiffrées en **AES-GCM avec Android Keystore**. Les médias/séances enregistrent des références opaques (`remote-media` ou `network-media`) ; les mots de passe ne sont pas incorporés aux URI de lecture ni aux diagnostics affichés. Une modification de connexion change sa révision et invalide l’identité précédente des caches de sous-titres/séances concernés. Si le stockage chiffré n’est plus lisible, recréer la connexion ; cette opération ne supprime aucun fichier du serveur.
@@ -50,14 +60,22 @@ Pour HTTP, le transport suit au plus **cinq redirections**, refuse une dégradat
 | --- | --- |
 | Décoder un média | Dépend du conteneur, des codecs Media3/Android et du serveur ; l’ouverture d’une vidéo n’établit pas la présence d’une piste textuelle |
 | Indexer un conteneur progressif local ou distant | `FullSubtitleIndexer` utilise la même factory de données et les mêmes parseurs textuels ; toutes les occurrences extraites doivent garder identité et minutage |
-| Lire HLS/DASH | Modules Media3 présents ; la lecture d’un manifeste n’établit pas un index complet de tous ses segments et pistes |
+| Lire HLS/DASH | Media3 assure la lecture. L’index complet est disponible pour certaines pistes WebVTT de contenus finis, notamment HLS avec fin de liste et DASH statique à une période. La sélection, les segments et leurs horaires sont contrôlés avant de déclarer l’index complet. |
 | Lire RTSP ou un direct | Lecture possible selon le serveur ; pas de piste complète finie dont tous les événements futurs seraient déjà connus |
-| Préparer intégralement/traduire | Nécessite un index complet réellement établi ; manifeste, direct ou source non indexable doivent produire une limite explicite |
+| Préparer intégralement/traduire | Nécessite un index complet réellement établi. Une source partielle ou hors périmètre garde un état explicite. Les répliques déjà reçues d’un direct peuvent être proposées au rattrapage dans la fenêtre conservée. |
 | Ajouter un sous-titre distant | Import borné via la même factory ; maximum **8 Mio**, puis parseurs habituels |
 
 **La vocalisation des occurrences reçues reste exigée sur une source réseau.** Un transport différent ne doit pas remplacer le pipeline de narration par un parcours qui ignore dialogues, panneaux, chevauchements ou répétitions. Le bilan ne peut toutefois compter les événements jamais extraits. Une indexation interrompue ne doit pas être présentée comme complète ; une préparation ou une traduction indisponible ne doit pas être masquée par un saut silencieux.
 
-Les pistes PGS/VobSub et les sous-titres inscrits dans les pixels ne deviennent pas textuels parce que la vidéo provient d’un serveur. L’OCR reste absent. Le lecteur ne déchiffre pas les DRM d’un service tiers.
+L’index HLS repose sur une piste WebVTT séparée, une liste terminée, une origine de temps déclarée cohérente avec les variantes et des segments continus. Les changements de discontinuité, les segments manquants et les ancrages MPEG-TS non nuls sortent de ce périmètre. L’index DASH repose sur un manifeste statique à une période et une représentation WebVTT directe dont les segments et les temps sont déterminés. Les variantes protégées et les sous-titres encapsulés dans les segments vidéo gardent une couverture limitée.
+
+### Pistes image et texte incrusté
+
+Dans **Piste de sous-titres → Panneaux et OCR**, une seconde piste textuelle intégrée peut être combinée avec la piste principale. Les deux pistes gardent leurs répliques, y compris lorsque le texte et l’heure coïncident.
+
+Pour préparer une piste **PGS/VobSub intégrée**, sélectionne-la dans le lecteur puis choisis **Préparer une piste image PGS ou VobSub**. Importe d’abord un fichier Tesseract `.traineddata` pour la langue du texte, par exemple `fra.traineddata` pour le français. Le moteur utilise ce modèle localement. La saisie manuelle reste possible. Corrige et confirme le texte de chaque image extraite, puis joins la piste relue. La couverture porte sur les occurrences effectivement extraites et validées.
+
+Pour un **texte incrusté dans l’image du film**, le même menu permet d’écouter une transcription relue de l’image courante ou d’échantillonner un intervalle d’un fichier local de durée connue. L’échantillonnage accepte un pas de **100 à 10 000 ms** et au plus **20 000 images** par opération. Les textes et minutages estimés sont modifiables avant l’export d’un **SRT partiel**. Une réplique entre deux images ou une transcription non détectée peut manquer. Le lecteur ne déchiffre pas les DRM d’un service tiers.
 
 ## Bornes, annulation et erreurs
 
@@ -69,6 +87,7 @@ Les pistes PGS/VobSub et les sous-titres inscrits dans les pixels ne deviennent 
 | FTP/FTPS, SFTP, SMB | Connexion et principales lectures bornées à **15 s** par opération ; ce n’est pas une durée totale de film |
 | WebDAV PROPFIND | Connexion 15 s, lecture 20 s, appel 45 s |
 | HTTP média | Connexion **15 s**, lecture **20 s** ; la durée d’une lecture continue n’est pas bornée à la durée d’une requête courte |
+| Index d’un média progressif | Si la longueur est connue, longueur déclarée plus une marge de sondage et de déplacements de **256 Mio à 2 Gio**. Si elle est inconnue au premier accès, **32 Gio** lus au maximum. Les bornes d’occurrences restent indépendantes de la taille de la vidéo. |
 
 Les délais peuvent se cumuler entre phases et dépendent aussi de la résolution réseau ; ils ne constituent pas une promesse de retour à la milliseconde. Annuler ferme les ressources enregistrées et empêche la publication d’un résultat devenu périmé. Une perte de réseau, un refus d’authentification, une empreinte différente, un certificat invalide ou un fichier interrompu restent des erreurs perceptibles.
 

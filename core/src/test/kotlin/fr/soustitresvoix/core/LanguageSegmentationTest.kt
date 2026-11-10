@@ -18,6 +18,7 @@ class LanguageSegmentationTest {
         val text = "M. Dupont parle au Dr. Smith. Il arrive à 3.14."
         assertEquals(SpeechTools.segments(text), SpeechTools.segments(text, "unknown"))
         assertEquals(listOf("M. Dupont parle au Dr. Smith.", "Il arrive à 3.14."), SpeechTools.segments(text))
+        assertEquals(listOf("M. Dupont parle au Dr. Smith.", "Il arrive à 3.14."), SpeechTools.segments(text, "fr-FR"))
     }
     @Test fun cyrillicAbbreviationsAndCjkPunctuationPreserveEveryWord() {
         assertEquals(listOf("Ул. Ленина рядом.", "Мы идём."), SpeechTools.segments("Ул. Ленина рядом. Мы идём.", "ru"))

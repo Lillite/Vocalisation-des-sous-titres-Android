@@ -22,6 +22,9 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
     private data class Captured(val track: String?, val group: CuesWithTiming, val origins: List<SsaOccurrence>?)
     private val captured = ThreadLocal<Captured?>()
     @Volatile private var onOriginCue: ((String?, CuesWithTiming, List<SsaOccurrence>) -> Unit)? = null
+    private var onTrack: ((String?, Format) -> Unit)? = null
+    private var imageTrack: String? = null
+    private var onImageCue: ((CuesWithTiming) -> Unit)? = null
     private val factory = DefaultExtractorsFactory().setSubtitleParserFactory(parsers(sidecar = false))
     var truncated = false; private set
     private var reports = 0
@@ -30,6 +33,11 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
     fun setOccurrenceListener(listener: (String?, CuesWithTiming, List<SsaOccurrence>) -> Unit): CueAheadFactory {
         onOriginCue = listener
         return this
+    }
+    fun setTrackListener(listener: (String?, Format) -> Unit): CueAheadFactory = apply { onTrack = listener }
+    fun setImageListener(track: String, listener: (CuesWithTiming) -> Unit): CueAheadFactory = apply {
+        imageTrack = track
+        onImageCue = listener
     }
     @Synchronized private fun report(track: String?, group: CuesWithTiming, origins: List<SsaOccurrence>? = null) {
         val characters = group.cues.sumOf { it.text?.length ?: 0 }
@@ -60,18 +68,23 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
         }
     }.toTypedArray()
     private inner class Tap(private val out: TrackOutput) : TrackOutput by out {
-        private var cueFormat = false; private var track: String? = null
+        private var capture = false; private var image = false; private var track: String? = null
         private val bytes = ByteArrayOutputStream()
         private var overflow = false
         fun clear() { bytes.reset(); overflow = false }
         override fun format(format: Format) {
-            clear(); cueFormat = format.sampleMimeType == MimeTypes.APPLICATION_MEDIA3_CUES
-            track = format.id; out.format(format)
+            clear(); track = format.id
+            image = isBitmapSubtitle(format)
+            capture = format.sampleMimeType == MimeTypes.APPLICATION_MEDIA3_CUES &&
+                if (onImageCue != null) image && track == imageTrack else !image
+            onTrack?.invoke(track, format)
+            out.format(format)
         }
         override fun sampleData(data: ParsableByteArray, length: Int) = sampleData(data, length, TrackOutput.SAMPLE_DATA_PART_MAIN)
         override fun sampleData(data: ParsableByteArray, length: Int, sampleDataPart: Int) {
-            if (cueFormat && sampleDataPart == TrackOutput.SAMPLE_DATA_PART_MAIN && !overflow) {
-                if (bytes.size().toLong() + length <= 1_048_576) bytes.write(data.data, data.position, length)
+            if (capture && sampleDataPart == TrackOutput.SAMPLE_DATA_PART_MAIN && !overflow) {
+                val limitBytes = if (image) 24L * 1024 * 1024 else 1_048_576L
+                if (bytes.size().toLong() + length <= limitBytes) bytes.write(data.data, data.position, length)
                 else { bytes.reset(); overflow = true; truncated = true }
             }
             out.sampleData(data, length, sampleDataPart)
@@ -79,20 +92,20 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
         override fun sampleData(input: DataReader, length: Int, allowEndOfInput: Boolean): Int =
             sampleData(input, length, allowEndOfInput, TrackOutput.SAMPLE_DATA_PART_MAIN)
         override fun sampleData(input: DataReader, length: Int, allowEndOfInput: Boolean, sampleDataPart: Int): Int {
-            if (!cueFormat) return out.sampleData(input, length, allowEndOfInput, sampleDataPart)
+            if (!capture) return out.sampleData(input, length, allowEndOfInput, sampleDataPart)
             val buffer = ByteArray(length.coerceAtMost(8192)); val n = input.read(buffer, 0, buffer.size)
             if (n < 0) { if (!allowEndOfInput) throw EOFException(); return C.RESULT_END_OF_INPUT }
             sampleData(ParsableByteArray(buffer, n), n, sampleDataPart); return n
         }
         override fun sampleMetadata(timeUs: Long, flags: Int, size: Int, offset: Int, cryptoData: TrackOutput.CryptoData?) {
-            if (!cueFormat) { out.sampleMetadata(timeUs, flags, size, offset, cryptoData); return }
+            if (!capture) { out.sampleMetadata(timeUs, flags, size, offset, cryptoData); return }
             val b = bytes.toByteArray(); val start = b.size - offset - size
             if (!overflow && cryptoData == null && start >= 0 && size > 0) {
-                try {
-                    val group = CueDecoder().decode(timeUs, b, start, size)
-                    report(track, group, originsFor(track, group))
+                val group = try { CueDecoder().decode(timeUs, b, start, size) }
+                    catch (_: RuntimeException) { truncated = true; null }
+                if (group != null) {
+                    if (image) onImageCue?.invoke(group) else report(track, group, originsFor(track, group))
                 }
-                catch (_: RuntimeException) { truncated = true }
             } else if (overflow || cryptoData != null || start < 0) {
                 truncated = true
             }
@@ -152,9 +165,31 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
     }
 }
 
+@UnstableApi
+internal fun isBitmapSubtitle(format: Format): Boolean =
+    (if (format.sampleMimeType == MimeTypes.APPLICATION_MEDIA3_CUES) format.codecs else format.sampleMimeType) in
+        setOf(MimeTypes.APPLICATION_PGS, MimeTypes.APPLICATION_VOBSUB, MimeTypes.APPLICATION_DVBSUBS)
+
 /** Bounded optional index. Exhausting it never prevents live subtitle playback. */
 @UnstableApi
 class CueAheadIndex {
+    companion object {
+        fun combinedTrackId(primary: String, supplementary: String): String =
+            "combined-v1:" + SpeechTools.key("${primary.length}:$primary", "${supplementary.length}:$supplementary")
+
+        fun restored(items: List<Item>, trackIds: Set<String> = items.mapNotNull { it.track }.toSet()): CueAheadIndex {
+            require(items.size <= 100_000 && trackIds.size <= 1_024 && trackIds.all { it.isNotBlank() && it.length <= 8192 })
+            val index = CueAheadIndex()
+            trackIds.forEach(index::registerTextTrack)
+            for (item in items) {
+                require(item.track == null || item.track in trackIds)
+                index.addOccurrence(item)
+                require(!index.truncated)
+            }
+            require(index.count == items.size)
+            return index
+        }
+    }
     var truncated = false; private set
     data class Item(val track: String?, val startUs: Long, val endUs: Long, val raw: String, val ordinal: Int = 0,
         val sourceToken: String? = null) {
@@ -164,10 +199,16 @@ class CueAheadIndex {
     private val frames = TreeMap<Long, MutableList<Item>>()
     private val unique = HashSet<Item>()
     private val trackSnapshots = mutableMapOf<String?, TrackSnapshot>()
+    private val indexedTracks = HashSet<String>()
+    private var combination: Pair<String, Pair<String, String>>? = null
     private data class TrackSnapshot(val items: List<Item>, val maxEnds: LongArray)
     private fun canon(text: String) = text.trim().replace(Regex("\\s+"), " ")
     private fun snapshot(track: String?): TrackSnapshot = trackSnapshots.getOrPut(track) {
-        val items = frames.values.asSequence().flatten().filter { it.track == track }.toList()
+        val members = combination?.takeIf { it.first == track }?.second
+        val items = if (members == null) frames.values.asSequence().flatten().filter { it.track == track }.toList()
+        else frames.values.flatMap { atTime ->
+            atTime.filter { it.track == members.first } + atTime.filter { it.track == members.second }
+        }
         var max = Long.MIN_VALUE
         TrackSnapshot(items, LongArray(items.size) { i -> max = maxOf(max, items[i].endUs); max })
     }
@@ -181,7 +222,38 @@ class CueAheadIndex {
     private var characters = 0
     private var cursorUs = 0L
     val count: Int @Synchronized get() = unique.size
-    @Synchronized fun clear() { frames.clear(); unique.clear(); trackSnapshots.clear(); characters = 0; cursorUs = 0; truncated = false }
+    @Synchronized fun clear() {
+        frames.clear(); unique.clear(); trackSnapshots.clear(); indexedTracks.clear(); combination = null
+        characters = 0; cursorUs = 0; truncated = false
+    }
+    @Synchronized internal fun registerTextTrack(track: String?) { if (track != null) indexedTracks.add(track) }
+    @Synchronized fun hasTrack(track: String): Boolean = track in indexedTracks || combination?.first == track
+    @Synchronized fun indexedTrackIds(): Set<String> = indexedTracks.toSet()
+    @Synchronized fun allIndexedItems(): List<Item> = frames.values.flatten()
+
+    /** Keep source identities, timings and multiplicities. The alias stores no duplicate cues. */
+    @Synchronized fun combinedTrack(primary: String, supplementary: String): CueAheadIndex = apply {
+        require(!truncated && primary != supplementary && primary in indexedTracks && supplementary in indexedTracks) {
+            "Les deux pistes doivent disposer d’un index textuel complet."
+        }
+        val alias = combinedTrackId(primary, supplementary)
+        require(alias !in indexedTracks) { "Identité de piste combinée ambiguë." }
+        combination?.let { trackSnapshots.remove(it.first) }
+        combination = alias to (primary to supplementary)
+    }
+
+    @Synchronized internal fun addOccurrence(item: Item) {
+        if (item.startUs == C.TIME_UNSET || item.endUs <= item.startUs || item.raw.isBlank() || item.raw.length > 24_000) {
+            truncated = true; return
+        }
+        registerTextTrack(item.track)
+        if (unique.add(item)) {
+            invalidateTrack(item.track)
+            frames.getOrPut(item.startUs) { mutableListOf() }.add(item)
+            characters += item.raw.length
+        }
+        trim()
+    }
     @Synchronized fun add(track: String?, group: CuesWithTiming, origins: List<SsaOccurrence>? = null) {
         if (group.startTimeUs == C.TIME_UNSET || group.durationUs <= 0 || group.durationUs == C.TIME_UNSET) {
             if (group.cues.any { !it.text.isNullOrEmpty() }) truncated = true
@@ -191,29 +263,35 @@ class CueAheadIndex {
         if (end < group.startTimeUs) { truncated = true; return }
         for ((ordinal, cue) in group.cues.withIndex()) {
             val raw = cue.text?.toString() ?: continue
-            if (raw.length > 24_000) { truncated = true; continue }
+            if (raw.isBlank()) continue
             val origin = origins?.takeIf { it.size == group.cues.size }?.get(ordinal)?.takeIf {
                 it.startUs <= group.startTimeUs && it.endUs >= end && it.endUs > it.startUs
             }
             if (origins != null && origin == null) truncated = true
             val item = if (origin == null) Item(track, group.startTimeUs, end, raw, ordinal)
                 else Item(track, origin.startUs, origin.endUs, raw, origin.ordinal, origin.token)
-            if (unique.add(item)) {
-                trackSnapshots.remove(track)
-                frames.getOrPut(item.startUs) { mutableListOf() }.add(item)
-                characters += raw.length
-            }
+            addOccurrence(item)
         }
+    }
+    private fun trim() {
         while (unique.size > 100_000 || characters > 12_000_000) {
             truncated = true
             val key = if (frames.firstKey() < cursorUs - 30_000_000L) frames.firstKey() else frames.lastKey()
             removeFrame(key)
         }
     }
-    private fun removeFrame(key: Long) {
-        frames.remove(key)?.forEach { unique.remove(it); characters -= it.raw.length; trackSnapshots.remove(it.track) }
+    private fun invalidateTrack(track: String?) {
+        trackSnapshots.remove(track)
+        combination?.takeIf { track == it.second.first || track == it.second.second }?.let { trackSnapshots.remove(it.first) }
     }
-    @Synchronized fun selected(track: String?): List<Item> = frames.values.flatten().filter { it.track == track }
+    private fun matchesTrack(item: Item, track: String?): Boolean {
+        val members = combination?.takeIf { it.first == track }?.second
+        return if (members == null) item.track == track else item.track == members.first || item.track == members.second
+    }
+    private fun removeFrame(key: Long) {
+        frames.remove(key)?.forEach { unique.remove(it); characters -= it.raw.length; invalidateTrack(it.track) }
+    }
+    @Synchronized fun selected(track: String?): List<Item> = snapshot(track).items.toList()
     /** Source-timeline lookup for corrected display/narration; identity remains untouched. */
     @Synchronized fun activeItems(track: String?, timeUs: Long): List<Item> = active(track, timeUs)
     @Synchronized fun future(track: String?, positionMs: Long, filters: SpeechTools.Filters, count: Int, seconds: Int = 60,
@@ -222,7 +300,7 @@ class CueAheadIndex {
         val futureEnd = cursorUs + seconds.coerceIn(5, 7200) * 1_000_000L
         if (futureEnd < cursorUs) return emptyList()
         return frames.subMap(cursorUs, true, futureEnd, false).values.asSequence().flatten()
-            .filter { it.track == track }
+            .filter { matchesTrack(it, track) }
             .mapNotNull { textFor(it) }
             .flatMap { SpeechTools.segments(SpeechTools.filter(it, filters), languageTag).asSequence() }
             .distinct().take(count.coerceIn(0, 100_000)).toList()
@@ -238,12 +316,12 @@ class CueAheadIndex {
             .minOfOrNull { it.endUs / 1000 }
     @Synchronized fun nextStart(track: String?, positionMs: Long): Long? =
         frames.tailMap(positionMs.coerceAtLeast(0) * 1000, false).values.asSequence().flatten()
-            .firstOrNull { it.track == track }?.startUs?.div(1000)
+            .firstOrNull { matchesTrack(it, track) }?.startUs?.div(1000)
     @Synchronized fun planningWindow(track: String?, positionMs: Long, filters: SpeechTools.Filters): List<Pair<String, Long>> =
         planningItems(track, positionMs).map { SpeechTools.filter(it.raw, filters) to it.endUs / 1000 }
     @Synchronized fun planningItems(track: String?, positionMs: Long): List<Item> =
         frames.subMap(positionMs.coerceAtLeast(0) * 1000, false, (positionMs.coerceAtLeast(0) + 15_000) * 1000, true)
-            .values.asSequence().flatten().filter { it.track == track && it.endUs / 1000 > positionMs }
+            .values.asSequence().flatten().filter { matchesTrack(it, track) && it.endUs / 1000 > positionMs }
             .take(16).toList()
     @Synchronized fun remaining(track: String?, text: String, positionMs: Long, filters: SpeechTools.Filters): Long? =
         windowEnd(track, text, positionMs, filters)?.minus(positionMs)

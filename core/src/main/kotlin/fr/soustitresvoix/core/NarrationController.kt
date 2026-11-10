@@ -12,11 +12,19 @@ interface NarrationController {
     fun markPrepared(identities: List<String>) = Unit
     fun markFiltered(identities: List<String>) = Unit
     fun pendingOccurrences(): List<NarrationLedger.Entry> = emptyList()
+    fun pendingSegments(): List<NarrationLedger.SegmentResume> = emptyList()
+    fun narrationEntry(identity: String): NarrationLedger.Entry? = null
+    fun narrationGeneration(): Long = 0
     fun journalSnapshot(): NarrationLedger.Snapshot = NarrationLedger().snapshot()
     fun exportJournalMetadata(): String = ""
     fun restoreJournalMetadata(encoded: String): Boolean = false
     fun replayOccurrence(identity: String, text: String): List<NarrationMachine.Effect> = emptyList()
+    fun replayOccurrences(items: List<Pair<String, String>>): List<NarrationMachine.Effect> = emptyList()
+    fun restorePendingSegments(items: List<NarrationMachine.RestoredOccurrence>): List<NarrationMachine.Effect> = emptyList()
+    fun recoverMissedOccurrences(items: List<Pair<String, String>>): List<NarrationMachine.Effect> = emptyList()
     fun setComprehensionHold(value: Boolean): List<NarrationMachine.Effect> = emptyList()
+    fun setTranslationHold(value: Boolean): List<NarrationMachine.Effect> = emptyList()
+    fun setScheduleHold(value: Boolean): List<NarrationMachine.Effect> = emptyList()
     fun snapshot(): NarrationMachine.Snapshot
     fun setSpeechReady(ready: Boolean): List<NarrationMachine.Effect>
     fun setMediaReady(ready: Boolean): List<NarrationMachine.Effect>
@@ -49,11 +57,19 @@ class ExistingNarrationController(
     override fun markPrepared(identities: List<String>) = machine.markPrepared(identities)
     override fun markFiltered(identities: List<String>) = machine.markFiltered(identities)
     override fun pendingOccurrences() = machine.pendingOccurrences()
+    override fun pendingSegments() = machine.pendingSegments()
+    override fun narrationEntry(identity: String) = machine.narrationEntry(identity)
+    override fun narrationGeneration() = machine.narrationGeneration()
     override fun journalSnapshot() = machine.journalSnapshot()
     override fun exportJournalMetadata() = machine.exportJournalMetadata()
     override fun restoreJournalMetadata(encoded: String) = machine.restoreJournalMetadata(encoded)
     override fun replayOccurrence(identity: String, text: String) = machine.replayOccurrence(identity, text)
+    override fun replayOccurrences(items: List<Pair<String, String>>) = machine.replayOccurrences(items)
+    override fun restorePendingSegments(items: List<NarrationMachine.RestoredOccurrence>) = machine.restorePendingSegments(items)
+    override fun recoverMissedOccurrences(items: List<Pair<String, String>>) = machine.recoverMissedOccurrences(items)
     override fun setComprehensionHold(value: Boolean) = machine.setComprehensionHold(value)
+    override fun setTranslationHold(value: Boolean) = machine.setTranslationHold(value)
+    override fun setScheduleHold(value: Boolean) = machine.setScheduleHold(value)
     override fun snapshot() = machine.snapshot()
     override fun setSpeechReady(ready: Boolean) = machine.setSpeechReady(ready)
     override fun setMediaReady(ready: Boolean) = machine.setMediaReady(ready)

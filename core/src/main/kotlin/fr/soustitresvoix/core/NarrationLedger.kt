@@ -13,10 +13,14 @@ class NarrationLedger(
 ) {
     enum class State { DETECTED, PREPARED, QUEUED, STARTED, COMPLETED, INTERRUPTED, ERROR, FILTERED }
     data class Occurrence(val identity: String, val startUs: Long? = null, val endUs: Long? = null)
+    /** One unfinished fragment, with no original or translated text on disk. */
+    data class SegmentResume(val identityHash: String, val ordinal: Int, val count: Int, val textHash: String)
     data class Entry(
         val identityHash: String, val startUs: Long?, val endUs: Long?, val state: State,
         val attempts: Int = 0, val completions: Int = 0, val interruptions: Int = 0,
-        val errors: Int = 0, val generation: Long = 0, val updatedAtMillis: Long = 0
+        val errors: Int = 0, val generation: Long = 0, val updatedAtMillis: Long = 0,
+        val lastCompletedGeneration: Long? = null,
+        val completedSegmentCount: Int = 0, val segmentCount: Int = 0
     )
     data class Transition(val identityHash: String, val state: State, val generation: Long, val atMillis: Long)
     data class Snapshot(
@@ -27,6 +31,7 @@ class NarrationLedger(
     ) {
         val detectedCount get() = entries.size
         val completedCount get() = entries.count { it.completions > 0 }
+        val passCompletedCount get() = entries.count { it.lastCompletedGeneration == generation }
         val interruptedCount get() = entries.count { it.state == State.INTERRUPTED }
         val errorCount get() = entries.count { it.state == State.ERROR }
         val pendingCount get() = entries.count { it.state in setOf(State.QUEUED, State.STARTED) }
@@ -34,6 +39,22 @@ class NarrationLedger(
         val lastCompleted get() = entries.firstOrNull { it.identityHash == lastCompletedHash }
         val lastInterrupted get() = entries.firstOrNull { it.identityHash == lastInterruptedHash }
         val current get() = entries.lastOrNull { it.state == State.STARTED }
+
+        /** Serialization only uses immutable entries, so it can run off the session thread. */
+        fun exportMetadata(): String = buildString {
+            append("NARRATION-LEDGER-3\n").append(contextHash).append('\n')
+            append(generation).append('\t').append(if (capacityExceeded) 1 else 0)
+                .append('\t').append(lastCompletedHash ?: "-")
+                .append('\t').append(lastInterruptedHash ?: "-").append('\n')
+            for (entry in entries) with(entry) {
+                append(identityHash).append('\t').append(startUs?.toString() ?: "-")
+                    .append('\t').append(endUs?.toString() ?: "-")
+                    .append('\t').append(state.name).append('\t').append(attempts).append('\t').append(completions)
+                    .append('\t').append(interruptions).append('\t').append(errors).append('\t').append(generation)
+                    .append('\t').append(updatedAtMillis).append('\t').append(lastCompletedGeneration ?: "-")
+                    .append('\t').append(completedSegmentCount).append('\t').append(segmentCount).append('\n')
+            }
+        }
     }
 
     private var contextHash = hashIdentity("unassigned")
@@ -89,11 +110,27 @@ class NarrationLedger(
     fun error(identity: String) = update(identity, State.ERROR)
     fun filtered(identity: String) = update(identity, State.FILTERED, onlyBeforeQueue = true)
 
+    /** The machine calls this only for a matching completed audio request. */
+    fun segmentCompleted(identity: String, ordinal: Int, count: Int) {
+        require(count > 0 && ordinal in 0 until count)
+        if (!register(Occurrence(identity))) return
+        val key = hashIdentity(identity)
+        val previous = requireNotNull(entries[key])
+        val prefix = if (previous.segmentCount == count) previous.completedSegmentCount else 0
+        if (ordinal > prefix) return
+        val completed = maxOf(prefix, ordinal + 1)
+        val updated = previous.copy(completedSegmentCount = completed, segmentCount = count)
+        if (updated != previous) {
+            entries[key] = updated
+            advanceRevision()
+        }
+    }
+
     private fun update(identity: String, state: State, onlyBeforeQueue: Boolean = false) {
         if (!register(Occurrence(identity))) return
         val key = hashIdentity(identity); val previous = requireNotNull(entries[key])
         if (onlyBeforeQueue && previous.state !in setOf(State.DETECTED, State.PREPARED)) return
-        if (previous.state == state) return
+        if (previous.state == state && previous.generation == generation) return
         val now = clockMillis().coerceAtLeast(0)
         // Keep event order for diagnostics; replay targets have their own chronology.
         if (state == State.COMPLETED) {
@@ -110,7 +147,10 @@ class NarrationLedger(
             completions = increment(previous.completions, state == State.COMPLETED),
             interruptions = increment(previous.interruptions, state == State.INTERRUPTED),
             errors = increment(previous.errors, state == State.ERROR),
-            generation = generation, updatedAtMillis = now)
+            generation = generation, updatedAtMillis = now,
+            lastCompletedGeneration = if (state == State.COMPLETED) generation else previous.lastCompletedGeneration,
+            completedSegmentCount = if ((state == State.QUEUED || state == State.STARTED) && previous.generation != generation) 0
+                else previous.completedSegmentCount)
         advanceRevision()
         trace(key, state, now)
     }
@@ -122,19 +162,7 @@ class NarrationLedger(
     }
 
     /** Versioned metadata only: source IDs and source/translated text never leave this ledger. */
-    fun exportMetadata(): String = buildString {
-        append("NARRATION-LEDGER-2\n").append(contextHash).append('\n')
-        append(generation).append('\t').append(if (capacityExceeded) 1 else 0)
-            .append('\t').append(lastCompletedHash ?: "-")
-            .append('\t').append(lastInterruptedHash ?: "-").append('\n')
-        for (entry in entries.values) with(entry) {
-            append(identityHash).append('\t').append(startUs?.toString() ?: "-")
-                .append('\t').append(endUs?.toString() ?: "-")
-                .append('\t').append(state.name).append('\t').append(attempts).append('\t').append(completions)
-                .append('\t').append(interruptions).append('\t').append(errors).append('\t').append(generation)
-                .append('\t').append(updatedAtMillis).append('\n')
-        }
-    }
+    fun exportMetadata(): String = snapshot().exportMetadata()
 
     /** Atomic import; running/pending speech is marked interrupted, never auto-resumed. */
     fun restoreMetadata(encoded: String): Boolean {
@@ -143,10 +171,11 @@ class NarrationLedger(
             val lines = encoded.lineSequence().iterator()
             require(lines.hasNext())
             val version = lines.next()
-            require(version in setOf("NARRATION-LEDGER-1", "NARRATION-LEDGER-2"))
+            require(version in setOf("NARRATION-LEDGER-1", "NARRATION-LEDGER-2", "NARRATION-LEDGER-3"))
+            val hasSegments = version == "NARRATION-LEDGER-3"
             require(lines.hasNext() && lines.next() == contextHash)
             val header = lines.next().split('\t')
-            require(header.size == if (version == "NARRATION-LEDGER-2") 4 else 2)
+            require(header.size == if (version == "NARRATION-LEDGER-1") 2 else 4)
             val restoredGeneration = header[0].toLong().also { require(it >= 0) }
             val exceeded = header[1].toInt().also { require(it in 0..1) } == 1
             fun pointer(index: Int) = header[index].takeUnless { it == "-" }?.also {
@@ -161,7 +190,7 @@ class NarrationLedger(
                 val line = lines.next()
                 if (line.isEmpty()) continue
                 require(restored.size < capacity)
-                val fields = line.split('\t'); require(fields.size == 10)
+                val fields = line.split('\t'); require(fields.size == if (hasSegments) 13 else 10)
                 val key = fields[0]; require(key.matches(Regex("[0-9a-f]{64}")) && key !in restored)
                 fun time(index: Int) = fields[index].takeUnless { it == "-" }?.toLong()
                 fun count(index: Int) = fields[index].toInt().also { require(it >= 0) }
@@ -172,6 +201,12 @@ class NarrationLedger(
                 val updated = fields[9].toLong().also { require(it >= 0) }
                 if (state == State.STARTED) runningPointer = key
                 val completions = count(5)
+                val completedGeneration = if (hasSegments) time(10)
+                    else entryGeneration.takeIf { state == State.COMPLETED && completions > 0 }
+                require(completedGeneration == null || (completedGeneration in 0..entryGeneration && completions > 0))
+                val completedSegments = if (hasSegments) count(11) else 0
+                val segmentCount = if (hasSegments) count(12) else 0
+                require(completedSegments <= segmentCount)
                 if (header.size == 2 && completions > 0) {
                     if (state != State.COMPLETED) legacyCompletionAmbiguous = true
                     else completedPointer = key
@@ -179,7 +214,8 @@ class NarrationLedger(
                 val pending = state in setOf(State.QUEUED, State.STARTED)
                 val interruptions = count(6)
                 restored[key] = Entry(key, start, end, if (pending) State.INTERRUPTED else state,
-                    count(4), completions, increment(interruptions, pending), count(7), entryGeneration, updated)
+                    count(4), completions, increment(interruptions, pending), count(7), entryGeneration, updated,
+                    completedGeneration, completedSegments, segmentCount)
             }
             if (header.size == 4) {
                 completedPointer?.let { require((restored[it]?.completions ?: 0) > 0) }
@@ -203,7 +239,16 @@ class NarrationLedger(
     }
 
     companion object {
-        fun hashIdentity(identity: String): String = MessageDigest.getInstance("SHA-256")
-            .digest(identity.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        private const val HEX = "0123456789abcdef"
+        fun hashIdentity(identity: String): String {
+            val bytes = MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
+            val hex = CharArray(bytes.size * 2)
+            bytes.forEachIndexed { index, byte ->
+                val value = byte.toInt() and 255
+                hex[index * 2] = HEX[value ushr 4]
+                hex[index * 2 + 1] = HEX[value and 15]
+            }
+            return String(hex)
+        }
     }
 }

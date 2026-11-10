@@ -105,6 +105,10 @@ class NetworkDataSourceFactory private constructor(context: Context, private val
                     else -> throw RemoteAccessException("Ce protocole réseau ne peut pas être lu.")
                 }
                 task.ensureActive(); reader = selected
+                if (dataSpec.position == 0L && uri.scheme == RemoteMediaUris.DIRECT_SCHEME) selected.responseFileTitle?.let { title ->
+                    // Reuse the response already fetched for playback. A title is optional.
+                    runCatching { store.offerDirectHeaderTitle(uri, title) }
+                }
                 // The manifest parser needs the final HTTP base to resolve relative
                 // segment URLs. SavedMedia retains its opaque vault URI exclusively.
                 if (uri.scheme != RemoteMediaUris.SERVER_SCHEME) currentUri = selected.resolvedUri ?: uri
@@ -235,6 +239,8 @@ internal object RemoteHttp {
                 return object : RemoteRead {
                     override val length = total
                     override val resolvedUri: Uri = Uri.parse(cleanTarget.toASCIIString())
+                    override val responseFileTitle: String?
+                        get() = NetworkMediaTitles.contentDisposition(current.getHeaderField("Content-Disposition"))
                     override fun read(buffer: ByteArray, offset: Int, length: Int): Int { cancel.ensureActive(); return stream.read(buffer, offset, length) }
                     override fun close() { try { stream.close() } finally { current.disconnect() } }
                 }

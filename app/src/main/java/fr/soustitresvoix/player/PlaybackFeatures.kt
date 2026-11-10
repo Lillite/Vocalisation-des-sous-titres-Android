@@ -13,6 +13,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import fr.soustitresvoix.core.BlackBars
 import fr.soustitresvoix.core.NarrationLedger
+import fr.soustitresvoix.core.NarrationMachine
 import fr.soustitresvoix.core.OfflineSpeechCue
 import fr.soustitresvoix.core.SpeechTools
 import fr.soustitresvoix.core.SubtitleTimeline
@@ -31,8 +32,12 @@ internal class PlaybackFeatures(
 ) {
     private val store = MediaSessionStore(context)
     private val journals = NarrationJournalStore(context)
+    private data class PendingJournal(val snapshot: NarrationLedger.Snapshot, val revision: String,
+        val pending: List<NarrationLedger.SegmentResume>) {
+        fun serialize() = NarrationJournalStore.PairState(revision, snapshot.exportMetadata(), pending)
+    }
     private data class PendingWrite(val record: MediaSessionSnapshot, val contextHash: String,
-        val journal: String?, val revision: String, val epoch: Long)
+        val journal: PendingJournal?, val revision: String, val epoch: Long)
     /** Process-local handoff between Activity owners. The one durable writer keeps
      * close/reopen and forget operations ordered without blocking the UI. */
     private class WriteCoordinator(val writer: ExecutorService = Executors.newSingleThreadExecutor()) {
@@ -48,7 +53,7 @@ internal class PlaybackFeatures(
         val removedJournalContexts = HashSet<String>()
         val completedJournalRevisions = LinkedHashMap<String, String>()
         // At most four queued contexts plus the one currently being written.
-        val uncommittedJournals = LinkedHashMap<String, Pair<String, String>>()
+        val uncommittedJournals = LinkedHashMap<String, PendingJournal>()
         var writerRunning = false
     }
     private val injectedWriter = writer != null
@@ -74,6 +79,8 @@ internal class PlaybackFeatures(
     // Ledger revisions are monotone within one player, but a recreated player
     // may reach the same counter with different interrupted/completed entries.
     private val journalRevisionOwner = java.util.UUID.randomUUID().toString()
+    private var journalCaptureSequence = 0L
+    private var latestJournalCapture: PendingJournal? = null
     private var sourceUri = ""
     private var sourceMetadataFingerprint = ""
     private var pending: MediaSessionSnapshot? = null
@@ -81,6 +88,9 @@ internal class PlaybackFeatures(
     private var restoredCheckpoint: OccurrenceResume? = null
     private var restoredCheckpointUnavailable = false
     private var restoredCheckpointTrack: String? = null
+    private var restoredJournalRecord: MediaSessionSnapshot? = null
+    private var restoredSegments = emptyList<NarrationLedger.SegmentResume>()
+    private var restoredInventoryFingerprint: String? = null
     private var resumeCheckpointSequence = 0L
     private var journalContext = ""
     private var pendingJournal: String? = null
@@ -92,6 +102,18 @@ internal class PlaybackFeatures(
     private var offlineConfiguration = ""
     private val timelinesByTrack = LinkedHashMap<String, SubtitleTimeline>()
     private var timelineTrack: String? = null
+    private var observedPositionMs: Long? = null
+    private val skippedRanges = mutableListOf<LongRange>()
+    private val received = LinkedHashMap<String, CueAheadIndex.Item>()
+    private var receivedCharacters = 0
+    private var receivedTruncated = false
+    private var lastUnobservedGap: LongRange? = null
+    private data class Expected(val cue: CueAheadIndex.Item, val hash: String, val startMs: Long)
+    private data class Inventory(val index: CueAheadIndex, val track: String, val timeline: SubtitleTimeline,
+        val count: Int, val verified: Boolean, val items: List<Expected>, val fingerprint: String?)
+    private var cachedInventory: Inventory? = null
+    val hasPendingNarrationRestoration: Boolean get() = restoredCheckpoint != null || restoredCheckpointUnavailable ||
+        restoredSegments.isNotEmpty()
     var timeline = SubtitleTimeline(); private set
     val sessions get() = store.list()
 
@@ -99,6 +121,9 @@ internal class PlaybackFeatures(
         translationRestoreSequence++
         cancelCheckpointResume()
         restoredCheckpoint = null; restoredCheckpointUnavailable = false; restoredCheckpointTrack = null
+        restoredJournalRecord = null; restoredSegments = emptyList()
+        restoredInventoryFingerprint = null
+        resetCoverageHistory()
         restoringTranslationMetadata = null; restoringTranslationUri = null; restoringTranslationTrack = null
         synchronized(writeLock) {
             if (forgottenUris.remove(saved.uri)) uriEpochs[saved.uri] = nextEpoch(uriEpochs[saved.uri] ?: 0)
@@ -124,6 +149,8 @@ internal class PlaybackFeatures(
         restoredCheckpoint = previous.narrationCheckpoint
         restoredCheckpointUnavailable = previous.narrationCheckpointUnavailable
         restoredCheckpointTrack = previous.narrationCheckpointTrackId
+        restoredJournalRecord = previous.takeIf { it.narrationJournalRevision != null }
+        restoredInventoryFingerprint = previous.narrationInventoryFingerprint
         restoring = true
         session.prefs.restoreSettings(previous.settings)
         // The order matters: setting an engine clears the old selected voice.
@@ -195,6 +222,13 @@ internal class PlaybackFeatures(
         // A saved EN translation must never index the old auto-selected FR track.
         if (waitingForSelection) return
         pending = null
+        saved.supplementaryTextTrackId?.let {
+            if (!session.restoreSupplementarySubtitleTrack(it)) {
+                missingText = true
+                restoredCheckpointUnavailable = true
+                message("La piste complémentaire mémorisée n’est plus disponible. Vérifie la piste avant de reprendre.", true)
+            }
+        }
         session.speech.applyPreferences()
         updateJournalContext()
         if (!restoredTranslation && restoringTranslationMetadata != null && !missingText && session.selectedTextId() != null) {
@@ -234,6 +268,9 @@ internal class PlaybackFeatures(
     }
 
     fun updateJournalContext() {
+        // Media3 may emit a default track before applying the saved override.
+        // Only the settled selection may validate the paired journal revision.
+        if (pending != null) return
         val saved = session.media ?: return
         val track = session.selectedTextId() ?: return
         if (timelineTrack != track) {
@@ -244,11 +281,36 @@ internal class PlaybackFeatures(
         val identity = SpeechTools.key("journal-v2", saved.uri + "\n" + sourceMetadataFingerprint + "\n" + saved.subtitlePath.orEmpty() + "\n" + track)
         if (identity == journalContext) return
         journalContext = identity
+        resetCoverageHistory()
         session.machine.setJournalContext(identity)
         val hash = session.machine.journalSnapshot().contextHash
-        pendingJournal = synchronized(writeLock) { pendingJournalRestores.remove(hash) ?: coordinator.uncommittedJournals[hash]?.first }
-            ?: if (synchronized(writeLock) { hash in removedJournalContexts }) null else journals.read(hash)
-        pendingJournal?.let { session.machine.restoreJournalMetadata(it) }
+        val restoredRecord = restoredJournalRecord
+        val expectedRevision = restoredRecord?.narrationJournalRevision.takeIf { restoredRecord?.narrationJournalContextId == hash }
+        val removed = synchronized(writeLock) { hash in removedJournalContexts }
+        val inMemory = synchronized(writeLock) { coordinator.uncommittedJournals[hash] }
+        if (expectedRevision != null) {
+            val pair = if (removed) null else (inMemory?.takeIf { it.revision == expectedRevision }?.serialize()
+                ?: journals.readPaired(hash, expectedRevision))
+            pendingJournal = pair?.metadata
+            restoredSegments = pair?.pending.orEmpty()
+            if (pair == null) {
+                restoredCheckpointUnavailable = true
+                message("La position et le bilan vocal mémorisés ne correspondent pas. La reprise reste en pause.", true)
+            } else skippedRanges.addAll(restoredRecord?.narrationSkippedRanges.orEmpty().sortedBy { it.first })
+        } else {
+            if (restoredRecord != null) {
+                restoredCheckpointUnavailable = true
+                message("La piste ou la source du bilan mémorisé a changé. La reprise reste en pause.", true)
+            }
+            pendingJournal = synchronized(writeLock) { pendingJournalRestores.remove(hash) } ?: inMemory?.snapshot?.exportMetadata()
+                ?: if (removed) null else journals.read(hash)
+        }
+        pendingJournal?.let {
+            if (!session.machine.restoreJournalMetadata(it) && expectedRevision != null) {
+                restoredCheckpointUnavailable = true
+                message("Le bilan de cette reprise est illisible. La vidéo reste en pause.", true)
+            }
+        }
         pendingJournal = null
     }
 
@@ -257,6 +319,8 @@ internal class PlaybackFeatures(
         resumeCheckpointSequence++
         if (abandon) {
             restoredCheckpoint = null; restoredCheckpointUnavailable = false; restoredCheckpointTrack = null
+            restoredSegments = emptyList(); restoredJournalRecord = null
+            restoredInventoryFingerprint = null
         }
     }
 
@@ -291,19 +355,52 @@ internal class PlaybackFeatures(
             val interval = timeline.mapInterval(target.startMs, target.endMs, narration = true)
             // Consume only after exact source resolution. The internal seek clears
             // any current renderer queue, then re-arms every source at this point.
+            val segments = restoredSegments
+            val restore = if (segments.isEmpty()) null else resolvePending(track, segments) ?: return@ensureCompleteIndex
+            val fingerprint = restoredInventoryFingerprint
             cancelCheckpointResume(abandon = true)
-            if (!session.resumeFromNarrationCheckpoint(interval.startMs)) {
+            val position = if (restore != null) session.player.currentPosition else interval.startMs
+            if (!session.resumeFromNarrationCheckpoint(position, restorePending = restore)) {
                 restoredCheckpoint = target; restoredCheckpointTrack = track
+                restoredSegments = segments
+                restoredInventoryFingerprint = fingerprint
                 session.savePosition()
             }
         }
         return false
     }
 
+    private fun resolvePending(track: String, segments: List<NarrationLedger.SegmentResume>): (() -> Boolean)? {
+        val expectedFingerprint = restoredInventoryFingerprint
+        if (expectedFingerprint != null && inventory()?.fingerprint != expectedFingerprint) {
+            message("L’inventaire de la piste a changé. La file mémorisée ne peut pas être appliquée à cette version.", true)
+            return null
+        }
+        val byHash = session.ahead.selected(track).associateBy { NarrationLedger.hashIdentity(it.identity) }
+        val resolved = segments.groupBy { it.identityHash }.map { (hash, parts) ->
+            val item = byHash[hash]
+            val text = item?.let { session.translation.textFor(it) }?.let { SpeechTools.filter(it, session.prefs.filters) }
+            if (item == null || text.isNullOrBlank()) {
+                message("Une réplique de la file mémorisée n’est plus disponible. Vérifie la piste ou sa traduction.", true)
+                return null
+            }
+            val start = item.startUs / 1000
+            val end = timeline.mapInterval(start, (item.endUs / 1000).coerceAtLeast(start + 1), narration = true).endMs
+            NarrationMachine.RestoredOccurrence(item.identity, text, parts, end + session.prefs.allowedLagMs)
+        }
+        return {
+            val effects = session.machine.restorePendingSegments(resolved)
+            session.applyNarration(effects)
+            effects.none { it is NarrationMachine.Effect.Message && it.error } && session.machine.pendingSegments() == segments
+        }
+    }
+
     fun register(items: List<CueAheadIndex.Item>) {
         updateJournalContext()
+        rememberReceived(items)
         session.machine.registerOccurrences(items.map { NarrationLedger.Occurrence(it.identity, it.startUs, it.endUs) })
         val prepared = items.filter { item ->
+            if (session.machine.narrationEntry(item.identity)?.state != NarrationLedger.State.DETECTED) return@filter false
             val text = session.translation.textFor(item)?.let { SpeechTools.filter(it, session.prefs.filters) } ?: return@filter false
             val segments = SpeechTools.segments(text, session.speech.language)
             segments.isNotEmpty() && segments.all { session.speech.measuredDurationMs(it) != null }
@@ -341,6 +438,17 @@ internal class PlaybackFeatures(
         val checkpoint = restoredCheckpoint ?: if (retainsRestored) awaitingSelection?.narrationCheckpoint else live.mapNotNull(::checkpointOccurrence).minByOrNull {
             timeline.mapInterval(it.startMs, it.endMs, narration = true).startMs
         }
+        val selectedTrack = session.selectedTextId()
+        val previousPair = restoredJournalRecord ?: awaitingSelection
+        val preservePair = previousPair?.narrationJournalRevision != null &&
+            (selectedTrack == null || pending != null || restoredCheckpointUnavailable)
+        val segments = if (retainsRestored) restoredSegments else session.machine.pendingSegments()
+        val capture = if (preservePair || (selectedTrack == null && snapshot.entries.isEmpty())) null else {
+            latestJournalCapture?.takeIf {
+                it.snapshot.contextHash == snapshot.contextHash && it.snapshot.revision == snapshot.revision && it.pending == segments
+            } ?: PendingJournal(snapshot, SpeechTools.key("narration-save-v1", journalRevisionOwner + ":" + ++journalCaptureSequence), segments)
+                .also { latestJournalCapture = it }
+        }
         val image = session.visual
         val record = MediaSessionSnapshot(saved.uri, saved.title, saved.positionMs,
             fingerprint = if (sourceUri == saved.uri) sourceMetadataFingerprint else sourceFingerprint(saved.uri),
@@ -363,17 +471,20 @@ internal class PlaybackFeatures(
             timeline = timeline, lastCompleted = occurrence(snapshot.lastCompleted),
             lastInterrupted = occurrence(snapshot.lastInterrupted),
             narrationCheckpoint = checkpoint, narrationCheckpointUnavailable = checkpointUnavailable,
-            narrationCheckpointTrackId = if (retainsRestored) restoredCheckpointTrack else session.selectedTextId(),
-            timelines = timelinesByTrack.toMutableMap().apply { session.selectedTextId()?.let { put(it, timeline) } })
-        val revision = journalRevisionOwner + ":" + snapshot.contextHash + ":" + snapshot.generation + ":" + snapshot.revision
-        val needsJournal = synchronized(writeLock) { completedJournalRevisions[snapshot.contextHash] != revision }
-        val journal = if (needsJournal) session.machine.exportJournalMetadata().takeIf { it.isNotEmpty() } else null
+            narrationCheckpointTrackId = if (retainsRestored) restoredCheckpointTrack else selectedTrack,
+            narrationJournalContextId = if (preservePair) previousPair?.narrationJournalContextId else capture?.snapshot?.contextHash,
+            narrationJournalRevision = if (preservePair) previousPair?.narrationJournalRevision else capture?.revision,
+            supplementaryTextTrackId = awaitingSelection?.supplementaryTextTrackId ?: session.supplementaryTextId,
+            narrationInventoryFingerprint = if (retainsRestored) restoredInventoryFingerprint
+                else cachedInventory?.takeIf { it.index === session.ahead && it.track == selectedTrack }?.fingerprint,
+            narrationSkippedRanges = if (preservePair) previousPair?.narrationSkippedRanges.orEmpty()
+                else skippedRanges.takeLast(MediaSessionStore.MAX_SKIPPED_RANGES),
+            timelines = timelinesByTrack.toMutableMap().apply { selectedTrack?.let { put(it, timeline) } })
+        val revision = capture?.revision.orEmpty()
+        val journal = capture?.takeIf { synchronized(writeLock) { completedJournalRevisions[snapshot.contextHash] != revision } }
         val write = PendingWrite(record, snapshot.contextHash, journal, revision, epoch)
         synchronized(writeLock) {
             if (writer.isShutdown || saved.uri in forgottenUris || (uriEpochs[saved.uri] ?: 0) != epoch) return
-            latestSessionRecords.remove(saved.uri)
-            latestSessionRecords[saved.uri] = record
-            if (latestSessionRecords.size > 32) latestSessionRecords.remove(latestSessionRecords.keys.first())
             val key = saved.uri + "\n" + snapshot.contextHash
             if (key !in pendingWrites && pendingWrites.size >= 4) {
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
@@ -381,11 +492,14 @@ internal class PlaybackFeatures(
                 }
                 return
             }
+            latestSessionRecords.remove(saved.uri)
+            latestSessionRecords[saved.uri] = record
+            if (latestSessionRecords.size > 32) latestSessionRecords.remove(latestSessionRecords.keys.first())
             pendingWrites.remove(key)
             pendingWrites[key] = write
             journal?.let {
                 coordinator.uncommittedJournals.remove(snapshot.contextHash)
-                coordinator.uncommittedJournals[snapshot.contextHash] = it to revision
+                coordinator.uncommittedJournals[snapshot.contextHash] = it
                 if (coordinator.uncommittedJournals.size > 5)
                     coordinator.uncommittedJournals.remove(coordinator.uncommittedJournals.keys.first())
             }
@@ -408,17 +522,20 @@ internal class PlaybackFeatures(
             }
             try {
                 if (synchronized(writeLock) { (uriEpochs[task.record.uri] ?: 0) != task.epoch || task.record.uri in forgottenUris }) continue
-                store.save(task.record)
+                if (task.journal == null) store.save(task.record) else {
+                    val preserveRevision = store.get(task.record.uri)?.takeIf { it.narrationJournalContextId == task.contextHash }
+                        ?.narrationJournalRevision
+                    journals.savePaired(task.contextHash, task.journal.serialize(), preserveRevision) { store.save(task.record) }
+                }
                 synchronized(writeLock) {
                     writtenEpochs[task.record.uri] = task.epoch
                     if ((uriEpochs[task.record.uri] ?: 0) == task.epoch && task.record.uri !in forgottenUris)
                         removedRecords.remove(task.record.uri)
                 }
                 if (task.journal != null) {
-                    journals.save(task.contextHash, task.journal)
                     synchronized(writeLock) {
                         completedJournalRevisions[task.contextHash] = task.revision
-                        if (coordinator.uncommittedJournals[task.contextHash]?.second == task.revision)
+                        if (coordinator.uncommittedJournals[task.contextHash]?.revision == task.revision)
                             coordinator.uncommittedJournals.remove(task.contextHash)
                         writtenJournalEpochs[task.contextHash] = task.epoch
                         if ((uriEpochs[task.record.uri] ?: 0) == task.epoch && task.record.uri !in forgottenUris)
@@ -482,6 +599,7 @@ internal class PlaybackFeatures(
 
     fun applyTimeline(value: SubtitleTimeline) {
         session.pause(); timeline = value
+        observedPositionMs = null; skippedRanges.clear(); cachedInventory = null
         (timelineTrack ?: session.selectedTextId())?.let { timelinesByTrack[it] = value; timelineTrack = it }
         session.invalidateTimedNarration()
         session.savePosition(); changed()
@@ -501,17 +619,275 @@ internal class PlaybackFeatures(
         }
     }
 
+    private fun inventory(): Inventory? {
+        val track = session.selectedTextId() ?: return null
+        val index = session.ahead
+        val complete = session.hasCompleteSubtitleIndex && !index.truncated
+        if (complete) cachedInventory?.let {
+            if (it.index === index && it.track == track && it.timeline == timeline && it.count == index.count) return it
+        }
+        val cues = if (complete) index.selected(track) else
+            (received.values + index.selected(track)).distinctBy { it.identity }
+        val reached = session.player.currentPosition.coerceAtLeast(0)
+        val items = cues.map {
+            val start = it.startUs / 1000
+            val interval = timeline.mapInterval(start, (it.endUs / 1000).coerceAtLeast(start + 1), narration = true)
+            Expected(it, NarrationLedger.hashIdentity(it.identity), interval.startMs.coerceAtLeast(0))
+        }.filter { complete || it.startMs <= reached }.sortedBy { it.startMs }.distinctBy { it.hash }
+        val verified = complete && items.size == cues.size
+        val fingerprint = if (verified) SpeechTools.key("narration-inventory-v1", buildString {
+            for (item in items.sortedWith(compareBy<Expected> { it.cue.startUs }.thenBy { it.hash })) {
+                append(item.hash).append(':').append(item.cue.startUs).append(':').append(item.cue.endUs)
+                    .append(':').append(NarrationLedger.hashIdentity(item.cue.raw)).append('\n')
+            }
+        }) else null
+        return Inventory(index, track, timeline, index.count, verified, items, fingerprint)
+            .also { if (complete) cachedInventory = it }
+    }
+
+    /** The scheduler calls this after admitting the boundaries it crossed.
+     * Reconcile only the new slice of a verified inventory, never a user seek. */
+    fun onTimelinePosition(positionMs: Long) {
+        val previous = observedPositionMs ?: (positionMs - 1)
+        observedPositionMs = positionMs
+        if (positionMs <= previous || !session.prefs.narration || !session.prefs.bool("integralReading", true) ||
+            !session.machine.snapshot().wantsPlayback || !session.hasCompleteSubtitleIndex) return
+        val expected = inventory()?.takeIf { it.verified }?.items ?: return
+        val found = expected.binarySearchBy(previous + 1) { it.startMs }
+        var first = if (found < 0) -found - 1 else found
+        while (first > 0 && expected[first - 1].startMs > previous) first--
+        val generation = session.machine.narrationGeneration()
+        val missed = mutableListOf<Pair<String, String>>()
+        for (index in first until expected.size) {
+            val item = expected[index]
+            if (item.startMs > positionMs) break
+            val identity = item.cue.identity
+            val entry = session.machine.narrationEntry(identity)
+            if (entry?.lastCompletedGeneration == generation || (entry?.generation == generation &&
+                    entry.state in setOf(NarrationLedger.State.QUEUED, NarrationLedger.State.STARTED))) continue
+            val text = session.translation.textFor(item.cue)?.let { SpeechTools.filter(it, session.prefs.filters) }
+            if (text.isNullOrBlank()) {
+                session.pause()
+                message("Une réplique attendue à ${formatTime(item.startMs)} est indisponible. Retrouve-la dans le bilan de vocalisation.", true)
+                return
+            }
+            missed += identity to text
+        }
+        if (missed.isNotEmpty()) session.applyNarration(session.machine.recoverMissedOccurrences(missed))
+    }
+
+    fun markSeek(fromMs: Long, toMs: Long) {
+        observedPositionMs = toMs - 1
+        if (toMs <= fromMs + 1) return
+        var combined = (fromMs + 1)..(toMs - 1)
+        val overlaps = skippedRanges.filter { it.first <= combined.last + 1 && it.last >= combined.first - 1 }
+        for (range in overlaps) combined = minOf(combined.first, range.first)..maxOf(combined.last, range.last)
+        skippedRanges.removeAll(overlaps)
+        skippedRanges += combined
+        // This history only labels gaps. The complete inventory and ledger
+        // still retain every unconfirmed occurrence even beyond this history.
+        if (skippedRanges.size > MediaSessionStore.MAX_SKIPPED_RANGES) skippedRanges.removeAt(0)
+        skippedRanges.sortBy { it.first }
+    }
+
+    fun markUnobservedDiscontinuity(fromMs: Long, toMs: Long) {
+        if (!session.hasCompleteSubtitleIndex && fromMs >= 0 && toMs > fromMs + 1) {
+            lastUnobservedGap = fromMs..toMs
+            observedPositionMs = toMs - 1
+        }
+    }
+
+    private fun resetCoverageHistory() {
+        observedPositionMs = null; skippedRanges.clear(); cachedInventory = null
+        received.clear(); receivedCharacters = 0; receivedTruncated = false; lastUnobservedGap = null
+    }
+
+    private fun rememberReceived(items: List<CueAheadIndex.Item>) {
+        if (session.hasCompleteSubtitleIndex || items.isEmpty()) return
+        val track = session.selectedTextId() ?: return
+        val position = session.player.currentPosition.coerceAtLeast(0)
+        for (item in items) {
+            if (item.track != track) continue
+            val start = item.startUs / 1000
+            val end = (item.endUs / 1000).coerceAtLeast(start + 1)
+            if (timeline.mapInterval(start, end, narration = true).startMs > position) continue
+            val identity = item.identity
+            if (identity in received) continue
+            received[identity] = item
+            receivedCharacters += item.raw.length
+            while (received.size > 4096 || receivedCharacters > 2_000_000) {
+                val oldest = received.entries.first()
+                receivedCharacters -= oldest.value.raw.length
+                received.remove(oldest.key)
+                receivedTruncated = true
+            }
+        }
+    }
+
+    private fun wasSkipped(timeMs: Long): Boolean {
+        val index = skippedRanges.binarySearchBy(timeMs) { it.first }
+        return index >= 0 || skippedRanges.getOrNull(-index - 2)?.contains(timeMs) == true
+    }
+
+    private fun formatTime(ms: Long): String {
+        val seconds = ms.coerceAtLeast(0) / 1000
+        val prefix = if (seconds >= 3600) "${seconds / 3600} h " else ""
+        return "$prefix${seconds / 60 % 60} min ${seconds % 60} s"
+    }
+
+    private data class Coverage(val inventory: Inventory?, val journal: NarrationLedger.Snapshot) {
+        val entries = journal.entries.associateBy { it.identityHash }
+        val remaining = inventory?.items.orEmpty().filter { item -> (entries[item.hash]?.completions ?: 0) == 0 }
+        val verified get() = inventory?.verified == true && !journal.capacityExceeded
+        val passCompleted get() = if (verified) inventory?.items.orEmpty().count {
+            entries[it.hash]?.lastCompletedGeneration == journal.generation
+        } else journal.passCompletedCount
+    }
+    private fun coverage() = Coverage(inventory(), session.machine.journalSnapshot())
+
+    fun verifyNarrationEnd(): Boolean {
+        if (!session.prefs.narration || session.selectedTextId() == null) return true
+        val result = coverage()
+        val complete = result.verified && result.remaining.isEmpty()
+        val description = when {
+            complete -> "Couverture du film confirmée : ${result.inventory?.items?.size ?: 0} répliques terminées. ${result.passCompleted} dans ce passage."
+            result.remaining.isNotEmpty() -> "Fin de l’image. ${result.remaining.size} répliques repérées restent à lire. Ouvre le bilan de vocalisation."
+            else -> "Fin de la vocalisation détectée. La couverture complète de cette piste reste non vérifiable."
+        }
+        message(description, !complete)
+        return complete
+    }
+
     fun report(): String {
-        val result = session.machine.journalSnapshot()
-        return "${result.completedCount} occurrences terminées sur ${result.detectedCount} détectées.\n" +
-            "${result.interruptedCount} interrompues ; ${result.errorCount} en erreur ; ${result.pendingCount} en attente ; ${result.filteredCount} exclues explicitement.\n" +
-            "Le suivi porte sur les occurrences extraites de la piste choisie. Commencée signifie commande vocale émise, sans mesure acoustique. Les identifiants sont hachés ; le journal ne conserve pas le texte.\n" +
-            if (result.capacityExceeded) "La limite du journal est atteinte : le bilan est incomplet." else "Une répétition manuelle ne gonfle pas le nombre d’occurrences distinctes terminées."
+        val result = coverage()
+        val journal = result.journal
+        val total = result.inventory?.items?.size ?: 0
+        val finished = total - result.remaining.size
+        val coverageLine = if (result.verified) "$total répliques attendues. $finished terminées sur le film. ${result.remaining.size} à rattraper."
+            else "Inventaire complet indisponible. $total répliques reçues et retenues jusqu’à cette position. " +
+                "$finished terminées parmi elles. ${result.remaining.size} à rattraper."
+        val skipCount = result.remaining.count { wasSkipped(it.startMs) }
+        val missingWindow = lastUnobservedGap?.let {
+            "\nDernier déplacement du flux sans inventaire vérifié de ${formatTime(it.first)} à ${formatTime(it.last)}."
+        }.orEmpty()
+        val limitedHistory = if (!result.verified && receivedTruncated) "\nLa mémoire des répliques reçues est partielle." else ""
+        return "$coverageLine\n${result.passCompleted} répliques terminées dans le passage courant.\n" +
+            "${journal.interruptedCount} interrompues. ${journal.errorCount} en erreur. ${journal.pendingCount} en attente. " +
+            "${journal.filteredCount} exclues. $skipCount restantes dans des intervalles sautés.$missingWindow$limitedHistory\n" +
+            if (journal.capacityExceeded) "La limite du journal est atteinte. Le bilan est incomplet."
+            else "Une réplique terminée a reçu la confirmation vocale de chaque segment. Les répétitions restent distinctes du total du film."
     }
     fun showNarrationReport(activity: Activity) {
         AlertDialog.Builder(activity).setTitle("Bilan de vocalisation")
             .setMessage(report()).setPositiveButton("Fermer", null)
-            .setNeutralButton("Relire l’interruption") { _, _ -> replayInterrupted() }.show()
+            .setNeutralButton("Relire l’interruption") { _, _ -> replayInterrupted() }
+            .setNegativeButton("Répliques restantes") { _, _ -> showMissingPage(activity, 0) }.show()
+    }
+
+    private fun showMissingPage(activity: Activity, offset: Int) {
+        val result = coverage()
+        val remaining = result.remaining
+        if (remaining.isEmpty()) {
+            message(if (result.verified) "Toutes les répliques attendues ont été lues."
+                else "Aucune réplique à rejouer dans l’index disponible. La couverture de la piste n’est pas vérifiée.", false)
+            return
+        }
+        val start = offset.coerceAtMost(remaining.lastIndex / 40 * 40)
+        val page = remaining.subList(start, minOf(remaining.size, start + 40))
+        val skipped = if (start == 0) remaining.filter { wasSkipped(it.startMs) } else emptyList()
+        val labels = buildList {
+            if (skipped.isNotEmpty()) add("Lire les ${skipped.size} répliques dépassées")
+            page.forEach { item ->
+                val state = when (result.entries[item.hash]?.state) {
+                    NarrationLedger.State.INTERRUPTED -> "interrompue"
+                    NarrationLedger.State.ERROR -> "en erreur"
+                    NarrationLedger.State.FILTERED -> "exclue"
+                    NarrationLedger.State.QUEUED, NarrationLedger.State.STARTED -> "en attente"
+                    else -> when {
+                        session.translation.textFor(item.cue) == null -> "en attente de traduction"
+                        wasSkipped(item.startMs) -> "dépassée lors d’un déplacement"
+                        else -> "non lue"
+                    }
+                }
+                add("${formatTime(item.startMs)}. Réplique $state. Écouter.")
+            }
+        }.toTypedArray()
+        val track = result.inventory?.track ?: return
+        val epoch = session.generation
+        fun play(expected: List<Expected>) {
+            if (session.generation == epoch && session.selectedTextId() == track) replayRemaining(track, expected)
+        }
+        val dialog = AlertDialog.Builder(activity).setTitle("Répliques restantes ${start + 1} à ${start + page.size} sur ${remaining.size}")
+            .setItems(labels) { _, index ->
+                if (skipped.isNotEmpty() && index == 0) play(skipped)
+                else play(listOf(page[index - if (skipped.isNotEmpty()) 1 else 0]))
+            }
+            .setPositiveButton("Lire toutes") { _, _ -> play(remaining) }
+            .setNegativeButton("Fermer", null)
+        if (start + page.size < remaining.size) dialog.setNeutralButton("Suivantes") { _, _ -> showMissingPage(activity, start + page.size) }
+        else if (start > 0) dialog.setNeutralButton("Première page") { _, _ -> showMissingPage(activity, 0) }
+        dialog.show()
+    }
+
+    private fun replayRemaining(track: String, expected: List<Expected>) {
+        session.pause()
+        fun read() {
+            val byHash = inventory()?.items.orEmpty().associateBy { it.hash }
+            val items = expected.map { item ->
+                val cue = byHash[item.hash]?.cue
+                val text = cue?.let { session.translation.textFor(it) }?.let { SpeechTools.filter(it, session.prefs.filters) }
+                if (cue == null || text.isNullOrBlank()) {
+                    message("La réplique à ${formatTime(item.startMs)} n’est pas prête. Vérifie le texte et la traduction.", true)
+                    return
+                }
+                cue to text
+            }
+            register(items.map { it.first })
+            if (!session.requestNarrationReplayFocus()) return
+            session.applyNarration(session.machine.replayOccurrences(items.map { it.first.identity to it.second }))
+        }
+        if (!hasPendingNarrationRestoration) { read(); return }
+        val ticket = ++resumeCheckpointSequence
+        val epoch = session.generation
+        val mapping = timeline
+        session.ensureCompleteIndex {
+            if (ticket != resumeCheckpointSequence || epoch != session.generation || track != session.selectedTextId() || mapping != timeline) return@ensureCompleteIndex
+            if (rearmSavedQueue(track)) read()
+        }
+    }
+
+    /** Called after verifying the selected source index. Keep later saved
+     * segments while the user explicitly rereads one or more occurrences. */
+    private fun rearmSavedQueue(track: String): Boolean {
+        val checkpoint = restoredCheckpoint
+        if (restoredCheckpointUnavailable || (checkpoint != null && track != restoredCheckpointTrack)) {
+            message("La file vocale mémorisée ne peut pas être retrouvée dans cette piste. La vidéo reste en pause.", true)
+            return false
+        }
+        if (checkpoint == null) return true
+        val pending = session.ahead.selected(track).firstOrNull {
+            NarrationLedger.hashIdentity(it.identity) == checkpoint.id &&
+                it.startUs / 1000 == checkpoint.startMs &&
+                (it.endUs / 1000).coerceAtLeast(it.startUs / 1000 + 1) == checkpoint.endMs
+        }
+        if (pending == null || session.translation.textFor(pending) == null) {
+            message("La file vocale encore en attente est indisponible. Vérifie la piste et sa traduction.", true)
+            return false
+        }
+        val segments = restoredSegments
+        val restore = if (segments.isEmpty()) null else resolvePending(track, segments) ?: return false
+        val fingerprint = restoredInventoryFingerprint
+        val start = if (restore != null) session.player.currentPosition
+            else timeline.mapInterval(checkpoint.startMs, checkpoint.endMs, narration = true).startMs
+        cancelCheckpointResume(abandon = true)
+        if (!session.rearmNarrationCheckpoint(start, restorePending = restore)) {
+            restoredCheckpoint = checkpoint; restoredCheckpointTrack = track
+            restoredSegments = segments
+            restoredInventoryFingerprint = fingerprint
+            session.savePosition()
+            return false
+        }
+        return true
     }
     private fun replayInterrupted(fallbackLast: Boolean = false) {
         session.pause()
@@ -529,29 +905,9 @@ internal class PlaybackFeatures(
             }
             val text = occurrence?.let { session.translation.textFor(it) }
             if (occurrence == null || text == null) { message("La réplique mémorisée n’est pas disponible dans cette source. Vérifie la piste et sa traduction.", true); return@ensureCompleteIndex }
-            val checkpoint = restoredCheckpoint
-            if (restoredCheckpointUnavailable || (checkpoint != null && track != restoredCheckpointTrack)) {
-                message("La file vocale mémorisée ne peut pas être retrouvée dans cette piste. La vidéo reste en pause.", true)
-                return@ensureCompleteIndex
-            }
-            if (checkpoint != null) {
-                val pendingOccurrence = session.ahead.selected(track).firstOrNull {
-                    NarrationLedger.hashIdentity(it.identity) == checkpoint.id &&
-                        it.startUs / 1000 == checkpoint.startMs &&
-                        (it.endUs / 1000).coerceAtLeast(it.startUs / 1000 + 1) == checkpoint.endMs
-                }
-                if (pendingOccurrence == null || session.translation.textFor(pendingOccurrence) == null) {
-                    message("La file vocale encore en attente est indisponible. Vérifie la piste et sa traduction.", true)
-                    return@ensureCompleteIndex
-                }
-                val start = timeline.mapInterval(checkpoint.startMs, checkpoint.endMs, narration = true).startMs
-                cancelCheckpointResume(abandon = true)
-                if (!session.rearmNarrationCheckpoint(start)) {
-                    restoredCheckpoint = checkpoint; restoredCheckpointTrack = track; session.savePosition()
-                    return@ensureCompleteIndex
-                }
-            }
+            if (track == null || !rearmSavedQueue(track)) return@ensureCompleteIndex
             register(listOf(occurrence))
+            if (!session.requestNarrationReplayFocus()) return@ensureCompleteIndex
             session.applyNarration(session.machine.replayOccurrence(occurrence.identity, SpeechTools.filter(text, session.prefs.filters)))
             message("Réplique relue. La vidéo reste en pause ; appuie ensuite sur Reprendre. Les autres répliques seront conservées depuis la position de reprise.", false)
         }
@@ -770,7 +1126,10 @@ internal class PlaybackFeatures(
                 return true
             }
         }
-        val moved = record.copy(uri = uri, title = title, fingerprint = fingerprint, updatedAtMs = System.currentTimeMillis())
+        // A different URI has a different journal context. Until the new
+        // source has been indexed, use the conservative legacy checkpoint.
+        val moved = record.copy(uri = uri, title = title, fingerprint = fingerprint, updatedAtMs = System.currentTimeMillis(),
+            narrationJournalContextId = null, narrationJournalRevision = null)
         val tracks = (record.timelines.keys + listOfNotNull(record.textTrackId, session.selectedTextId())).filter { it != "__disabled__" }.toSet()
         val currentTrack = session.selectedTextId()
         val liveMetadata = currentTrack?.let { session.machine.exportJournalMetadata() }
@@ -795,8 +1154,9 @@ internal class PlaybackFeatures(
         if (!writer.isShutdown) writer.execute {
             try {
                 if (synchronized(writeLock) { (uriEpochs[uri] ?: 0) == epoch && uri !in forgottenUris }) {
-                    val newest = synchronized(writeLock) { latestSessionRecords[uri] } ?: moved
-                    store.save(newest)
+                    // Later saves can point to a still-pending paired journal.
+                    // They are committed by drainWrites, not by this migration.
+                    store.save(moved)
                     synchronized(writeLock) {
                         writtenEpochs[uri] = epoch
                         if ((uriEpochs[uri] ?: 0) == epoch && uri !in forgottenUris) removedRecords.remove(uri)

@@ -2,15 +2,15 @@
 
 Lecteur Android conçu pour **vocaliser chaque occurrence textuelle distincte de la piste choisie** : dialogues, panneaux, chevauchements et répétitions réelles. Les modes Confort et Adaptatif laissent à la voix le temps de terminer. Une traduction indisponible provoque une attente explicite.
 
-**Version 1.0.0 — code 23.** Les [notes de version](docs/releases/1.0.0.md) décrivent les changements et les critères de validation ; le corps de la [release GitHub v1.0.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v1.0.0) est la référence pour les commits, exécutions, empreintes et fichiers de cette distribution. Le numéro stable ne constitue pas une certification de chaque modèle, codec, serveur ou accélérateur.
+**Version 1.1.0 — code 24.** Les [notes de version](docs/releases/1.1.0.md) décrivent les changements et les critères de validation ; le corps de la [release GitHub v1.1.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v1.1.0) est la référence pour les commits, exécutions, empreintes et fichiers de cette distribution. Le numéro stable ne constitue pas une certification de chaque modèle, codec, serveur ou accélérateur.
 
 [Guide utilisateur](docs/guide-utilisateur.md) · [Sources locales et réseau](docs/sources-medias.md) · [Modèles de traduction](docs/modeles-traduction.md) · [Documentation complète](docs/README.md) · [Développer](CONTRIBUTING.md) · [Validation](TESTING.md)
 
 ## Installer et commencer sur Android
 
-L’APK et son fichier `SHA256SUMS` se recherchent dans les assets de la [release v1.0.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v1.0.0). Vérifier les preuves et le certificat de la distribution avant installation. Une archive « Source code » n’est pas une application installable ; un APK absent des assets ou non signé avec le certificat durable n’est pas une distribution vérifiée.
+L’APK et son fichier `SHA256SUMS` se recherchent dans les assets de la [release v1.1.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v1.1.0). Vérifier les preuves et le certificat de la distribution avant installation. Une archive « Source code » n’est pas une application installable ; un APK absent des assets ou non signé avec le certificat durable n’est pas une distribution vérifiée.
 
-| Repère | Version 1.0.0 |
+| Repère | Version 1.1.0 |
 | --- | --- |
 | Android minimum | Android 8.0 — API 26 |
 | Identité d’installation | `fr.soustitresvoix.player.translation`, conservée depuis la série Traduction 0.4.0 |
@@ -18,7 +18,7 @@ L’APK et son fichier `SHA256SUMS` se recherchent dans les assets de la [releas
 | Architectures compilées | ARM64 et x86_64 ; accélérateurs facultatifs ARM64 selon le téléphone |
 | Navigation | Accueil, Explorer, Traduction, Paramètres ; thème Material 3 sombre |
 | Lecture | Fichiers locaux, stockage partagé/SD accessible, sources directes et serveurs réseau pris en charge |
-| Sous-titres | Pistes textuelles compatibles et fichiers SRT, VTT, ASS/SSA ; pas d’OCR |
+| Sous-titres | Pistes textuelles et fichiers SRT, VTT, ASS/SSA. OCR local avec modèle importé et validation du texte |
 | Traduction | GGUF local, Google local ML Kit, Google en ligne, Azure, DeepL et LibreTranslate HTTPS |
 
 1. Dans **Paramètres → Réglages de la voix et du confort → Voix**, sélectionner un moteur Android et une voix installée dans la langue à prononcer. Écouter l’essai.
@@ -31,7 +31,7 @@ L’APK et son fichier `SHA256SUMS` se recherchent dans les assets de la [releas
 
 ## Ce que fait le lecteur
 
-- **Lecture intégrale** : conservation des occurrences, de leurs identifiants et minutages. La réutilisation d’une traduction ne supprime aucune vocalisation.
+- **Lecture intégrale** : index de la piste, attente de l’image et comparaison entre occurrences attendues et terminées. Le bilan donne les horaires des répliques restantes et permet de les lire.
 - **Confort et Adaptatif** : attente lorsque la phrase ne tient pas dans la vidéo ; Pause utilisateur, déplacement et changement de média invalident les reprises devenues périmées.
 - **Réglages précis** : voix, synchronisation, sous-titres, image et son ; champs bornés, pas, présélections et boutons Minimum/Maximum pour les réglages concernés.
 - **Préparation** : cache vocal évictable, bibliothèque explicitement conservée hors ligne, séances et réparation d’un accès perdu, bilan de vocalisation sans texte des sous-titres.
@@ -52,9 +52,9 @@ CPU, OpenCL, Vulkan et Hexagon/HTP sont des modes distincts. Une sélection, un 
 
 ## Limites et confidentialité
 
-Les pistes PGS/VobSub et les textes inscrits uniquement dans les pixels exigent un OCR absent. Pas d’accès aux DRM d’autres applications, d’audiodescription automatique ni de fonctionnement durable en arrière-plan garanti. Les codecs et voix disponibles dépendent du téléphone et du moteur vocal externe ; TalkBack réel, Bluetooth, autonomie et longues séances demandent leurs propres essais.
+Les pistes PGS/VobSub peuvent passer par une reconnaissance locale et une relecture de chaque résultat. La couverture des textes incrustés dépend des images effectivement analysées et vérifiées. Pas d’accès aux DRM d’autres applications, d’audiodescription automatique ni de fonctionnement durable en arrière-plan garanti. Les codecs et voix disponibles dépendent du téléphone et du moteur vocal externe ; TalkBack réel, Bluetooth, autonomie et longues séances demandent leurs propres essais.
 
-L’indexation d’une source progressive distante utilise le même transport et les mêmes parseurs que le lecteur. **HLS, DASH et RTSP ne garantissent pas un index textuel complet ni une préparation intégrale**, notamment en direct. Une absence d’index complet doit rester visible ; le lecteur ne doit pas prétendre avoir couvert tous les événements ni sauter un texte pour masquer cette limite.
+L’indexation d’une source progressive distante utilise le même transport et les mêmes parseurs que le lecteur. Certaines pistes WebVTT de contenus HLS/DASH finis sont indexables. Les directs et les formats hors périmètre gardent une couverture partielle explicite. Une absence d’index complet doit rester visible ; le lecteur ne doit pas prétendre avoir couvert tous les événements ni sauter un texte pour masquer cette limite.
 
 Les fournisseurs de traduction en ligne reçoivent seulement les textes et options confirmés, jamais le film ou son audio. Leurs quotas, facturation, disponibilité et conditions peuvent évoluer. ML Kit traduit localement après téléchargement ; le SDK conserve ses conditions et sa télémétrie technique. Les connexions réseau et secrets sont chiffrés avec Android Keystore ; les séances enregistrent des références opaques. HTTP et FTP restent des transports non chiffrés choisis explicitement : préférer HTTPS, FTPS ou SFTP sur un réseau non fiable. Les adaptateurs de traduction exigeant HTTPS conservent cette exigence.
 

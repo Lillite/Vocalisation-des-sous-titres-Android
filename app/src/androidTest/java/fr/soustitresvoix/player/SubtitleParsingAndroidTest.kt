@@ -16,7 +16,9 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SubtitleParsingAndroidTest {
     @Test fun markupAndDescriptionsAreCleanedOnAndroid() {
-        assertEquals("Salut\ntoi", SubtitleText.clean("{\\an8}Salut\\Ntoi"))
+        assertEquals("Salut\ntoi", SubtitleText.clean("{\\an8}Salut\\Ntoi", assEscapes = true))
+        val literal = """C:\new\home"""
+        assertEquals(literal, SubtitleText.clean(literal))
         assertEquals("Bonjour\na < b", SubtitleText.clean("<i>Bonjour</i><br/>a < b"))
         assertEquals("[Musique] Bonjour", SubtitleText.clean("[Musique] Bonjour"))
         assertEquals("Bonjour", SubtitleText.clean("[Musique] Bonjour [Rires]", true))

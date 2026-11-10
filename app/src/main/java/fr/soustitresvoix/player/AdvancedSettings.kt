@@ -44,9 +44,9 @@ class AdvancedSettings(private val activity: Activity, private val session: Play
     private fun number(column: LinearLayout, label: String, key: String, default: Int, min: Int, max: Int, step: Int, unit: String) {
         val presets = when (key) {
             "adaptiveMax" -> listOf(100, 125, 150, 180, 200)
-            "cacheMiB" -> listOf(64, 512, 2048)
-            "lookAheadCount" -> listOf(32, 256, 1024)
-            "lookAheadSeconds" -> listOf(15, 120, 300)
+            "cacheMiB" -> listOf(64, 512, 2048, 8192)
+            "lookAheadCount" -> listOf(32, 256, 1024, 4096)
+            "lookAheadSeconds" -> listOf(15, 120, 300, 900)
             "allowedLagMs" -> listOf(0, 600, 1200)
             else -> listOf(default)
         }
@@ -115,12 +115,13 @@ class AdvancedSettings(private val activity: Activity, private val session: Play
         column.addView(button("État de l’indexation et de la préparation") { notice("${session.indexingStatus}\n${session.speech.preparationStatus}") })
         column.addView(button("Annuler la préparation") { session.cancelPreparation() })
         column.addView(button("Choisir le profil de préparation") {
-            AlertDialog.Builder(activity).setTitle("Paramètres réels — aucun NPU activé artificiellement")
-                .setItems(arrayOf("Économie : 15 s, 64 Mio, 32 segments max", "Équilibré : 120 s, 512 Mio, 256 segments max", "Intensif : 300 s, 2 048 Mio, 1 024 segments max")) { _, i ->
+            AlertDialog.Builder(activity).setTitle("Profil de préparation vocale")
+                .setItems(arrayOf("Économie : 15 s, 64 Mio, 32 segments max", "Équilibré : 120 s, 512 Mio, 256 segments max",
+                    "Intensif : 300 s, 2 048 Mio, 1 024 segments max", "Cache ample : 900 s, 8 Gio, 4 096 segments max")) { _, i ->
                     session.beforeSettingsChange()
                     prefs.putInt("performanceProfile",i); prefs.putBool("cache",true)
-                    prefs.putInt("lookAheadSeconds",intArrayOf(15,120,300)[i]); prefs.putInt("cacheMiB",intArrayOf(64,512,2048)[i])
-                    prefs.putInt("lookAheadCount",intArrayOf(32,256,1024)[i]); numericRefreshers.toList().forEach { it() }; panel.refresh()
+                    prefs.putInt("lookAheadSeconds",intArrayOf(15,120,300,900)[i]); prefs.putInt("cacheMiB",intArrayOf(64,512,2048,8192)[i])
+                    prefs.putInt("lookAheadCount",intArrayOf(32,256,1024,4096)[i]); numericRefreshers.toList().forEach { it() }; panel.refresh()
                     session.refreshSettings(); notice("Profil enregistré. Les valeurs sont actualisées dans ce panneau. Le traitement vocal externe et ses processeurs restent gérés par ce moteur.")
                 }.setNegativeButton("Fermer",null).show()
         })

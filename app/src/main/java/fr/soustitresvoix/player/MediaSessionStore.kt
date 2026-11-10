@@ -38,7 +38,12 @@ data class MediaSessionSnapshot(
     val timelines: Map<String, SubtitleTimeline> = emptyMap(),
     val narrationCheckpoint: OccurrenceResume? = null,
     val narrationCheckpointUnavailable: Boolean = false,
-    val narrationCheckpointTrackId: String? = null
+    val narrationCheckpointTrackId: String? = null,
+    val narrationJournalContextId: String? = null,
+    val narrationJournalRevision: String? = null,
+    val supplementaryTextTrackId: String? = null,
+    val narrationInventoryFingerprint: String? = null,
+    val narrationSkippedRanges: List<LongRange> = emptyList()
 )
 
 /** Durable private, atomic, bounded records. This is separate from an evictable
@@ -96,7 +101,8 @@ class MediaSessionStore(context: Context) {
      * its identity checked. Save succeeds before the old record is removed. */
     fun relocate(oldUri: String, newUri: String): MediaSessionSnapshot? = synchronized(diskLock) {
         val previous = get(oldUri) ?: return null
-        val changed = previous.copy(uri = newUri, updatedAtMs = System.currentTimeMillis())
+        val changed = previous.copy(uri = newUri, updatedAtMs = System.currentTimeMillis(),
+            narrationJournalContextId = null, narrationJournalRevision = null)
         save(changed)
         if (oldUri != newUri) remove(oldUri)
         return changed
@@ -136,6 +142,7 @@ class MediaSessionStore(context: Context) {
         const val MAX_RECORD_BYTES = 256 * 1024
         private const val MAX_TEXT = 8192
         private const val MAX_SETTINGS = 256
+        internal const val MAX_SKIPPED_RANGES = 4096
         private const val SCHEMA = 1
         private val FILE_NAME = Regex("[a-f0-9]{64}\\.json")
         private val SECRET_NAME = Regex("(?i)(secret|password|credential|api.?key|access.?token|refresh.?token)")
@@ -146,7 +153,8 @@ class MediaSessionStore(context: Context) {
             require(snapshot.positionMs in 0..SubtitleTimeline.MAX_TIME_MS && snapshot.updatedAtMs >= 0)
             listOf(snapshot.fingerprint, snapshot.audioTrackId, snapshot.textTrackId, snapshot.audioLanguage,
                 snapshot.textLanguage, snapshot.subtitlePath, snapshot.subtitleMime, snapshot.translationIdentity,
-                snapshot.enginePackage, snapshot.voiceName, snapshot.narrationMode, snapshot.narrationCheckpointTrackId).filterNotNull().forEach {
+                snapshot.enginePackage, snapshot.voiceName, snapshot.narrationMode, snapshot.narrationCheckpointTrackId,
+                snapshot.supplementaryTextTrackId).filterNotNull().forEach {
                 require(it.length <= MAX_TEXT && '\u0000' !in it)
             }
             listOf(snapshot.settings, snapshot.image).forEach { values ->
@@ -170,6 +178,15 @@ class MediaSessionStore(context: Context) {
                 require(it.startMs in -SubtitleTimeline.MAX_TIME_MS..SubtitleTimeline.MAX_TIME_MS &&
                     it.endMs > it.startMs && it.endMs <= SubtitleTimeline.MAX_TIME_MS)
             }
+            require((snapshot.narrationJournalContextId == null) == (snapshot.narrationJournalRevision == null))
+            listOfNotNull(snapshot.narrationJournalContextId, snapshot.narrationJournalRevision,
+                snapshot.narrationInventoryFingerprint).forEach {
+                require(it.matches(Regex("[0-9a-f]{64}")))
+            }
+            require(snapshot.narrationSkippedRanges.size <= MAX_SKIPPED_RANGES)
+            snapshot.narrationSkippedRanges.forEach {
+                require(!it.isEmpty() && it.first >= 0 && it.last <= SubtitleTimeline.MAX_TIME_MS)
+            }
             require(snapshot.timelines.size <= 128)
             snapshot.timelines.keys.forEach { require(it.isNotBlank() && it.length <= MAX_TEXT && '\u0000' !in it) }
         }
@@ -191,6 +208,13 @@ class MediaSessionStore(context: Context) {
             put("narrationCheckpoint", encodeOccurrence(snapshot.narrationCheckpoint))
             put("narrationCheckpointUnavailable", snapshot.narrationCheckpointUnavailable)
             put("narrationCheckpointTrackId", snapshot.narrationCheckpointTrackId)
+            put("narrationJournalContextId", snapshot.narrationJournalContextId)
+            put("narrationJournalRevision", snapshot.narrationJournalRevision)
+            put("supplementaryTextTrackId", snapshot.supplementaryTextTrackId)
+            put("narrationInventoryFingerprint", snapshot.narrationInventoryFingerprint)
+            put("narrationSkippedRanges", JSONArray().apply {
+                snapshot.narrationSkippedRanges.forEach { put(JSONArray().put(it.first).put(it.last)) }
+            })
             put("timelines", JSONObject().apply { snapshot.timelines.toSortedMap().forEach { (track, value) -> put(track, encodeTimeline(value)) } })
         }
 
@@ -208,7 +232,15 @@ class MediaSessionStore(context: Context) {
                     require(timelines.length() <= 128)
                     timelines.keys().asSequence().associateWith { decodeTimeline(timelines.getJSONObject(it)) }
                 } ?: emptyMap(), decodeOccurrence(json.optJSONObject("narrationCheckpoint")),
-                json.optBoolean("narrationCheckpointUnavailable", false), optional("narrationCheckpointTrackId"))
+                json.optBoolean("narrationCheckpointUnavailable", false), optional("narrationCheckpointTrackId"),
+                optional("narrationJournalContextId"), optional("narrationJournalRevision"), optional("supplementaryTextTrackId"),
+                optional("narrationInventoryFingerprint"), json.optJSONArray("narrationSkippedRanges")?.let { ranges ->
+                    require(ranges.length() <= MAX_SKIPPED_RANGES)
+                    List(ranges.length()) { index -> ranges.getJSONArray(index).let {
+                        require(it.length() == 2)
+                        it.getLong(0)..it.getLong(1)
+                    } }
+                } ?: emptyList())
         }
 
         internal fun encodeTimeline(value: SubtitleTimeline) = JSONObject().apply {

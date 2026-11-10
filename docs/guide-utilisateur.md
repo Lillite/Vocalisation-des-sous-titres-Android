@@ -1,8 +1,8 @@
-# Guide utilisateur — 1.0.0
+# Guide utilisateur — 1.1.0
 
-[Index](README.md) · [Installer](../README.md#installer-et-commencer-sur-android) · [Sources médias](sources-medias.md) · [Modèles](modeles-traduction.md) · [État de validation](releases/1.0.0.md)
+[Index](README.md) · [Installer](../README.md#installer-et-commencer-sur-android) · [Sources médias](sources-medias.md) · [Modèles](modeles-traduction.md) · [État de validation](releases/1.1.0.md)
 
-Ce guide décrit les commandes des sources 1.0.0. Les preuves de validation et de distribution sont dans les notes de version ; la présence d’une commande ne démontre pas sa compatibilité avec chaque téléphone ou fichier.
+Ce guide décrit les commandes des sources 1.1.0. Les notes de version distinguent la validation de l’APK, la couverture des sources et les essais sur téléphone.
 
 ## Se repérer
 
@@ -43,7 +43,17 @@ Deux répliques identiques à deux instants différents restent deux occurrences
 
 **Pause utilisateur est prioritaire.** Un déplacement, un changement de média/piste, une fermeture ou une erreur invalident les retours anciens et les autorisations de reprise correspondantes. Répéter une phrase ou relire une interruption sont des actions explicites. Une fin de traduction ne donne pas une permission générale de lancer la vidéo.
 
-Le **Bilan de vocalisation**, dans Diagnostic, distingue occurrences terminées, interruptions et erreurs. Il porte sur les événements effectivement extraits ; une piste non prise en charge ou un index incomplet reste une limite. « Commencée » désigne une commande de synthèse, pas une mesure acoustique du premier son. Le journal conserve des identifiants hachés et des états, sans texte des sous-titres.
+Le **Bilan de vocalisation**, dans Diagnostic, indique si l’inventaire de la piste est complet. Il distingue les occurrences attendues, les fins confirmées par la voix, le passage courant, l’historique et les plages dépassées. Dans **Répliques restantes**, choisir une réplique, les répliques dépassées ou la lecture de toutes les restantes. L’image reste en pause pendant le rattrapage.
+
+En lecture intégrale, une piste textuelle finie et indexable est vérifiée avant que l’image avance. L’image peut attendre une traduction ou la fin d’une réplique longue. Le journal contient les états et les identifiants hachés. Une fin confirmée par le moteur reste distincte d’un essai d’écoute sur ton périphérique audio.
+
+## Panneaux et OCR
+
+Dans le choix de piste de sous-titres, ouvrir **Panneaux et OCR**. Pour des panneaux dans une seconde piste textuelle, sélectionner **Ajouter une piste de panneaux**. La voix conserve les événements des deux pistes.
+
+Pour une piste PGS ou VobSub, importer un fichier `.traineddata` correspondant à la langue avec **Importer un modèle OCR local**, puis préparer la piste image. Vérifier et corriger les textes proposés avant de les employer en sous-titres. Les modèles sont conservés dans l’espace privé de l’application. Le calcul de reconnaissance est local.
+
+La reconnaissance du texte incrusté peut examiner un instant ou échantillonner un intervalle d’un média local. L’échantillonnage donne une couverture partielle et des horaires à vérifier, notamment pour les textes brefs. La piste textuelle issue de la relecture a son propre inventaire.
 
 ## Trouver et modifier un réglage
 
@@ -77,6 +87,7 @@ Le **cache vocal** évictable sert à anticiper ; **Conserver pour une écoute h
 | Économie | 64 Mio | 15 s | 32 |
 | Équilibré, nouveau réglage initial | 512 Mio | 120 s | 256 |
 | Intensif | 2 048 Mio | 300 s | 1 024 |
+| Cache ample | 8 Gio | 900 s | 4 096 |
 
 Les bornes manuelles sont **16 à 8 192 Mio**, **1 à 4 096 segments**, **5 à 7 200 secondes**. Elles plafonnent la préparation ; elles ne réservent pas immédiatement cette mémoire et ne règlent pas le processeur d’un moteur vocal tiers. Les préférences existantes sont conservées à la mise à jour.
 

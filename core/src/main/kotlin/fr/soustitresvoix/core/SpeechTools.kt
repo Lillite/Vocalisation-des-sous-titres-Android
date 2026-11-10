@@ -87,14 +87,14 @@ object WavInfo {
 class SpeechDiskCache(private val directory: File, private val limitBytes: () -> Long) {
     data class Entry(val file: File, val durationMs: Long)
     private var initialized = false
-    fun initialize() {
+    @Synchronized fun initialize() {
         if (initialized) return
         directory.mkdirs()
         directory.listFiles()?.filter { it.extension == "part" }?.forEach { it.delete() }
         directory.listFiles()?.filter { it.extension == "sha256" && !File(directory, "${it.nameWithoutExtension}.wav").isFile }?.forEach { it.delete() }
         initialized = true; trim()
     }
-    fun get(key: String): Entry? {
+    @Synchronized fun get(key: String): Entry? {
         initialize()
         val file = File(directory, "$key.wav")
         if (!file.isFile) return null
@@ -106,8 +106,8 @@ class SpeechDiskCache(private val directory: File, private val limitBytes: () ->
         file.setLastModified(System.currentTimeMillis())
         return Entry(file, info.durationMs)
     }
-    fun temporary(): File { initialize(); return File.createTempFile("synth-", ".part", directory) }
-    fun put(key: String, temporary: File): Entry? {
+    @Synchronized fun temporary(): File { initialize(); return File.createTempFile("synth-", ".part", directory) }
+    @Synchronized fun put(key: String, temporary: File): Entry? {
         val info = WavInfo.read(temporary) ?: run { temporary.delete(); return null }
         val target = File(directory, "$key.wav")
         if (!temporary.renameTo(target)) { temporary.delete(); return null }
@@ -125,8 +125,8 @@ class SpeechDiskCache(private val directory: File, private val limitBytes: () ->
         }
         return md.digest().joinToString("") { "%02x".format(it) }
     }
-    fun size(): Long = directory.listFiles()?.sumOf { it.length() } ?: 0
-    fun trim(protect: String? = null) {
+    @Synchronized fun size(): Long = directory.listFiles()?.sumOf { it.length() } ?: 0
+    @Synchronized fun trim(protect: String? = null) {
         val files = directory.listFiles()?.filter { it.extension == "wav" }?.sortedBy { it.lastModified() } ?: return
         var size = files.sumOf { it.length() }
         for (file in files) {
@@ -134,5 +134,5 @@ class SpeechDiskCache(private val directory: File, private val limitBytes: () ->
             if (file.name != protect) { val n = file.length(); if (file.delete()) { size -= n; File(directory, "${file.nameWithoutExtension}.sha256").delete() } }
         }
     }
-    fun clear() { directory.listFiles()?.filter { it.extension in listOf("wav", "part", "sha256") }?.forEach { it.delete() } }
+    @Synchronized fun clear() { directory.listFiles()?.filter { it.extension in listOf("wav", "part", "sha256") }?.forEach { it.delete() } }
 }

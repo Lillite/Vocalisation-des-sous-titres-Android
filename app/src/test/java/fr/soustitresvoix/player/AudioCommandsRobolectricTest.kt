@@ -399,6 +399,9 @@ class AudioCommandsRobolectricTest {
         val session = create(components)
         try {
             openTextOnly(session, subtitles)
+            // This fixture exercises the live renderer rather than a full
+            // inventory: the injected cues are deliberately outside the file.
+            session.prefs.putBool("integralReading", false)
             accepted(session, AudioCommand.SetDuckingTiming(0, 0, 350))
             session.play()
             session.ahead.clear()

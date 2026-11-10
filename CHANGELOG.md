@@ -2,6 +2,16 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
+## 1.1.0 — lecture intégrale vérifiée
+
+- Inventaire de la piste, contrôle des occurrences, rattrapage horodaté et reprise par fragments.
+- Corrections des sous-titres brefs, des pauses, des changements audio, des répétitions, de la diction et du mixage.
+- Cache vocal prioritaire et profil Cache ample. Réutilisation des index textuels locaux vérifiés.
+- Explorateur local et serveur enrichi, historique réseau rouvrable et titres lisibles.
+- Pistes textuelles complémentaires, index WebVTT de sources réseau finies compatibles et reconnaissance locale avec validation.
+
+[Notes 1.1.0 et limites](docs/releases/1.1.0.md)
+
 ## 1.0.0 — bibliothèque, réseau et traduction contextuelle
 
 Version **1.0.0**, code **23**, identité `fr.soustitresvoix.player.translation` et certificat durable conservés. [Notes et critères de validation](docs/releases/1.0.0.md) ; [preuves propres à la distribution](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v1.0.0). Aucun résultat antérieur n’est présenté comme preuve de la 1.0.0.

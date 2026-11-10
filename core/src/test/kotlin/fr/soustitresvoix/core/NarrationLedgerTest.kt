@@ -196,7 +196,7 @@ class NarrationLedgerTest {
         assertEquals(2, target.snapshot().interruptedCount)
         assertNull(target.snapshot().current)
         val before = target.snapshot()
-        assertFalse(target.restoreMetadata(encoded.replace("NARRATION-LEDGER-2", "unknown")))
+        assertFalse(target.restoreMetadata(encoded.replace("NARRATION-LEDGER-3", "unknown")))
         assertEquals(before, target.snapshot())
         val other = NarrationLedger().apply { setContext("another") }
         assertFalse(other.restoreMetadata(encoded))
@@ -275,18 +275,19 @@ class NarrationLedgerTest {
         assertEquals(1, machine.journalSnapshot().completedCount)
     }
 
-    @Test fun queueOverflowIsVisibleAsErrorWithoutFalseCompletion() {
+    @Test fun queueReserveHoldsTheImageWithoutFalseCompletion() {
         val machine = NarrationMachine(maxPendingChars = 8).apply {
             setSpeechReady(true); setMediaReady(true); play()
         }
         val effects = machine.cues(0, listOf("Un texte beaucoup trop long."), identities = listOf("too-long"))
-        assertTrue(effects.any { it is Effect.Message && it.error })
-        assertEquals(State.ERROR, machine.entry("too-long").state)
+        assertTrue(effects.contains(Effect.Video(false)))
+        assertTrue(effects.none { it is Effect.Message && it.error })
+        assertEquals(State.STARTED, machine.entry("too-long").state)
         assertEquals(0, machine.journalSnapshot().completedCount)
-        assertFalse(machine.snapshot().wantsPlayback)
-        assertTrue(machine.snapshot().recoverableCount > 0)
-        assertEquals(listOf("Un texte beaucoup trop long."), drain(machine, machine.play()))
+        assertTrue(machine.snapshot().wantsPlayback)
+        assertEquals(listOf("Un texte beaucoup trop long."), drain(machine, effects))
         assertEquals(1, machine.journalSnapshot().completedCount)
+        assertTrue(machine.snapshot().videoRequested)
     }
 
     @Test fun overflowPreservesAlreadyQueuedAndIncomingOverlappingOccurrencesInOrder() {
@@ -297,12 +298,14 @@ class NarrationLedgerTest {
         val extras = (1..25).map { "La réplique simultanée numéro $it est préservée." }
         val ids = extras.indices.map { "overlap-$it" }
         val overflow = machine.cues(0, listOf(first.text) + extras, identities = listOf("one") + ids)
-        assertTrue(overflow.any { it is Effect.Message && it.error })
-        assertFalse(machine.snapshot().wantsPlayback)
+        assertTrue(overflow.contains(Effect.Video(false)))
+        assertTrue(overflow.none { it == Effect.StopSpeech || it is Effect.Speak })
+        assertTrue(machine.snapshot().wantsPlayback)
         assertTrue(machine.snapshot().recoverableCount > 0)
-        machine.speechFinished(first.id)
-        assertEquals(0, machine.journalSnapshot().completedCount)
-        val said = drain(machine, machine.play())
+        assertEquals(first.id, machine.snapshot().speakingId)
+        val afterFirst = machine.speechFinished(first.id)
+        assertEquals(1, machine.journalSnapshot().completedCount)
+        val said = listOf(first.text) + drain(machine, afterFirst)
         assertEquals(listOf(first.text) + extras, said)
         assertEquals(26, machine.journalSnapshot().completedCount)
         assertEquals(0, machine.snapshot().recoverableCount)
@@ -312,9 +315,8 @@ class NarrationLedgerTest {
         val machine = NarrationMachine(maxPendingChars = 20).apply {
             setSpeechReady(true); setMediaReady(true); play()
         }
-        machine.cues(0, listOf("Première phrase.", "Deuxième phrase.", "Troisième phrase."),
-            identities = listOf("one", "two", "three"))
-        var next = machine.play().spoken()
+        var next = machine.cues(0, listOf("Première phrase.", "Deuxième phrase.", "Troisième phrase."),
+            identities = listOf("one", "two", "three")).spoken()
         repeat(2) {
             assertTrue(machine.snapshot().waitingForSpeech)
             assertFalse(machine.snapshot().videoRequested)
@@ -330,9 +332,9 @@ class NarrationLedgerTest {
         val machine = ready()
         val text = (1..900).joinToString(" ") { "Ceci est la phrase complète numéro $it." }
         val overflow = machine.cues(0, listOf(text), identities = listOf("long"))
-        assertTrue(overflow.none { it is Effect.Speak })
-        assertFalse(machine.snapshot().wantsPlayback)
-        var next = machine.play().spoken()
+        assertTrue(overflow.contains(Effect.Video(false)))
+        assertTrue(machine.snapshot().wantsPlayback)
+        var next = overflow.spoken()
         val said = mutableListOf(next.text)
         var segments = 0
         while (true) {
@@ -368,11 +370,11 @@ class NarrationLedgerTest {
         }
         val lines = listOf("Première phrase.", "Deuxième phrase.", "Troisième phrase.")
         val ids = listOf("one", "two", "three")
-        machine.cues(0, lines, identities = ids)
+        val first = machine.cues(0, lines, identities = ids)
         val count = machine.snapshot().recoverableCount
         repeat(60) { machine.cues(it * 1000L, lines, identities = ids) }
         assertEquals(count, machine.snapshot().recoverableCount)
-        assertEquals(lines, drain(machine, machine.play()))
+        assertEquals(lines, drain(machine, first))
         assertEquals(3, machine.journalSnapshot().completedCount)
     }
 
@@ -523,7 +525,7 @@ class NarrationLedgerTest {
         when (index) {
             0 -> "NARRATION-LEDGER-1"
             2 -> line.split('\t').take(2).joinToString("\t")
-            else -> line
+            else -> if (index > 2) line.split('\t').take(10).joinToString("\t") else line
         }
     }.joinToString("\n")
 
@@ -665,6 +667,28 @@ class NarrationLedgerTest {
         controller.speechFinished(recovered.id)
         assertEquals(1, controller.journalSnapshot().completedCount)
         assertFalse(controller.snapshot().wantsPlayback)
-        assertTrue(controller.exportJournalMetadata().startsWith("NARRATION-LEDGER-2"))
+        assertTrue(controller.exportJournalMetadata().startsWith("NARRATION-LEDGER-3"))
+    }
+
+    @Test fun segmentAcknowledgmentsAndPassCompletionSurviveTheJournalRoundTrip() {
+        val source = NarrationLedger()
+        source.register(NarrationLedger.Occurrence("cue", 1000, 2000))
+        source.started("cue")
+        source.segmentCompleted("cue", 0, 2)
+        assertEquals(0, source.snapshot().passCompletedCount)
+        assertEquals(1, source.entry("cue")!!.completedSegmentCount)
+        val restored = NarrationLedger()
+        assertTrue(restored.restoreMetadata(source.exportMetadata()))
+        assertEquals(NarrationLedger.State.INTERRUPTED, restored.entry("cue")!!.state)
+        assertEquals(1, restored.entry("cue")!!.completedSegmentCount)
+        restored.started("cue")
+        restored.segmentCompleted("cue", 1, 2)
+        restored.completed("cue")
+        assertEquals(1, restored.snapshot().passCompletedCount)
+        restored.nextGeneration()
+        restored.queued("cue")
+        assertEquals(0, restored.snapshot().passCompletedCount)
+        assertEquals(1, restored.snapshot().completedCount)
+        assertEquals(0, restored.entry("cue")!!.completedSegmentCount)
     }
 }

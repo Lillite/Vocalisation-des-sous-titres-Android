@@ -110,7 +110,7 @@ class NarrationJournalStoreRobolectricTest {
             when (index) {
                 0 -> "NARRATION-LEDGER-1"
                 2 -> line.split('\t').take(2).joinToString("\t")
-                else -> line
+                else -> if (index > 2) line.split('\t').take(10).joinToString("\t") else line
             }
         }.joinToString("\n")
         store.save(source.currentContextHash, legacy)
@@ -137,5 +137,51 @@ class NarrationJournalStoreRobolectricTest {
         store.remove(first.currentContextHash)
         assertNull(store.read(first.currentContextHash))
         assertEquals(second.exportMetadata(), store.read(second.currentContextHash))
+    }
+
+    @Test fun interruptedSessionCommitKeepsPositionAndExactFragmentsFromThePreviousRevision() {
+        val ledger = ledger()
+        val contextId = ledger.currentContextHash
+        ledger.started("synthetic-cue")
+        ledger.segmentCompleted("synthetic-cue", 0, 2)
+        val pending = NarrationLedger.SegmentResume(NarrationLedger.hashIdentity("synthetic-cue"), 1, 2,
+            NarrationLedger.hashIdentity("Synthetic input. Second fragment."))
+        val first = NarrationJournalStore.PairState("a".repeat(64), ledger.exportMetadata(), listOf(pending))
+        val sessions = MediaSessionStore(context)
+        val snapshot = MediaSessionSnapshot("content://fixture/paired", "Synthetic film", positionMs = 3500,
+            narrationJournalContextId = contextId, narrationJournalRevision = first.revision)
+        NarrationJournalStore(context).savePaired(contextId, first, null) { sessions.save(snapshot) }
+
+        ledger.segmentCompleted("synthetic-cue", 1, 2)
+        ledger.completed("synthetic-cue")
+        val second = NarrationJournalStore.PairState("b".repeat(64), ledger.exportMetadata(), emptyList())
+        assertTrue(runCatching {
+            NarrationJournalStore(context).savePaired(contextId, second, first.revision) {
+                throw java.io.IOException("Synthetic interrupted commit")
+            }
+        }.exceptionOrNull() is java.io.IOException)
+        val durable = requireNotNull(MediaSessionStore(context).get(snapshot.uri))
+        assertEquals(3500L, durable.positionMs)
+        assertEquals(first, NarrationJournalStore(context).readPaired(contextId, requireNotNull(durable.narrationJournalRevision)))
+        assertNull(NarrationJournalStore(context).readPaired(contextId, second.revision))
+    }
+
+    @Test fun committedStagedJournalCanBeRecoveredBeforeTheNextPairIsWritten() {
+        val ledger = ledger()
+        val contextId = ledger.currentContextHash
+        val first = NarrationJournalStore.PairState("a".repeat(64), ledger.exportMetadata(), emptyList())
+        val store = NarrationJournalStore(context)
+        store.savePaired(contextId, first, null) {}
+        val final = File(context.filesDir, "narration-journals-v1/$contextId.journal")
+        // Exact on-disk state if the process stops after saving the session
+        // pointer and before promoting the matching staged revision.
+        assertTrue(final.renameTo(File(final.path + ".staged")))
+        ledger.started("synthetic-cue")
+        val second = NarrationJournalStore.PairState("b".repeat(64), ledger.exportMetadata(), emptyList())
+        assertTrue(runCatching {
+            store.savePaired(contextId, second, first.revision) { throw java.io.IOException("Synthetic failed save") }
+        }.isFailure)
+        assertEquals(first, NarrationJournalStore(context).readPaired(contextId, first.revision))
+        assertNull(NarrationJournalStore(context).readPaired(contextId, second.revision))
     }
 }

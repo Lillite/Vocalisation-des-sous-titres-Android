@@ -147,18 +147,21 @@ class SubtitleTranslationSession(
         val current = Job(); job = current
         status = "Indexation complète de la piste avant traduction…"; changed()
         val mediaSource = if (track == "external-subtitle") media else media.copy(subtitlePath = null, subtitleMime = null)
+        val tracks = owner.subtitleTrackPair()
+        val scanTracks = tracks?.let { setOf(it.first, it.second) } ?: setOf(track)
         worker.execute {
             var scanning = true
             try {
                 val scanner = source.createIndexer(); current.scanner = scanner
                 if (current.cancelled.get()) { scanner.cancel(); return@execute }
-                val index = scanner.scan(mediaSource) { percent -> main.post {
+                val index = scanner.scanTracks(mediaSource, scanTracks) { percent -> main.post {
                     if (isCurrent(current, generation, track, ticket)) {
                         status = if (percent >= 0) "Indexation avant traduction : $percent %" else "Indexation avant traduction…"
                         changed()
                     }
                 } }
                 scanning = false
+                tracks?.let { index.combinedTrack(it.first, it.second) }
                 require(!index.truncated) { "Index incomplet : traduction refusée pour éviter de perdre des sous-titres." }
                 val cues = index.selected(track).mapNotNull { item ->
                     val text = SubtitleText.clean(item.raw)
@@ -295,7 +298,7 @@ class SubtitleTranslationSession(
                     job = null
                     // A terminal error keeps the validated prefix usable, but cannot
                     // trigger a later automatic resume without a new user action.
-                    resumeAfterBuffer = false
+                    stopBufferRecovery()
                     status = when (error) {
                         is TranslationFailure -> error.message ?: "La traduction a échoué."
                         is IllegalArgumentException -> "Traduction incomplète : activation refusée."
@@ -349,7 +352,7 @@ class SubtitleTranslationSession(
 
     fun cancel() {
         if (closed) return
-        finishRestore(false); invalidateRetentions(); invalidateDerivedResults(); resumeAfterBuffer = false; cancelJob(); preview = null; sequence++
+        finishRestore(false); invalidateRetentions(); invalidateDerivedResults(); stopBufferRecovery(); cancelJob(); preview = null; sequence++
         status = if (ready) "Traduction française conservée" else "Traduction annulée. Relance-la ou reviens explicitement à la piste originale."
         changed()
     }
@@ -397,24 +400,28 @@ class SubtitleTranslationSession(
 
     private fun resumeWhenBuffered() {
         if (!resumeAfterBuffer || !ready || (!complete && nextUntranslatedUs - currentSourcePositionUs < bufferSeconds * 1_000_000L)) return
-        // Consume the intent before play(): a rejected voice/focus request cannot
-        // turn a future unrelated callback into a playback command.
         resumeAfterBuffer = false
-        owner.play()
+        owner.resumeAfterTranslationBuffer()
+    }
+
+    private fun stopBufferRecovery() {
+        resumeAfterBuffer = false
+        if (owner.machine.snapshot().translationHeld) owner.pause()
     }
 
     /** Hold at the first missing source occurrence, including cues shorter than a player tick. */
     fun onPlaybackPosition(positionUs: Long): Boolean {
+        // Repeated render/timer callbacks during a hold must not move the
+        // frontier backwards or let a short translated prefix release it.
+        if (resumeAfterBuffer && owner.machine.snapshot().translationHeld) return false
         observedSourcePositionUs = positionUs
         if (!required || complete) return true
         if (!ready || positionUs >= nextUntranslatedUs) {
             val snapshot = owner.machine.snapshot()
             if (snapshot.wantsPlayback && progressive && partialTexts.isNotEmpty()) {
-                resumeAfterBuffer = busy
-                owner.pauseForTranslationBuffer(nextUntranslatedUs)
-                // The rewind is internal, not a user seek. Keep the exact frontier
-                // for readiness even if the renderer hasn't delivered its callback.
                 observedSourcePositionUs = minOf(positionUs, nextUntranslatedUs)
+                resumeAfterBuffer = job != null
+                owner.pauseForTranslationBuffer(nextUntranslatedUs, resumable = resumeAfterBuffer)
             } else if (snapshot.wantsPlayback || snapshot.speakingId != null) owner.pause()
             val nextStatus = if (resumeAfterBuffer) "Lecture en attente de traduction. Reprise après $bufferSeconds secondes de tampon ; Pause annule cette reprise."
                 else "Pause : la traduction n’est pas encore prête à cette position. Attends la progression puis appuie sur Lire."

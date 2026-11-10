@@ -2,7 +2,7 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Architecture](docs/ARCHITECTURE.md) · [Validation](TESTING.md) · [Consignes](AGENTS.md)
 
-`main` est la référence du projet. Un travail terminé et vérifié doit y être fusionné avant d’être annoncé comme livré. La 1.0.0 conserve l’identité `fr.soustitresvoix.player.translation`, le code 23 et le certificat durable de la série Traduction. Une release stable ne transforme pas les backends expérimentaux en matériel universellement qualifié.
+`main` est la référence du projet. Un travail terminé et vérifié doit y être fusionné avant d’être annoncé comme livré. La 1.1.0 conserve l’identité `fr.soustitresvoix.player.translation`, le code 24 et le certificat durable de la série Traduction. Une release stable ne transforme pas les backends expérimentaux en matériel universellement qualifié.
 
 ## Préparer une modification
 
@@ -30,7 +30,7 @@ Les pages courantes sont le README, l’index, le guide utilisateur, les sources
 
 Conserver les commits et PR explicites ; ne pas réintroduire une ancienne implémentation en consolidant des branches. Ne pas déplacer un tag correct publié. Pour corriger un ancien nom, établir d’abord la correspondance avec sa source et ses APK, conserver les preuves puis créer le tag canonique approprié.
 
-Le manifeste [`.github/release-history.json`](.github/release-history.json) décrit l’historique et `next_release`. Pour 1.0.0, le tag déclaré est `v1.0.0`, `prerelease=false`, `latest=true`. Ne pas inventer d’identifiant GitHub, de run ni de SHA-256 inconnu. La synchronisation conserve la recommandation publiée existante avant la publication, puis vérifie la source sur `main` et les assets avant de l’actualiser.
+Le manifeste [`.github/release-history.json`](.github/release-history.json) décrit l’historique et `next_release`. Pour 1.1.0, le tag déclaré est `v1.1.0`, `prerelease=false`, `latest=true`. Ne pas inventer d’identifiant GitHub, de run ni de SHA-256 inconnu. La synchronisation conserve la recommandation publiée existante avant la publication, puis vérifie la source sur `main` et les assets avant de l’actualiser.
 
 ## Publier un APK vérifié
 
@@ -38,20 +38,20 @@ La compilation après fusion et la publication sont distinctes. `release-build.y
 
 Signer ensuite avec la **clé durable existante**, conservée hors dépôt. `SUBTITRES_SIGNING_PROPERTIES` désigne les propriétés externes ; PKCS12, mots de passe et jetons restent hors versionnement. Ne jamais générer une nouvelle clé en remplacement pour la même application. Vérifier manifeste, version/code/applicationId, certificat, alignement et empreinte de l’APK exact avant son transport.
 
-Pour 1.0.0, `publish-apk.yml` reçoit l’APK déjà signé sur la branche temporaire `release-upload/v1.0.0`. Son unique parent doit être la source validée sur `main` ; son diff ne contient que le transport prévu. La source de `main` reste sans `release-upload`. Aucun secret ni URL de téléchargement fourni par les métadonnées ne devient une instruction du workflow.
+Pour 1.1.0, `publish-apk.yml` reçoit l’APK déjà signé sur la branche temporaire `release-upload/v1.1.0`. Son unique parent doit être la source validée sur `main` ; son diff ne contient que le transport prévu. La source de `main` reste sans `release-upload`. Aucun secret ni URL de téléchargement fourni par les métadonnées ne devient une instruction du workflow.
 
 | Format | Fichiers |
 | --- | --- |
-| APK unique | `release-upload/release.json`, `release-upload/notes.md`, `release-upload/SousTitresVoix-1.0.0.apk` |
+| APK unique | `release-upload/release.json`, `release-upload/notes.md`, `release-upload/SousTitresVoix-1.1.0.apk` |
 | Fragments binaires | Même JSON et notes ; `release-upload/apk-parts/0000.part`, `0001.part`, etc., sans APK complet dans le checkout |
 
-Les champs sont exactement `tag`, `source_sha`, `apk_sha256`, `signer_sha256`, `apk_file`, `notes_file`, `title`, plus `apk_chunks` pour les fragments. Dans les deux formats, `apk_file` vaut `release-upload/SousTitresVoix-1.0.0.apk` et l’empreinte globale porte sur l’APK signé entier.
+Les champs sont exactement `tag`, `source_sha`, `apk_sha256`, `signer_sha256`, `apk_file`, `notes_file`, `title`, plus `apk_chunks` pour les fragments. Dans les deux formats, `apk_file` vaut `release-upload/SousTitresVoix-1.1.0.apk` et l’empreinte globale porte sur l’APK signé entier.
 
 Les métadonnées sont bornées à 64 Kio. Le transport fragmenté comporte **1 à 512 parties**, numérotées sans trou à partir de `0000`, de **1 048 576 octets** chacune sauf la dernière, de 1 à 1 048 576 octets. Taille totale maximale : **512 Mio**. Les SHA-256 sont minuscules, sur 64 caractères ; `apk_chunks` conserve l’ordre. Le mélange des formats, les fichiers supplémentaires et les liens symboliques sont refusés. Le réassemblage a lieu hors checkout après contrôle de chaque partie, puis de l’empreinte globale.
 
 Les deux formats passent les mêmes contrôles de provenance, certificat durable, manifeste, alignement et contenu comparé à l’APK CI validé. Les seuls fichiers publics destinés à l’installation sont l’APK et `SHA256SUMS` ; les fragments ne s’installent pas. Après publication, télécharger indépendamment les fichiers publics et revérifier taille, empreinte, identité et certificat avant de supprimer la branche de transport et d’annoncer la livraison.
 
-Compléter les [notes 1.0.0](docs/releases/1.0.0.md#validation-et-publication) avec les résultats observés et les liens propres à cette version. Les suites validées n’ont pas à être répétées pour ajouter les identifiants attribués après publication ; la provenance et l’égalité de contenu doivent néanmoins rester démontrées.
+Compléter les [notes 1.1.0](docs/releases/1.1.0.md#validation-et-publication) avec les résultats observés et les liens propres à cette version. Les suites validées n’ont pas à être répétées pour ajouter les identifiants attribués après publication ; la provenance et l’égalité de contenu doivent néanmoins rester démontrées.
 
 ## Signaler un problème
 

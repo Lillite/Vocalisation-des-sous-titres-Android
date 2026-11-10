@@ -2,7 +2,12 @@ package fr.soustitresvoix.player
 
 import android.content.Context
 import android.net.Uri
+import android.os.Looper
 import android.util.Base64
+import android.view.View
+import android.widget.Button
+import androidx.activity.ComponentActivity
+import androidx.appcompat.app.AlertDialog
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DataSource
@@ -23,8 +28,11 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowDialog
 
 @UnstableApi
 @RunWith(RobolectricTestRunner::class)
@@ -36,9 +44,11 @@ class RemoteNetworkRobolectricTest {
         context.getSharedPreferences("remote-connections-private-v1", Context.MODE_PRIVATE).edit().clear().commit()
     }
     /** Exercises real AES-GCM/store plumbing; Android Keystore has a separate device test. */
-    private fun store(): RemoteConnectionStore {
+    private fun store() = RemoteConnectionStore.forTest(context, testCipher())
+
+    private fun testCipher(): RemoteSecretCipher {
         val key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
-        return RemoteConnectionStore.forTest(context, object : RemoteSecretCipher {
+        return object : RemoteSecretCipher {
             override fun encrypt(plaintext: ByteArray, identity: String): String {
                 val cipher = Cipher.getInstance("AES/GCM/NoPadding")
                 cipher.init(Cipher.ENCRYPT_MODE, key); cipher.updateAAD(identity.toByteArray())
@@ -50,7 +60,7 @@ class RemoteNetworkRobolectricTest {
                 cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, bytes.copyOfRange(0, 12))); cipher.updateAAD(identity.toByteArray())
                 return cipher.doFinal(bytes, 12, bytes.size - 12)
             }
-        })
+        }
     }
     private fun server() = SyntheticHttpServer()
     private fun base(server: SyntheticHttpServer) = "http://127.0.0.1:${server.port}"
@@ -76,6 +86,113 @@ class RemoteNetworkRobolectricTest {
         store.deleteDirectUrl(direct)
         assertEquals("missing", store.sourceRevision(direct))
         assertTrue(store.listDirectUrls().isEmpty())
+    }
+
+    @Test fun legacyDirectLinkCanBeReopenedAndRenamedWithoutChangingItsProtectedIdentity() {
+        val cipher = testCipher()
+        val key = "direct.ancien"
+        val raw = "https://synthetic-user:synthetic-password@example.invalid/private-path/Un%20film%20d%27%C3%A9t%C3%A9.mkv?sig=synthetic-query"
+        val prefs = context.getSharedPreferences("remote-connections-private-v1", Context.MODE_PRIVATE)
+        assertTrue(prefs.edit().putString(key, cipher.encrypt(raw.toByteArray(), key)).commit())
+        val store = RemoteConnectionStore.forTest(context, cipher)
+        val initial = store.listDirectLinks().single()
+        assertEquals("network-media://ancien/media.mkv", initial.uri.toString())
+        assertEquals("Un film d'été", initial.title)
+        assertEquals(0L, initial.lastOpenedMs)
+        val reopened = store.reopenDirectLink(initial.uri)
+        assertEquals(SavedMedia(initial.uri.toString(), initial.title), reopened.media())
+        assertTrue(reopened.lastOpenedMs > 0)
+        assertEquals(initial.uri, store.renameDirectLink(initial.uri, "Titre corrigé").uri)
+        val recreated = RemoteConnectionStore.forTest(context, cipher)
+        assertEquals("Titre corrigé", recreated.directLink(initial.uri).title)
+        assertEquals(raw, recreated.directUrl(initial.uri))
+        assertEquals("ancien", recreated.sourceRevision(initial.uri))
+        for (secret in listOf("synthetic-password", "synthetic-query", "example.invalid", "private-path", "Titre corrigé")) {
+            assertFalse(prefs.all.toString().contains(secret))
+        }
+    }
+
+    @Test fun directLinkTitlesRejectAddressesAndPreferManualThenMediaMetadata() {
+        val store = store()
+        val raw = "https://example.invalid/79d80bf8-21f1-40e6-95c6-915fe2a6791d.mp4?sig=synthetic-query"
+        val uri = store.saveDirectUrl(raw)
+        assertEquals(NetworkMediaTitles.FALLBACK, store.directLink(uri).title)
+        store.offerDirectHeaderTitle(uri, "Nom du fichier")
+        assertEquals("Nom du fichier", store.directLink(uri).title)
+        assertEquals("Nom du fichier", store.offerDirectMetadataTitle(uri, raw).title)
+        assertEquals("Le film", store.offerDirectMetadataTitle(uri, "Le film").title)
+        assertEquals("Mon titre", store.renameDirectLink(uri, "Mon titre").title)
+        assertEquals("Mon titre", store.offerDirectMetadataTitle(uri, "Titre de la vidéo").title)
+        assertEquals("Titre de la vidéo", store.renameDirectLink(uri, "").title)
+        assertThrows(IllegalArgumentException::class.java) { store.renameDirectLink(uri, raw) }
+    }
+
+    @Test fun actualDirectResponseNamesFilmButManifestChildCannotReplaceTitle() {
+        val requests = AtomicInteger()
+        val server = server()
+        server.createContext("/") { exchange ->
+            requests.incrementAndGet()
+            exchange.responseHeaders.add("Content-Disposition", if (exchange.requestURI.path == "/master.m3u8") {
+                "attachment; filename=film.mp4; filename*=UTF-8''Un%20film%20d%27%C3%A9t%C3%A9%2B1.mp4"
+            } else "attachment; filename=fragment.ts")
+            exchange.sendResponseHeaders(200, 1)
+            exchange.responseBody.use { it.write(byteArrayOf(1)) }
+        }
+        server.start()
+        try {
+            val store = store()
+            val uri = store.saveDirectUrl(base(server) + "/master.m3u8?sig=synthetic-query")
+            val factory = NetworkDataSourceFactory(context, store)
+            fun readFirstByte(resource: Uri) {
+                val source = factory.createDataSource()
+                try {
+                    assertEquals(1L, source.open(DataSpec.Builder().setUri(resource).build()))
+                    assertEquals(1, source.read(ByteArray(1), 0, 1))
+                } finally { source.close() }
+            }
+            readFirstByte(uri)
+            assertEquals("Un film d'été+1", store.directLink(uri).title)
+            readFirstByte(uri.buildUpon().path("/fragment.ts").build())
+            assertEquals("Un film d'été+1", store.directLink(uri).title)
+            assertEquals("Naming adds no network request", 2, requests.get())
+        } finally { server.close() }
+    }
+
+    @Test fun explorerHistoryOpensTheNamedLinkInOneTap() {
+        val store = store()
+        val uri = store.saveDirectUrl("https://example.invalid/download.mp4?sig=synthetic-query", "Film à reprendre")
+        val owner = Robolectric.buildActivity(ComponentActivity::class.java).setup()
+        owner.get().setTheme(R.style.AppTheme)
+        var opened: SavedMedia? = null
+        val controls = FileExplorerControls(owner.get(), { opened = it }, { _, _ -> }, {}, {}, store = store)
+        fun await(condition: () -> Boolean) {
+            val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5)
+            while (!condition() && System.nanoTime() < deadline) {
+                shadowOf(Looper.getMainLooper()).idle()
+                Thread.sleep(5)
+            }
+            assertTrue("Expected UI action did not arrive", condition())
+        }
+        try {
+            val view = controls.createView()
+            fun click(label: String) {
+                val found = ArrayList<View>()
+                view.findViewsWithText(found, label, View.FIND_VIEWS_WITH_TEXT)
+                found.filterIsInstance<Button>().single { it.text.toString() == label }.performClick()
+            }
+            click("Serveurs")
+            click("Historique des liens réseau")
+            await { (ShadowDialog.getLatestDialog() as? AlertDialog)?.listView?.adapter?.count == 1 }
+            val list = requireNotNull((ShadowDialog.getLatestDialog() as AlertDialog).listView)
+            val label = list.adapter.getItem(0).toString()
+            assertTrue(label.startsWith("Film à reprendre"))
+            assertFalse(label.contains("synthetic-query"))
+            val itemView = list.getChildAt(0) ?: list.adapter.getView(0, null, list)
+            list.performItemClick(itemView, 0, list.adapter.getItemId(0))
+            await { opened != null }
+            assertEquals(SavedMedia(uri.toString(), "Film à reprendre"), opened)
+            assertEquals(1, store.listDirectLinks().size)
+        } finally { controls.close(); owner.pause().stop().destroy() }
     }
 
     @Test fun pathsRoundTripUtf8AndRejectTraversal() {
