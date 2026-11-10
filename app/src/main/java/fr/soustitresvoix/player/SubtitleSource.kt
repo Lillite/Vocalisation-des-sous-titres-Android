@@ -31,6 +31,7 @@ interface SubtitleIndexer {
 interface SubtitleSource {
     fun createMediaSource(item: MediaItem, onCue: IndexedCueListener): MediaSource
     fun createIndexer(): SubtitleIndexer
+    fun hasIncompleteCapture(): Boolean = false
     fun safeFailureMessage(error: Exception): String
 }
 
@@ -38,9 +39,12 @@ interface SubtitleSource {
 @UnstableApi
 class Media3SubtitleSource(private val context: Context) : SubtitleSource {
     private val dataSources = NetworkDataSourceFactory(context)
+    private var activeTap: CueAheadFactory? = null
+    override fun hasIncompleteCapture(): Boolean = activeTap?.truncated == true
     override fun createMediaSource(item: MediaItem, onCue: IndexedCueListener): MediaSource {
         val tap = CueAheadFactory { track, cues -> onCue(track, cues, null) }
             .setOccurrenceListener { track, cues, origins -> onCue(track, cues, origins) }
+        activeTap = tap
         val uri = item.localConfiguration?.uri
         // RTSP owns its socket transport in Media3 and must see the real scheme.
         // This internal MediaItem is never passed to history or session storage.

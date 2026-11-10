@@ -217,6 +217,13 @@ class TimelinePlaybackRobolectricTest {
             assertEquals(4, f.session.machine.journalSnapshot().completedCount)
             assertEquals(0, f.components.indexerCreations)
             assertFalse(f.session.hasCompleteSubtitleIndex)
+            f.components.captureFailed = true
+            f.at(3500)
+            assertFalse("An incomplete subtitle capture allowed the picture to continue", f.session.player.playWhenReady)
+            assertFalse(f.session.machine.snapshot().wantsPlayback)
+            assertTrue("The incomplete source capture was not reported", f.messages.any { it.second })
+            assertEquals(4, f.session.machine.journalSnapshot().completedCount)
+            assertEquals(4, f.components.voice.requests.size)
         }
     }
 
@@ -906,6 +913,7 @@ class TimelinePlaybackRobolectricTest {
     private class Components(private val mapRemoteMedia: Boolean = false) : PlaybackComponents by DefaultPlaybackComponents {
         var indexerCreations = 0; private set
         var sourceCues: IndexedCueListener? = null; private set
+        var captureFailed = false
         val progressiveScanners = mutableListOf<ProgressiveScanner>()
         private var adaptiveSource = false
         private val shouldBlockScan = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -921,6 +929,7 @@ class TimelinePlaybackRobolectricTest {
         override fun createSubtitles(context: Context): SubtitleSource {
             val delegate = Media3SubtitleSource(context)
             return object : SubtitleSource by delegate {
+                override fun hasIncompleteCapture(): Boolean = captureFailed || delegate.hasIncompleteCapture()
                 override fun createMediaSource(item: MediaItem, onCue: IndexedCueListener): androidx.media3.exoplayer.source.MediaSource {
                     if (!mapRemoteMedia) return delegate.createMediaSource(item, onCue)
                     sourceCues = onCue

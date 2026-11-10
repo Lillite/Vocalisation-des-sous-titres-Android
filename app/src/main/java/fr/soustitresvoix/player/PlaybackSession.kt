@@ -1376,6 +1376,11 @@ class PlaybackSession(
     /** Dispatch every crossed start/end boundary, including cues shorter than a tick. */
     private fun driveIndexedCues() {
         if (trackReset || rearmingCheckpoint || features.hasPendingNarrationRestoration || machine.snapshot().translationHeld) return
+        if (machine.snapshot().wantsPlayback && progressiveNetworkSource && usesProgressiveSubtitleIndex() &&
+            (ahead.truncated || subtitleSource.hasIncompleteCapture())) {
+            apply(machine.fail("La capture des sous-titres est incomplète. La vidéo est arrêtée pour conserver les répliques déjà reçues et éviter une omission silencieuse."))
+            return
+        }
         val track = selectedTextId() ?: return
         val picture = player.currentPosition.coerceAtLeast(0)
         val needsPrefix = adaptiveNetworkSource && networkIndexTrack == track && !hasCompleteSubtitleIndex
