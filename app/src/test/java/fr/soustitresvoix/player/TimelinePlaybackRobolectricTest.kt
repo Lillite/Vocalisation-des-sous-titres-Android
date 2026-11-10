@@ -236,7 +236,11 @@ class TimelinePlaybackRobolectricTest {
             assertFalse(f.session.player.playWhenReady)
             f.session.play(); f.at(5000)
             f.emit("Nouveau passage.", 5010, 5020)
-            f.at(5100); f.drain()
+            f.at(5100)
+            await("The new-pass occurrence did not start after the real seek finished buffering") {
+                f.session.player.playbackState == Player.STATE_READY && f.session.machine.snapshot().speakingId != null
+            }
+            f.drain()
             assertEquals(listOf("Nouveau passage."), f.components.voice.requests.map { it.second })
             assertEquals(1, f.session.machine.journalSnapshot().completedCount)
             assertEquals(0, f.components.indexerCreations)
