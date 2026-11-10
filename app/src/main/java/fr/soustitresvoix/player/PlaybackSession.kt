@@ -22,6 +22,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.text.Cue
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import fr.soustitresvoix.core.NarrationController
@@ -119,6 +120,9 @@ class PlaybackSession(
     private var phraseEndUtterance: String? = null
     private var rearmingCheckpoint = false
     private var deferredPlay: Boolean? = null
+    private var progressivePassStartMs = 0L
+    private var progressiveReconciledCount = -1
+    private var progressiveNetworkSource = false
     private var indexedTrack: String? = null
     val hasCompleteSubtitleIndex: Boolean get() = indexedTrack?.let {
         !ahead.truncated && it == selectedTextId() && ahead.hasTrack(it)
@@ -144,7 +148,7 @@ class PlaybackSession(
     private val playbackTick = object : Runnable {
         override fun run() {
             if (closed) return
-            val indexed = hasCompleteSubtitleIndex
+            val indexed = usesIndexedNarration()
             val activePicture = player.playbackState != Player.STATE_ENDED
             if (indexed && activePicture) driveIndexedCues() else updateCaptionOverride()
             if (machine.snapshot().wantsPlayback) {
@@ -288,7 +292,7 @@ class PlaybackSession(
                     }
                     else finishPlaybackBenchmark("Fin du fichier avant la durée cible de l’essai")
                     if (!endCoverageReported) onMessage("Fin de l’image.", false)
-                    if (hasCompleteSubtitleIndex) {
+                    if (usesIndexedNarration()) {
                         if (endDrainCursorMs == null) endDrainCursorMs = timedCursorMs ?: player.currentPosition.coerceAtLeast(0)
                         endDrainComplete = false
                         if (machine.snapshot().wantsPlayback) drainNarrationAfterVideoEnd()
@@ -336,6 +340,7 @@ class PlaybackSession(
                 deferredPlay = null
                 cancelIndexing()
                 translation.playbackInterrupted(); completionSequence++
+                progressiveReconciledCount = -1
                 finishPlaybackBenchmark("Erreur de lecture : ${error.errorCodeName}")
                 apply(machine.fail("Lecture impossible (${error.errorCodeName}). Le fichier, son accès ou son codec n’est peut-être pas pris en charge. Aucun fichier n’a été modifié."))
                 if (error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND || error.errorCode == PlaybackException.ERROR_CODE_IO_NO_PERMISSION)
@@ -354,6 +359,8 @@ class PlaybackSession(
                     return
                 }
                 translation.playbackInterrupted(); completionSequence++
+                progressivePassStartMs = newPosition.positionMs.coerceAtLeast(0)
+                progressiveReconciledCount = -1
                 timedCursorMs = null; endDrainCursorMs = null; endDrainComplete = true; endCoverageReported = false
                 apply(machine.reset(keepPlaybackIntent = true))
                 apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
@@ -375,6 +382,13 @@ class PlaybackSession(
         endDrainCursorMs = null; endDrainComplete = true; endCoverageReported = false; deferredPlay = null
         speech.clearOfflineSelection()
         val restored = features.opening(saved, restoreSession)
+        val savedUri = Uri.parse(restored.uri)
+        val sourceUri = if (savedUri.scheme == RemoteMediaUris.DIRECT_SCHEME)
+            runCatching { Uri.parse(RemoteConnectionStore(context).directUrl(savedUri)) }.getOrNull() else savedUri
+        progressiveNetworkSource = savedUri.scheme in setOf("http", "https", RemoteMediaUris.SERVER_SCHEME, RemoteMediaUris.DIRECT_SCHEME) &&
+            sourceUri != null && Util.inferContentType(sourceUri) == C.CONTENT_TYPE_OTHER
+        progressivePassStartMs = restored.positionMs.coerceAtLeast(0)
+        progressiveReconciledCount = -1
         val epoch = ++mediaEpoch; trackSelectionSequence++; trackReset = false
         lastRawCaption = ""; ahead.clear(); speech.cancelPreparation()
         val diagnosticToken = diagnosticObserver.beginMedia()
@@ -396,7 +410,10 @@ class PlaybackSession(
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             .setPreferredTextLanguages("fr", "fra").setSelectUndeterminedTextLanguage(true).build()
         val source = subtitleSource.createMediaSource(item.build()) { track, cues, origins -> handler.post {
-            if (!closed && epoch == mediaEpoch && !hasCompleteSubtitleIndex) ahead.add(track, cues, origins)
+            if (!closed && epoch == mediaEpoch && !hasCompleteSubtitleIndex) {
+                ahead.add(track, cues, origins)
+                if (usesProgressiveSubtitleIndex() && player.playbackState != Player.STATE_ENDED) driveIndexedCues()
+            }
         } }
         playback.setMediaSource(source, restored.positionMs)
         player.prepare(); prefs.save(restored)
@@ -427,7 +444,7 @@ class PlaybackSession(
         }
         translation.onPlaybackPosition(features.timeline.sourceTimeMs(player.currentPosition, narration = true) * 1000)
         if (!translation.allowPlayback()) return
-        val verify = requiresVerifiedInventory()
+        val verify = requiresVerifiedInventory() && !usesProgressiveSubtitleIndex()
         if (!hasCompleteSubtitleIndex && (verify || supplementaryTextId != null || !features.timeline.identity)) {
             // The scan is owned by this Play request. Pause, seek, source or
             // track changes cancel it and invalidate its continuation.
@@ -440,15 +457,25 @@ class PlaybackSession(
         if (player.playbackState == Player.STATE_ENDED) seek(0, userInitiated = false)
         if (player.playbackState == Player.STATE_IDLE) player.prepare()
         apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
-        if (hasCompleteSubtitleIndex && !machine.snapshot().wantsPlayback) apply(machine.setScheduleHold(true))
+        if (usesIndexedNarration() && !machine.snapshot().wantsPlayback) apply(machine.setScheduleHold(true))
         apply(if (resumeVoice) machine.resumeVoice() else machine.play())
-        if (hasCompleteSubtitleIndex && machine.snapshot().wantsPlayback) driveIndexedCues()
+        if (usesIndexedNarration() && machine.snapshot().wantsPlayback) driveIndexedCues()
     }
 
     private fun requiresVerifiedInventory(): Boolean =
         prefs.narration && prefs.bool("integralReading", true) && selectedTextId() != null &&
             player.duration > 0 && !player.isCurrentMediaItemLive && !player.isCurrentMediaItemDynamic &&
             selectedSubtitleFormat()?.let(::isBitmapSubtitle) != true
+
+    /** Network demux already supplies timed source occurrences before rendering.
+     * Use those boundaries as they arrive instead of downloading the whole movie
+     * in a second scanner before Play. Full preparation remains an explicit scan. */
+    private fun usesProgressiveSubtitleIndex(): Boolean =
+        requiresVerifiedInventory() && !hasCompleteSubtitleIndex && !translation.required &&
+            supplementaryTextId == null && features.timeline.identity && !hasAttachedSubtitle &&
+            progressiveNetworkSource
+
+    private fun usesIndexedNarration(): Boolean = hasCompleteSubtitleIndex || usesProgressiveSubtitleIndex()
     internal fun rearmNarrationCheckpoint(positionMs: Long, restorePending: (() -> Boolean)? = null): Boolean {
         val track = selectedTextId() ?: return false
         rearmingCheckpoint = true
@@ -516,6 +543,7 @@ class PlaybackSession(
     }
     private fun pauseForIndexing() {
         deferredPlay = null
+        progressiveReconciledCount = -1
         completionSequence++
         finishPlaybackBenchmark("Pause demandée ou application quittée")
         interruptPreparation("Préparation arrêtée : lecture mise en pause. Le cache existant est conservé.")
@@ -532,6 +560,8 @@ class PlaybackSession(
         features.cancelCheckpointResume(abandon = true)
         val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 }
         val position = if (duration != null) positionMs.coerceIn(0, duration) else positionMs.coerceAtLeast(0)
+        progressivePassStartMs = position
+        progressiveReconciledCount = -1
         val restart = !rearmingCheckpoint && !machine.snapshot().translationHeld
         if (userInitiated) features.markSeek(player.currentPosition.coerceAtLeast(0), position)
         completionSequence++; phraseEndUtterance = null; timedCursorMs = null
@@ -540,9 +570,9 @@ class PlaybackSession(
         finishPlaybackBenchmark("Position de lecture modifiée : extrait non comparable")
         interruptPreparation("Préparation arrêtée : position de lecture modifiée. Le cache existant est conservé.")
         apply(machine.reset(keepPlaybackIntent = restart)); lastCue = null; onCaption("")
-        if (hasCompleteSubtitleIndex && machine.snapshot().wantsPlayback) apply(machine.setScheduleHold(true))
+        if (usesIndexedNarration() && machine.snapshot().wantsPlayback) apply(machine.setScheduleHold(true))
         player.seekTo(position); apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
-        if (hasCompleteSubtitleIndex && machine.snapshot().wantsPlayback && player.playbackState != Player.STATE_ENDED)
+        if (usesIndexedNarration() && machine.snapshot().wantsPlayback && player.playbackState != Player.STATE_ENDED)
             driveIndexedCues()
     }
     fun resumeVoice() {
@@ -910,7 +940,7 @@ class PlaybackSession(
     }
     private fun forwardCues(group: CueGroup) {
         if (features.hasPendingNarrationRestoration) return
-        if (hasCompleteSubtitleIndex) {
+        if (usesIndexedNarration()) {
             if (player.playbackState != Player.STATE_ENDED) driveIndexedCues()
             return
         }
@@ -1183,6 +1213,8 @@ class PlaybackSession(
         val task = subtitleSource.createIndexer(); indexer = task
         indexingForPlayback = forPlayback
         indexingStatus = "Indexation complète de la piste choisie en cours"
+        onMessage(if (forPlayback) "$indexingStatus. La lecture attend cette préparation." else indexingStatus, false)
+        onChanged()
         indexingWorker.execute {
             try {
                 val index = task.scanTracks(source, scanTracks) { percent -> handler.post {
@@ -1256,6 +1288,19 @@ class PlaybackSession(
         val previous = timedCursorMs
         ensureTimedSchedule(track)
         val playing = machine.snapshot().wantsPlayback
+        if (playing && usesProgressiveSubtitleIndex() && progressiveReconciledCount != ahead.count) {
+            // A sample can reach the UI after its entire interval was crossed.
+            // Recover it by source identity, including during a later Play after
+            // Pause, while excluding intervals preceding the last explicit seek.
+            val late = timedItems.filter {
+                it.narration.startMs <= (previous ?: position) && it.narration.endMs > progressivePassStartMs
+            }
+            features.register(late.map { it.item })
+            val texts = late.map { it.item.identity to SpeechTools.filter(it.item.raw, prefs.filters) }
+            machine.markFiltered(texts.filter { it.second.isBlank() }.map { it.first })
+            apply(machine.recoverMissedOccurrences(texts.filter { it.second.isNotBlank() }))
+            progressiveReconciledCount = ahead.count
+        }
         if (previous == null) {
             if (!dispatchTimedAt(position)) return
             timedCursorMs = position
@@ -1341,6 +1386,7 @@ class PlaybackSession(
     }
 
     private fun narrationReadiness(): String {
+        if (usesProgressiveSubtitleIndex()) return "Lecture réseau : les occurrences sont suivies au fil du chargement. L’inventaire complet du film n’est pas encore vérifié."
         if (!hasCompleteSubtitleIndex) return "Couverture vocale : inventaire complet indisponible pour cette sélection."
         val position = player.currentPosition.coerceAtLeast(0)
         val horizon = position + prefs.lookAheadSeconds * 1000L

@@ -2,15 +2,15 @@
 
 Lecteur Android conçu pour **vocaliser chaque occurrence textuelle distincte de la piste choisie** : dialogues, panneaux, chevauchements et répétitions réelles. Les modes Confort et Adaptatif laissent à la voix le temps de terminer. Une traduction indisponible provoque une attente explicite.
 
-**Version 1.1.0 — code 24.** Les [notes de version](docs/releases/1.1.0.md) décrivent les changements et les critères de validation ; le corps de la [release GitHub v1.1.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v1.1.0) est la référence pour les commits, exécutions, empreintes et fichiers de cette distribution. Le numéro stable ne constitue pas une certification de chaque modèle, codec, serveur ou accélérateur.
+**Version 1.1.1 — code 25.** Les [notes de version](docs/releases/1.1.1.md) décrivent les changements et les critères de validation ; le corps de la [release GitHub v1.1.1](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v1.1.1) est la référence pour les commits, exécutions, empreintes et fichiers de cette distribution. Le numéro stable ne constitue pas une certification de chaque modèle, codec, serveur ou accélérateur.
 
 [Guide utilisateur](docs/guide-utilisateur.md) · [Sources locales et réseau](docs/sources-medias.md) · [Modèles de traduction](docs/modeles-traduction.md) · [Documentation complète](docs/README.md) · [Développer](CONTRIBUTING.md) · [Validation](TESTING.md)
 
 ## Installer et commencer sur Android
 
-L’APK et son fichier `SHA256SUMS` se recherchent dans les assets de la [release v1.1.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v1.1.0). Vérifier les preuves et le certificat de la distribution avant installation. Une archive « Source code » n’est pas une application installable ; un APK absent des assets ou non signé avec le certificat durable n’est pas une distribution vérifiée.
+L’APK et son fichier `SHA256SUMS` se recherchent dans les assets de la [release v1.1.1](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v1.1.1). Vérifier les preuves et le certificat de la distribution avant installation. Une archive « Source code » n’est pas une application installable ; un APK absent des assets ou non signé avec le certificat durable n’est pas une distribution vérifiée.
 
-| Repère | Version 1.1.0 |
+| Repère | Version 1.1.1 |
 | --- | --- |
 | Android minimum | Android 8.0 — API 26 |
 | Identité d’installation | `fr.soustitresvoix.player.translation`, conservée depuis la série Traduction 0.4.0 |
@@ -37,6 +37,8 @@ L’APK et son fichier `SHA256SUMS` se recherchent dans les assets de la [releas
 - **Préparation** : cache vocal évictable, bibliothèque explicitement conservée hors ligne, séances et réparation d’un accès perdu, bilan de vocalisation sans texte des sous-titres.
 - **Traduction complète ou progressive** : publication de résultats validés, attente avant le premier texte manquant, reprise du travail et export SRT/VTT distinct de l’original. Le SRT autonome fonctionne sans vidéo.
 - **Sources réseau** : HTTP/HTTPS, HLS, DASH, RTSP, FTP, FTPS explicite, SFTP, WebDAV et SMB2/3 selon le parcours. Lecture d’un flux et indexation complète de ses sous-titres sont deux capacités distinctes ; voir la [matrice des sources](docs/sources-medias.md).
+
+Sur un fichier réseau progressif, **Lire** peut démarrer avec les occurrences reçues au fil de la lecture. Le bilan indique cette couverture progressive jusqu’à une indexation complète explicitement demandée. Les sous-titres brefs, répétés ou reçus tardivement gardent leurs occurrences et leur vocalisation. Les fichiers locaux, la traduction, une synchronisation corrigée et l’association de deux pistes conservent leur préparation complète.
 
 Les quatre onglets organisent les commandes existantes. Passer d’un onglet à l’autre conserve la session et les tâches en cours. Les réglages détaillés gardent leurs huit rubriques et leur recherche sans accents.
 

@@ -1,8 +1,8 @@
-# Guide utilisateur — 1.1.0
+# Guide utilisateur — 1.1.1
 
-[Index](README.md) · [Installer](../README.md#installer-et-commencer-sur-android) · [Sources médias](sources-medias.md) · [Modèles](modeles-traduction.md) · [État de validation](releases/1.1.0.md)
+[Index](README.md) · [Installer](../README.md#installer-et-commencer-sur-android) · [Sources médias](sources-medias.md) · [Modèles](modeles-traduction.md) · [État de validation](releases/1.1.1.md)
 
-Ce guide décrit les commandes des sources 1.1.0. Les notes de version distinguent la validation de l’APK, la couverture des sources et les essais sur téléphone.
+Ce guide décrit les commandes des sources 1.1.1. Les notes de version distinguent la validation de l’APK, la couverture des sources et les essais sur téléphone.
 
 ## Se repérer
 
@@ -45,7 +45,9 @@ Deux répliques identiques à deux instants différents restent deux occurrences
 
 Le **Bilan de vocalisation**, dans Diagnostic, indique si l’inventaire de la piste est complet. Il distingue les occurrences attendues, les fins confirmées par la voix, le passage courant, l’historique et les plages dépassées. Dans **Répliques restantes**, choisir une réplique, les répliques dépassées ou la lecture de toutes les restantes. L’image reste en pause pendant le rattrapage.
 
-En lecture intégrale, une piste textuelle finie et indexable est vérifiée avant que l’image avance. L’image peut attendre une traduction ou la fin d’une réplique longue. Le journal contient les états et les identifiants hachés. Une fin confirmée par le moteur reste distincte d’un essai d’écoute sur ton périphérique audio.
+Sur un fichier réseau progressif avec une seule piste textuelle, **Lire** démarre avec les occurrences reçues au fil de la lecture. Le bilan indique une couverture progressive tant qu’une indexation complète n’a pas été explicitement demandée et terminée. Chaque occurrence reçue garde son identité, y compris une réplique brève, répétée ou arrivée après son début prévu.
+
+Les fichiers locaux, la traduction, une synchronisation corrigée et l’association de deux pistes conservent leur indexation complète préalable. L’image peut attendre une traduction ou la fin d’une réplique longue. Le journal contient les états et les identifiants hachés. Une fin confirmée par le moteur reste distincte d’un essai d’écoute sur ton périphérique audio.
 
 ## Panneaux et OCR
 

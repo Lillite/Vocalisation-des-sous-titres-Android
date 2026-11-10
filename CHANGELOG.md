@@ -2,6 +2,14 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
+## 1.1.1 — lecture réseau corrigée
+
+- Démarrage des fichiers réseau progressifs depuis Lire, avec réception des occurrences pendant la lecture et couverture progressive explicite dans le bilan.
+- Conservation des répliques brèves, répétées et tardives reçues par le parseur, avec les règles de pause et de reprise utilisateur.
+- Indexation complète préalable conservée pour les fichiers locaux, la traduction, la synchronisation corrigée et l’association de deux pistes.
+
+[Notes 1.1.1 et critères de validation](docs/releases/1.1.1.md)
+
 ## 1.1.0 — lecture intégrale vérifiée
 
 - Inventaire de la piste, contrôle des occurrences, rattrapage horodaté et reprise par fragments.

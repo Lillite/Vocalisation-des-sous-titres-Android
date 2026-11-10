@@ -1,9 +1,11 @@
 package fr.soustitresvoix.player
 
 import android.content.Context
+import android.net.Uri
 import android.os.Looper
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
+import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.common.text.Cue
@@ -57,15 +59,16 @@ class TimelinePlaybackRobolectricTest {
     }
 
     private inner class Fixture(text: String = ordinarySubtitles(), private val sharedFile: File? = null,
-        restore: Boolean = false, preIndex: Boolean = true) : AutoCloseable {
-        val components = Components()
+        restore: Boolean = false, preIndex: Boolean = true, remote: Boolean = false) : AutoCloseable {
+        val components = Components(mapRemoteMedia = remote)
         val messages = mutableListOf<Pair<String, Boolean>>()
         val captions = mutableListOf<String>()
         val session = PlaybackSession(context, PlayerPreferences(context), {}, { text, error -> messages += text to error },
             { captions += it }, components)
         val file = sharedFile ?: File.createTempFile("timing-synthetic-", ".srt", context.cacheDir).apply { writeText(text) }
-        val media = SavedMedia("android.resource://${context.packageName}/${R.raw.demonstration}", "Timing fixture",
-            subtitlePath = file.path, subtitleMime = MimeTypes.APPLICATION_SUBRIP)
+        val media = if (remote) SavedMedia("https://fixture.invalid/demonstration.mkv", "Remote timing fixture")
+            else SavedMedia("android.resource://${context.packageName}/${R.raw.demonstration}", "Timing fixture",
+                subtitlePath = file.path, subtitleMime = MimeTypes.APPLICATION_SUBRIP)
         init {
             components.voice.ready()
             session.player.trackSelectionParameters = session.player.trackSelectionParameters.buildUpon()
@@ -74,7 +77,8 @@ class TimelinePlaybackRobolectricTest {
             session.onSessionRestored = { restorationNotified = true }
             session.open(media, restoreSession = restore)
             await("Synthetic subtitle track did not become ready") {
-                (session.player.playbackState == Player.STATE_READY || (restore && session.player.playbackState == Player.STATE_ENDED)) && session.selectedTextId() == "external-subtitle"
+                (session.player.playbackState == Player.STATE_READY || (restore && session.player.playbackState == Player.STATE_ENDED)) &&
+                    if (remote) session.selectedTextId() != null else session.selectedTextId() == "external-subtitle"
             }
             if (restore) await("Session restoration did not finish: $messages") { restorationNotified }
             if (preIndex) {
@@ -91,6 +95,11 @@ class TimelinePlaybackRobolectricTest {
         fun at(position: Long) {
             components.backend.positionMs = position
             PlaybackSession::class.java.getDeclaredMethod("driveIndexedCues").apply { isAccessible = true }.invoke(session)
+        }
+        fun emit(text: String, startMs: Long, endMs: Long) {
+            requireNotNull(components.sourceCues)(session.selectedTextId(),
+                CuesWithTiming(listOf(Cue.Builder().setText(text).build()), startMs * 1000, (endMs - startMs) * 1000), null)
+            shadowOf(Looper.getMainLooper()).idle()
         }
         fun drain() {
             var guard = 0
@@ -179,6 +188,78 @@ class TimelinePlaybackRobolectricTest {
             f.drain()
             assertEquals(listOf("Texte bref intégral."), f.components.voice.requests.map { it.second })
             assertEquals(1, f.session.machine.journalSnapshot().completedCount)
+        }
+    }
+
+    @Test fun remoteIntegralPlayReadsBufferedShortRepeatedAndLateOccurrencesWithoutAFullScan() {
+        Fixture(preIndex = false, remote = true).use { f ->
+            f.session.play()
+            assertTrue(f.session.player.playWhenReady)
+            assertTrue(f.session.machine.snapshot().wantsPlayback)
+            assertFalse(f.session.hasCompleteSubtitleIndex)
+            assertEquals(0, f.components.indexerCreations)
+            f.at(1000)
+            f.emit("Très bref.", 1010, 1020)
+            f.at(1100); f.drain()
+            f.emit("Oui.", 2000, 2100)
+            f.emit("Oui.", 3000, 3100)
+            f.at(2200); f.drain()
+            f.at(3200); f.drain()
+            // This valid source sample reaches the extractor observer after
+            // both of its boundaries have passed the narration clock.
+            f.emit("Arrivée tardive.", 2500, 2510)
+            f.at(3300); f.drain()
+            f.emit("Arrivée tardive.", 2500, 2510)
+            f.at(3400); f.drain()
+            assertEquals(listOf("Très bref.", "Oui.", "Oui.", "Arrivée tardive."),
+                f.components.voice.requests.map { it.second })
+            assertEquals(4, f.session.machine.journalSnapshot().completedCount)
+            assertEquals(0, f.components.indexerCreations)
+            assertFalse(f.session.hasCompleteSubtitleIndex)
+        }
+    }
+
+    @Test fun remotePauseAndExplicitSeekExcludeLateSamplesFromThePreviousPass() {
+        Fixture(preIndex = false, remote = true).use { f ->
+            f.session.play(); f.at(1000)
+            f.session.pause()
+            f.emit("Reçue en pause.", 1100, 1110)
+            f.at(1200)
+            assertTrue(f.components.voice.requests.isEmpty())
+            assertFalse(f.session.player.playWhenReady)
+            assertFalse(f.session.machine.snapshot().wantsPlayback)
+            f.session.seek(5000)
+            f.emit("Ancien passage.", 2000, 2010)
+            f.at(5000)
+            assertTrue(f.components.voice.requests.isEmpty())
+            assertFalse(f.session.player.playWhenReady)
+            f.session.play(); f.at(5000)
+            f.emit("Nouveau passage.", 5010, 5020)
+            f.at(5100); f.drain()
+            assertEquals(listOf("Nouveau passage."), f.components.voice.requests.map { it.second })
+            assertEquals(1, f.session.machine.journalSnapshot().completedCount)
+            assertEquals(0, f.components.indexerCreations)
+        }
+    }
+
+    @Test fun replacedRemoteMediaRejectsOldBufferedSamplesAndStaysPaused() {
+        Fixture(preIndex = false, remote = true).use { f ->
+            f.session.play(); f.at(1000)
+            val oldSource = requireNotNull(f.components.sourceCues)
+            val oldTrack = f.session.selectedTextId()
+            f.session.open(SavedMedia("https://fixture.invalid/replacement.mkv", "Replacement remote fixture"))
+            await("Replacement source did not become ready") {
+                f.session.player.playbackState == Player.STATE_READY && f.session.selectedTextId() != null
+            }
+            oldSource(oldTrack, CuesWithTiming(listOf(Cue.Builder().setText("Ancienne source.").build()),
+                1_010_000, 10_000), null)
+            shadowOf(Looper.getMainLooper()).idle()
+            f.at(1100)
+            assertTrue(f.components.voice.requests.isEmpty())
+            assertEquals(0, f.session.ahead.count)
+            assertFalse(f.session.player.playWhenReady)
+            assertFalse(f.session.machine.snapshot().wantsPlayback)
+            assertEquals(0, f.components.indexerCreations)
         }
     }
 
@@ -672,7 +753,9 @@ class TimelinePlaybackRobolectricTest {
             listeners.toList().forEach { it.onCues(group) }
         }
     }
-    private class Components : PlaybackComponents by DefaultPlaybackComponents {
+    private class Components(private val mapRemoteMedia: Boolean = false) : PlaybackComponents by DefaultPlaybackComponents {
+        var indexerCreations = 0; private set
+        var sourceCues: IndexedCueListener? = null; private set
         private val shouldBlockScan = java.util.concurrent.atomic.AtomicBoolean(false)
         @Volatile var scanEntered = java.util.concurrent.CountDownLatch(0)
         @Volatile var releaseScan = java.util.concurrent.CountDownLatch(0)
@@ -686,7 +769,18 @@ class TimelinePlaybackRobolectricTest {
         override fun createSubtitles(context: Context): SubtitleSource {
             val delegate = Media3SubtitleSource(context)
             return object : SubtitleSource by delegate {
+                override fun createMediaSource(item: MediaItem, onCue: IndexedCueListener): androidx.media3.exoplayer.source.MediaSource {
+                    if (!mapRemoteMedia) return delegate.createMediaSource(item, onCue)
+                    sourceCues = onCue
+                    // Keep the session's remote identity while the real Media3
+                    // source reads the local generated container. Samples are
+                    // delivered explicitly to control late arrival and seeks.
+                    val local = item.buildUpon().setUri(Uri.parse("android.resource://${context.packageName}/${R.raw.demonstration}")).build()
+                    return delegate.createMediaSource(local) { _, _, _ -> }
+                }
                 override fun createIndexer(): SubtitleIndexer {
+                    indexerCreations++
+                    check(!mapRemoteMedia) { "Ordinary remote Play requested a whole-file subtitle scan" }
                     val scanner = delegate.createIndexer()
                     return object : SubtitleIndexer by scanner {
                         override fun scan(media: SavedMedia, progress: (Int) -> Unit) = controlledScan { scanner.scan(media, progress) }
