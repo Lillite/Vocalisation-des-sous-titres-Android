@@ -59,14 +59,15 @@ class TimelinePlaybackRobolectricTest {
     }
 
     private inner class Fixture(text: String = ordinarySubtitles(), private val sharedFile: File? = null,
-        restore: Boolean = false, preIndex: Boolean = true, remote: Boolean = false) : AutoCloseable {
+        restore: Boolean = false, preIndex: Boolean = true, remote: Boolean = false,
+        remoteUri: String = "https://fixture.invalid/demonstration.mkv") : AutoCloseable {
         val components = Components(mapRemoteMedia = remote)
         val messages = mutableListOf<Pair<String, Boolean>>()
         val captions = mutableListOf<String>()
         val session = PlaybackSession(context, PlayerPreferences(context), {}, { text, error -> messages += text to error },
             { captions += it }, components)
         val file = sharedFile ?: File.createTempFile("timing-synthetic-", ".srt", context.cacheDir).apply { writeText(text) }
-        val media = if (remote) SavedMedia("https://fixture.invalid/demonstration.mkv", "Remote timing fixture")
+        val media = if (remote) SavedMedia(remoteUri, "Remote timing fixture")
             else SavedMedia("android.resource://${context.packageName}/${R.raw.demonstration}", "Timing fixture",
                 subtitlePath = file.path, subtitleMime = MimeTypes.APPLICATION_SUBRIP)
         init {
@@ -260,6 +261,60 @@ class TimelinePlaybackRobolectricTest {
             assertFalse(f.session.player.playWhenReady)
             assertFalse(f.session.machine.snapshot().wantsPlayback)
             assertEquals(0, f.components.indexerCreations)
+        }
+    }
+
+    @Test fun ordinaryFiniteHlsDashAndRtspPlayDoesNotRequestAWholeFileIndex() {
+        for (uri in listOf("https://fixture.invalid/demonstration.m3u8",
+            "https://fixture.invalid/demonstration.mpd", "rtsp://fixture.invalid/demonstration")) {
+            Fixture(preIndex = false, remote = true, remoteUri = uri).use { f ->
+                f.session.play()
+                assertTrue("Network Play stayed paused for $uri", f.session.player.playWhenReady)
+                assertTrue(f.session.machine.snapshot().wantsPlayback)
+                assertFalse(f.session.hasCompleteSubtitleIndex)
+                assertEquals("Network Play requested a complete scanner for $uri", 0, f.components.indexerCreations)
+            }
+        }
+    }
+
+    @Test fun lateSourceAtVideoEndDrainsOnceAndRespectsAnExplicitEofPause() {
+        for (paused in listOf(false, true)) {
+            Fixture(preIndex = false, remote = true,
+                remoteUri = "https://fixture.invalid/demonstration.mkv?paused=$paused").use { f ->
+                f.session.play()
+                f.emit("Dernière réplique.", 1000, 2000)
+                f.at(1000); f.at(1500)
+                assertEquals(listOf("Dernière réplique."), f.components.voice.requests.map { it.second })
+                f.components.backend.positionMs = 2200
+                f.components.backend.forcePlaybackState(Player.STATE_ENDED)
+                val interrupted = f.session.machine.snapshot().speakingId
+                if (paused) f.session.pause()
+                f.emit("Tardive à la fin.", 1100, 1110)
+                if (paused) {
+                    assertFalse(f.session.machine.snapshot().wantsPlayback)
+                    assertFalse(f.session.player.playWhenReady)
+                    assertEquals(listOf("Dernière réplique."), f.components.voice.requests.map { it.second })
+                    interrupted?.let(f.components.voice::complete)
+                    assertFalse("An old voice callback restarted the EOF-paused film", f.session.machine.snapshot().wantsPlayback)
+                    f.session.play()
+                    assertEquals("Explicit Play must drain speech while retaining the final picture", 2200L,
+                        f.session.player.currentPosition)
+                }
+                f.drain()
+                val expected = if (paused) listOf("Dernière réplique.", "Dernière réplique.", "Tardive à la fin.")
+                    else listOf("Dernière réplique.", "Tardive à la fin.")
+                assertEquals(expected, f.components.voice.requests.map { it.second })
+                assertEquals(2, f.session.machine.journalSnapshot().completedCount)
+                assertEquals(Player.STATE_ENDED, f.session.player.playbackState)
+                assertEquals(2200L, f.session.player.currentPosition)
+                assertFalse(f.session.machine.snapshot().wantsPlayback)
+                f.emit("Tardive à la fin.", 1100, 1110)
+                f.drain()
+                assertEquals("A repeated late sample restarted or duplicated speech", expected,
+                    f.components.voice.requests.map { it.second })
+                assertFalse(f.session.machine.snapshot().wantsPlayback)
+                assertEquals(0, f.components.indexerCreations)
+            }
         }
     }
 
@@ -737,16 +792,22 @@ class TimelinePlaybackRobolectricTest {
 
     private class Backend(private val delegate: PlaybackBackend) : PlaybackBackend by delegate {
         var positionMs = 0L
+        private var playbackStateOverride: Int? = null
         private val listeners = mutableListOf<Player.Listener>()
         override val player: Player = object : ForwardingPlayer(delegate.player) {
             override fun getCurrentPosition(): Long = positionMs
+            override fun getPlaybackState(): Int = playbackStateOverride ?: super.getPlaybackState()
             override fun seekTo(position: Long) { positionMs = position; super.seekTo(position) }
             override fun seekTo(mediaItemIndex: Int, position: Long) { positionMs = position; super.seekTo(mediaItemIndex, position) }
             override fun addListener(listener: Player.Listener) { listeners += listener; super.addListener(listener) }
             override fun removeListener(listener: Player.Listener) { listeners -= listener; super.removeListener(listener) }
         }
         override fun setMediaSource(source: androidx.media3.exoplayer.source.MediaSource, startPositionMs: Long) {
-            positionMs = startPositionMs; delegate.setMediaSource(source, startPositionMs)
+            positionMs = startPositionMs; playbackStateOverride = null; delegate.setMediaSource(source, startPositionMs)
+        }
+        fun forcePlaybackState(state: Int) {
+            playbackStateOverride = state
+            listeners.toList().forEach { it.onPlaybackStateChanged(state) }
         }
         fun deliver(text: String, timeUs: Long) {
             val group = CueGroup(listOf(Cue.Builder().setText(text).build()), timeUs)

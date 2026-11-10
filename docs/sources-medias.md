@@ -67,6 +67,8 @@ Pour HTTP, le transport suit au plus **cinq redirections**, refuse une dégradat
 
 **La vocalisation des occurrences reçues reste exigée sur une source réseau.** Un transport différent ne doit pas remplacer le pipeline de narration par un parcours qui ignore dialogues, panneaux, chevauchements ou répétitions. Le bilan ne peut toutefois compter les événements jamais extraits. Une indexation interrompue ne doit pas être présentée comme complète ; une préparation ou une traduction indisponible ne doit pas être masquée par un saut silencieux.
 
+En lecture réseau à une seule piste textuelle, **Lire** peut démarrer avec les événements reçus au fil du média. Les conteneurs progressifs suivent les limites temporelles extraites et conservent les occurrences brèves, répétées ou tardives. HLS, DASH et RTSP utilisent les sous-titres exposés par le lecteur. La couverture reste partielle jusqu’à la réussite d’une indexation complète explicitement demandée. La traduction, une synchronisation corrigée, l’association de deux pistes et la reprise exacte d’une réplique interrompue conservent leur index complet préalable.
+
 L’index HLS repose sur une piste WebVTT séparée, une liste terminée, une origine de temps déclarée cohérente avec les variantes et des segments continus. Les changements de discontinuité, les segments manquants et les ancrages MPEG-TS non nuls sortent de ce périmètre. L’index DASH repose sur un manifeste statique à une période et une représentation WebVTT directe dont les segments et les temps sont déterminés. Les variantes protégées et les sous-titres encapsulés dans les segments vidéo gardent une couverture limitée.
 
 ### Pistes image et texte incrusté

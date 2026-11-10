@@ -4,9 +4,9 @@
 
 ## 1.1.1 — lecture réseau corrigée
 
-- Démarrage des fichiers réseau progressifs depuis Lire, avec réception des occurrences pendant la lecture et couverture progressive explicite dans le bilan.
-- Conservation des répliques brèves, répétées et tardives reçues par le parseur, avec les règles de pause et de reprise utilisateur.
-- Indexation complète préalable conservée pour les fichiers locaux, la traduction, la synchronisation corrigée et l’association de deux pistes.
+- Démarrage réseau depuis Lire pour les fichiers progressifs, HLS/DASH et RTSP, avec couverture partielle explicite dans le bilan.
+- Conservation des répliques brèves, répétées et tardives reçues des conteneurs progressifs, y compris après la fin de l’image, avec Pause utilisateur prioritaire.
+- Indexation complète préalable conservée pour les fichiers locaux, la traduction, la synchronisation corrigée, l’association de deux pistes et la reprise exacte d’une réplique interrompue.
 
 [Notes 1.1.1 et critères de validation](docs/releases/1.1.1.md)
 

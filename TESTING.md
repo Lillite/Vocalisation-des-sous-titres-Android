@@ -50,7 +50,7 @@ Pour le natif, utiliser `python3 tools/run-native-translation-tests.py --help`, 
 
 ## Tests Android avant chaque fusion
 
-Le workflow [Android — APK et tests avant fusion](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml) construit les APK de test et exécute JVM, lint et instrumentation avant toute fusion. Le changement final doit être testé sur son propre commit de proposition, avec inventaire source et XML frais rapprochés. L’inventaire source 1.1.1 attend **205 méthodes noyau, 694 JVM application et 122 Android**, soit **1 021 méthodes distinctes**. Cet effectif est une attente de couverture, pas une réussite d’exécution ; seuls les XML frais du passage final établissent les méthodes exécutées. Ne pas figer le nombre d’une ancienne version comme preuve actuelle.
+Le workflow [Android — APK et tests avant fusion](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml) construit les APK de test et exécute JVM, lint et instrumentation avant toute fusion. Le changement final doit être testé sur son propre commit de proposition, avec inventaire source et XML frais rapprochés. L’inventaire source 1.1.1 attend **205 méthodes noyau, 696 JVM application et 122 Android**, soit **1 023 méthodes distinctes**. Cet effectif est une attente de couverture, pas une réussite d’exécution ; seuls les XML frais du passage final établissent les méthodes exécutées. Ne pas figer le nombre d’une ancienne version comme preuve actuelle.
 
 Les tests instrumentés doivent s’exécuter sur l’APK **release de test** sous Android 17/API 37, conformément au workflow. Pour une exécution locale sur appareil/émulateur disponible :
 
@@ -72,7 +72,7 @@ Conserver les identités de chaque méthode et refuser les méthodes manquantes,
 | Mesures | Chargements et réponses sans double comptage ; tentatives distinctes ; horloge monotone ; tokens/cache/NPU/GPU/RSS/buffers séparés |
 | Explorer | SAF sans autorisation générale, accès refusé/révoqué, SD, Android 26–29/30+, dossiers privés exclus, annulation et dépassement de borne |
 | Réseau | URI opaques, secrets chiffrés, révision de connexion, certificats/pin, redirections, positions Range et interruptions ; index complet distinct des flux |
-| Démarrage réseau progressif | Lire sans indexation préalable du conteneur entier ; couverture progressive explicite ; occurrences brèves, répétées et tardives conservées ; Pause utilisateur prioritaire ; préparation complète des parcours qui l’exigent |
+| Démarrage réseau | Lire depuis les sources progressives, HLS/DASH et RTSP ; couverture partielle explicite ; occurrences brèves, répétées et tardives conservées sur le conteneur progressif, y compris après la fin de l’image ; Pause utilisateur prioritaire ; index complet requis pour les parcours avancés et la reprise exacte d’une réplique interrompue |
 | Interface | Quatre onglets sans effets de lecture, grande police/défilement, bornes Minimum/Maximum et tickets de dialogues périmés |
 | Modèle/mémoire | Aucun seuil sur la seule taille GGUF ; gardes mesurées, annulation/libération acquittée, erreurs de chaque tentative conservées |
 | Audio/image | Commandes refusées sans mutation, séparation voix/film, PCM compatible, cadre/HDR et durée de vie des panneaux |

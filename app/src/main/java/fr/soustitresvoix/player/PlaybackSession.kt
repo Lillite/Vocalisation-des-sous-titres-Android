@@ -122,6 +122,7 @@ class PlaybackSession(
     private var deferredPlay: Boolean? = null
     private var progressivePassStartMs = 0L
     private var progressiveReconciledCount = -1
+    private var networkSource = false
     private var progressiveNetworkSource = false
     private var indexedTrack: String? = null
     val hasCompleteSubtitleIndex: Boolean get() = indexedTrack?.let {
@@ -385,8 +386,8 @@ class PlaybackSession(
         val savedUri = Uri.parse(restored.uri)
         val sourceUri = if (savedUri.scheme == RemoteMediaUris.DIRECT_SCHEME)
             runCatching { Uri.parse(RemoteConnectionStore(context).directUrl(savedUri)) }.getOrNull() else savedUri
-        progressiveNetworkSource = savedUri.scheme in setOf("http", "https", RemoteMediaUris.SERVER_SCHEME, RemoteMediaUris.DIRECT_SCHEME) &&
-            sourceUri != null && Util.inferContentType(sourceUri) == C.CONTENT_TYPE_OTHER
+        networkSource = savedUri.scheme in setOf("http", "https", "rtsp", "rtsps", RemoteMediaUris.SERVER_SCHEME, RemoteMediaUris.DIRECT_SCHEME)
+        progressiveNetworkSource = networkSource && sourceUri != null && Util.inferContentType(sourceUri) == C.CONTENT_TYPE_OTHER
         progressivePassStartMs = restored.positionMs.coerceAtLeast(0)
         progressiveReconciledCount = -1
         val epoch = ++mediaEpoch; trackSelectionSequence++; trackReset = false
@@ -411,8 +412,21 @@ class PlaybackSession(
             .setPreferredTextLanguages("fr", "fra").setSelectUndeterminedTextLanguage(true).build()
         val source = subtitleSource.createMediaSource(item.build()) { track, cues, origins -> handler.post {
             if (!closed && epoch == mediaEpoch && !hasCompleteSubtitleIndex) {
+                val previousCount = ahead.count
                 ahead.add(track, cues, origins)
-                if (usesProgressiveSubtitleIndex() && player.playbackState != Player.STATE_ENDED) driveIndexedCues()
+                if (usesProgressiveSubtitleIndex()) {
+                    if (player.playbackState != Player.STATE_ENDED) driveIndexedCues()
+                    else if (ahead.count != previousCount) {
+                        endDrainComplete = false; endCoverageReported = false
+                        if (machine.snapshot().wantsPlayback) {
+                            driveIndexedCues()
+                            drainNarrationAfterVideoEnd()
+                        } else {
+                            features.register(ahead.selected(selectedTextId()))
+                            onMessage("Des répliques supplémentaires ont été reçues en fin de vidéo. Appuie sur Lire pour les terminer.", false)
+                        }
+                    }
+                }
             }
         } }
         playback.setMediaSource(source, restored.positionMs)
@@ -439,12 +453,13 @@ class PlaybackSession(
             if (!translation.allowNarrationVoice()) return
             if (!requestFocus()) return
             apply(machine.setMediaReady(true)); apply(if (resumeVoice) machine.resumeVoice() else machine.play())
+            if (usesProgressiveSubtitleIndex() && machine.snapshot().wantsPlayback) driveIndexedCues()
             if (!endDrainComplete && machine.snapshot().wantsPlayback) drainNarrationAfterVideoEnd()
             return
         }
         translation.onPlaybackPosition(features.timeline.sourceTimeMs(player.currentPosition, narration = true) * 1000)
         if (!translation.allowPlayback()) return
-        val verify = requiresVerifiedInventory() && !usesProgressiveSubtitleIndex()
+        val verify = requiresVerifiedInventory() && !usesNetworkSubtitlePlayback()
         if (!hasCompleteSubtitleIndex && (verify || supplementaryTextId != null || !features.timeline.identity)) {
             // The scan is owned by this Play request. Pause, seek, source or
             // track changes cancel it and invalidate its continuation.
@@ -471,9 +486,10 @@ class PlaybackSession(
      * Use those boundaries as they arrive instead of downloading the whole movie
      * in a second scanner before Play. Full preparation remains an explicit scan. */
     private fun usesProgressiveSubtitleIndex(): Boolean =
-        requiresVerifiedInventory() && !hasCompleteSubtitleIndex && !translation.required &&
-            supplementaryTextId == null && features.timeline.identity && !hasAttachedSubtitle &&
-            progressiveNetworkSource
+        requiresVerifiedInventory() && !hasCompleteSubtitleIndex && usesNetworkSubtitlePlayback() && progressiveNetworkSource
+
+    private fun usesNetworkSubtitlePlayback(): Boolean =
+        networkSource && !translation.required && supplementaryTextId == null && features.timeline.identity && !hasAttachedSubtitle
 
     private fun usesIndexedNarration(): Boolean = hasCompleteSubtitleIndex || usesProgressiveSubtitleIndex()
     internal fun rearmNarrationCheckpoint(positionMs: Long, restorePending: (() -> Boolean)? = null): Boolean {
@@ -948,7 +964,7 @@ class PlaybackSession(
         // been indexed. The primary renderer alone cannot represent it.
         if (supplementaryTextId != null) return
         val captions = group.cues.mapNotNull { it.text?.toString() }
-        if (!translation.required && requiresVerifiedInventory()) {
+        if (!translation.required && requiresVerifiedInventory() && !usesNetworkSubtitlePlayback()) {
             // These are visible cues, not a verified source queue. Starting
             // with an indexed clock avoids replaying provisional local IDs.
             lastRawCaption = captions.joinToString("\n")
