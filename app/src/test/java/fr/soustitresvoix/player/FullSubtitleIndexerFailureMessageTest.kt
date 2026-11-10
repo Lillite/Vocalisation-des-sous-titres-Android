@@ -48,11 +48,13 @@ class FullSubtitleIndexerFailureMessageTest {
     }
 
     @Test fun prefixedSuffixedAndNestedProviderMessagesNeverEnterTheDiagnostic() {
+        val finiteBudget = "Volume de lecture de l’indexation dépassé. Lecture directe conservée."
         val failures = listOf(
             IOException(privatePath) to ioMessage,
             IOException("Indexation annulée : $privatePath") to ioMessage,
             IOException("$privateUri — Indexation annulée") to ioMessage,
             IOException("Indexation annulée\n$privatePath") to ioMessage,
+            IOException("$finiteBudget\n$privatePath") to ioMessage,
             IOException(IOException(privatePath)) to ioMessage,
             IOException() to ioMessage,
             IllegalArgumentException("Sous-titre illisible : $privateUri", IOException(privatePath)) to otherMessage,
@@ -60,7 +62,8 @@ class FullSubtitleIndexerFailureMessageTest {
             RuntimeException() to otherMessage,
             // A safe top-level reason may retain its internal cause, but that
             // cause must never be traversed or appended to the displayed text.
-            IOException("Indexation annulée", IOException(privatePath)) to "Indexation annulée"
+            IOException("Indexation annulée", IOException(privatePath)) to "Indexation annulée",
+            IOException(finiteBudget, IOException(privatePath)) to finiteBudget
         )
         for ((failure, expected) in failures) {
             val message = FullSubtitleIndexer.safeFailureMessage(failure)

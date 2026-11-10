@@ -28,7 +28,8 @@ class FullSubtitleIndexer(private val context: Context, private val dataSources:
         private const val LOCAL_ONLY = "Indexation locale uniquement"
         private const val STREAM_UNAVAILABLE = "Indexation complète indisponible pour HLS, DASH ou RTSP : le flux ne peut pas être traité comme un fichier complet. La vocalisation directe reste partielle et sa traduction intégrale n’est pas disponible."
         private const val SOURCE_UNAVAILABLE = "Cette source ne permet pas une indexation complète."
-        private const val READ_LIMIT = "Volume de lecture de l’indexation dépassé. Lecture directe conservée."
+        private const val UNKNOWN_LENGTH_READ_LIMIT = "Indexation limitée à 32 Gio lus. Lecture directe conservée."
+        private const val FINITE_LENGTH_READ_LIMIT = "Volume de lecture de l’indexation dépassé. Lecture directe conservée."
         private const val CONTAINER_UNAVAILABLE = "Indexation complète indisponible pour ce conteneur. La lecture directe reste disponible."
         private const val INCOMPLETE = "Indexation incomplète : limites de sécurité ou sous-titre textuel illisible. Lecture directe conservée."
         private const val NO_PROGRESS = "Ce conteneur ne permet plus de faire progresser l’indexation."
@@ -36,7 +37,8 @@ class FullSubtitleIndexer(private val context: Context, private val dataSources:
         private const val INDEX_LIMIT = "Index au-delà de 100 000 répliques / 12 millions de caractères. Prélecture directe conservée."
         private const val TRACK_UNAVAILABLE = "La piste choisie ne possède pas d’index textuel vérifiable. Choisis une autre piste ou prépare les sous-titres image avec l’OCR."
         private val controlledFailureMessages = setOf(
-            CANCELLED, FILE_LIMIT, TEXT_LIMIT, LOCAL_ONLY, STREAM_UNAVAILABLE, SOURCE_UNAVAILABLE, READ_LIMIT,
+            CANCELLED, FILE_LIMIT, TEXT_LIMIT, LOCAL_ONLY, STREAM_UNAVAILABLE, SOURCE_UNAVAILABLE,
+            UNKNOWN_LENGTH_READ_LIMIT, FINITE_LENGTH_READ_LIMIT,
             CONTAINER_UNAVAILABLE, INCOMPLETE, NO_PROGRESS, SEEK_LIMIT, INDEX_LIMIT, TRACK_UNAVAILABLE,
             FiniteWebSubtitleIndex.UNVERIFIED, FiniteWebSubtitleIndex.LIVE, FiniteWebSubtitleIndex.LIMIT,
             SrtSourceIntegrity.FAILURE_MESSAGE
@@ -137,22 +139,22 @@ class FullSubtitleIndexer(private val context: Context, private val dataSources:
         val source = dataSources.createDataSource()
         activeSource = source
         var extractor: Extractor? = null
-        var remainingReads = 0L
         var seeks = 0; var lastPercent = -1; var idleReads = 0
-        val guardedReader = DataReader { buffer, offset, length ->
-            ensureActive()
-            val count = source.read(buffer, offset, length)
-            if (length > 0 && count == 0) throw IOException(NO_PROGRESS)
-            if (count > 0) {
-                if (count.toLong() > remainingReads) throw IOException(READ_LIMIT)
-                remainingReads -= count
-            }
-            count
-        }
         val seek = PositionHolder()
         try {
             var length = source.open(DataSpec.Builder().setUri(uri).setPosition(0).build())
-            remainingReads = progressiveIndexReadLimit(length)
+            var remainingReads = progressiveIndexReadLimit(length)
+            val budgetFailure = if (length < 0) UNKNOWN_LENGTH_READ_LIMIT else FINITE_LENGTH_READ_LIMIT
+            val guardedReader = DataReader { buffer, offset, requestSize ->
+                ensureActive()
+                val count = source.read(buffer, offset, requestSize)
+                if (requestSize > 0 && count == 0) throw IOException(NO_PROGRESS)
+                if (count > 0) {
+                    if (count.toLong() > remainingReads) throw IOException(budgetFailure)
+                    remainingReads -= count
+                }
+                count
+            }
             var input = DefaultExtractorInput(guardedReader, 0, length)
             val candidates = factory.createExtractors(uri, emptyMap())
             try {
