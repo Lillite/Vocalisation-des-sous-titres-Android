@@ -4,7 +4,8 @@
 
 ## 1.1.1 — lecture réseau corrigée
 
-- Démarrage réseau depuis Lire pour les fichiers progressifs, HLS/DASH et RTSP, avec couverture partielle explicite dans le bilan.
+- Démarrage des pistes WebVTT HLS/DASH finies prises en charge dès le premier segment validé, préparation des segments suivants en arrière-plan et attente de l’image à la limite vérifiée ou pendant la voix. Toutes les occurrences source sont conservées et le dernier segment valide l’inventaire complet.
+- Erreur et pause explicites pour une configuration HLS/DASH hors périmètre. RTSP et les directs gardent leur couverture des événements reçus.
 - Conservation des répliques brèves, répétées et tardives reçues des conteneurs progressifs, y compris après la fin de l’image, avec Pause utilisateur prioritaire.
 - Indexation complète préalable conservée pour les fichiers locaux, la traduction, la synchronisation corrigée, l’association de deux pistes et la reprise exacte d’une réplique interrompue.
 

@@ -46,7 +46,7 @@ Les notes suivantes conservent le périmètre et les constats de chaque version 
 
 | Version | Périmètre des notes |
 | --- | --- |
-| [1.1.1](releases/1.1.1.md) | Démarrage réseau progressif, HLS/DASH et RTSP ; suivi des occurrences reçues des conteneurs progressifs |
+| [1.1.1](releases/1.1.1.md) | Démarrage dès le premier segment WebVTT fini validé, contrôle de la plage vérifiée et conservation des occurrences réseau |
 | [1.1.0](releases/1.1.0.md) | Lecture intégrale vérifiée, bilan et rattrapage, explorateur et historique réseau ; preuves de la distribution conservées |
 | [1.0.0](releases/1.0.0.md) | Version 1.0 ; navigation, Explorer/réseau, contexte Index, diagnostics et documentation ; preuves propres à la distribution dans le corps de la release GitHub |
 | [0.5.15-loading](releases/0.5.15-loading.md) | Chargement sans seuil sur le poids du GGUF et diagnostics mémoire ; publication historique issue de la PR #31 |

@@ -273,10 +273,95 @@ class TimelinePlaybackRobolectricTest {
             "https://fixture.invalid/demonstration.mpd", "rtsp://fixture.invalid/demonstration")) {
             Fixture(preIndex = false, remote = true, remoteUri = uri).use { f ->
                 f.session.play()
+                if (!uri.startsWith("rtsp:")) {
+                    await("Adaptive network Play did not request incremental subtitle segments") {
+                        f.components.progressiveScanners.lastOrNull()?.entered?.count == 0L
+                    }
+                    f.components.progressiveScanners.last().publish(emptyList(), 1_000_000)
+                    await("The first covered empty segment did not release network playback") { f.session.player.playWhenReady }
+                }
                 assertTrue("Network Play stayed paused for $uri", f.session.player.playWhenReady)
                 assertTrue(f.session.machine.snapshot().wantsPlayback)
                 assertFalse(f.session.hasCompleteSubtitleIndex)
-                assertEquals("Network Play requested a complete scanner for $uri", 0, f.components.indexerCreations)
+                assertEquals(if (uri.startsWith("rtsp:")) 0 else 1, f.components.indexerCreations)
+                assertTrue("Network Play requested a full scan for $uri", f.components.progressiveScanners.all { it.fullScanCalls == 0 })
+            }
+        }
+    }
+
+    @Test fun adaptiveNetworkStartsFromItsFirstPrefixAndWaitsOnlyAtTheUncoveredFrontier() {
+        for (extension in listOf("m3u8", "mpd")) {
+            Fixture(preIndex = false, remote = true,
+                remoteUri = "https://fixture.invalid/demonstration.$extension").use { f ->
+                f.session.play()
+                assertTrue(f.session.machine.snapshot().wantsPlayback)
+                assertFalse("The picture advanced before any subtitle segment was checked", f.session.player.playWhenReady)
+                await("The selected subtitle track was not loaded incrementally") {
+                    f.components.progressiveScanners.lastOrNull()?.entered?.count == 0L
+                }
+                val scanner = f.components.progressiveScanners.single()
+                val track = requireNotNull(f.session.selectedTextId())
+                scanner.publish(listOf(CueAheadIndex.Item(track, 1_010_000, 1_020_000, "Bref."),
+                    CueAheadIndex.Item(track, 1_200_000, 1_300_000, "Oui.")), 2_000_000)
+                await("A validated first segment did not start playback") { f.session.player.playWhenReady }
+                assertEquals("Playback waited for all subtitle segments", 1L, scanner.finished.count)
+                assertFalse(f.session.hasCompleteSubtitleIndex)
+                f.at(1000); f.at(1100); f.drain()
+                f.at(1400); f.drain()
+                f.at(2100)
+                assertFalse("The picture crossed a subtitle interval that has not been checked", f.session.player.playWhenReady)
+                assertTrue(f.session.machine.snapshot().wantsPlayback)
+                assertEquals(2000L, f.session.player.currentPosition)
+                await("The coverage-frontier rewind did not finish buffering") { f.session.player.playbackState == Player.STATE_READY }
+                scanner.publish(listOf(CueAheadIndex.Item(track, 2_200_000, 2_300_000, "Oui.")), 4_000_000)
+                await("The next validated segment did not release the existing Play request") { f.session.player.playWhenReady }
+                f.at(2400); f.drain()
+                assertEquals(listOf("Bref.", "Oui.", "Oui."), f.components.voice.requests.map { it.second })
+                assertEquals(3, f.session.machine.journalSnapshot().completedCount)
+                assertEquals(1L, scanner.finished.count)
+                scanner.publish(emptyList(), maxOf(4_000_000L, f.session.player.duration * 1000))
+                scanner.complete()
+                await("The completed segment inventory was not installed") { f.session.hasCompleteSubtitleIndex }
+                assertEquals(listOf("Bref.", "Oui.", "Oui."), f.components.voice.requests.map { it.second })
+                assertTrue(f.session.machine.journalSnapshot().entries.all { it.completions == 1 })
+                assertEquals(0, scanner.fullScanCalls)
+            }
+        }
+    }
+
+    @Test fun cancelledAdaptivePrefixesAndErrorsCannotRestartPauseSeekOrReplacementMedia() {
+        for (action in listOf("pause", "seek", "source")) {
+            Fixture(preIndex = false, remote = true,
+                remoteUri = "https://fixture.invalid/demonstration.m3u8?cancel=$action").use { f ->
+                f.session.play()
+                await("The incremental subtitle task did not start") {
+                    f.components.progressiveScanners.lastOrNull()?.entered?.count == 0L
+                }
+                val old = f.components.progressiveScanners.single()
+                val track = requireNotNull(f.session.selectedTextId())
+                old.publish(emptyList(), 2_000_000)
+                await("The first prefix did not permit playback") { f.session.player.playWhenReady }
+                old.failOnCancel = true
+                when (action) {
+                    "pause" -> f.session.pause()
+                    "seek" -> {
+                        f.session.seek(5000)
+                        assertTrue("Seeking left the old subtitle request active", old.cancelled)
+                        f.session.pause()
+                    }
+                    "source" -> f.session.open(SavedMedia("https://fixture.invalid/replacement.mkv", "New remote source"))
+                }
+                assertTrue("The obsolete subtitle request was not cancelled", old.cancelled)
+                await("The cancelled worker did not report its controlled failure") { old.finished.count == 0L }
+                val count = f.session.ahead.count
+                old.publish(listOf(CueAheadIndex.Item(track, 0, 10_000, "Retour périmé.")), 9_000_000)
+                shadowOf(Looper.getMainLooper()).idle()
+                assertEquals("An obsolete prefix changed the current source index", count, f.session.ahead.count)
+                assertTrue(f.components.voice.requests.isEmpty())
+                assertFalse(f.session.machine.snapshot().wantsPlayback)
+                assertFalse(f.session.player.playWhenReady)
+                assertFalse("An obsolete task error reached the current session", f.messages.any { it.second })
+                assertEquals(0, old.fullScanCalls)
             }
         }
     }
@@ -821,6 +906,8 @@ class TimelinePlaybackRobolectricTest {
     private class Components(private val mapRemoteMedia: Boolean = false) : PlaybackComponents by DefaultPlaybackComponents {
         var indexerCreations = 0; private set
         var sourceCues: IndexedCueListener? = null; private set
+        val progressiveScanners = mutableListOf<ProgressiveScanner>()
+        private var adaptiveSource = false
         private val shouldBlockScan = java.util.concurrent.atomic.AtomicBoolean(false)
         @Volatile var scanEntered = java.util.concurrent.CountDownLatch(0)
         @Volatile var releaseScan = java.util.concurrent.CountDownLatch(0)
@@ -837,6 +924,8 @@ class TimelinePlaybackRobolectricTest {
                 override fun createMediaSource(item: MediaItem, onCue: IndexedCueListener): androidx.media3.exoplayer.source.MediaSource {
                     if (!mapRemoteMedia) return delegate.createMediaSource(item, onCue)
                     sourceCues = onCue
+                    val path = item.localConfiguration?.uri?.path.orEmpty()
+                    adaptiveSource = path.endsWith(".m3u8") || path.endsWith(".mpd")
                     // Keep the session's remote identity while the real Media3
                     // source reads the local generated container. Samples are
                     // delivered explicitly to control late arrival and seeks.
@@ -845,6 +934,7 @@ class TimelinePlaybackRobolectricTest {
                 }
                 override fun createIndexer(): SubtitleIndexer {
                     indexerCreations++
+                    if (mapRemoteMedia && adaptiveSource) return ProgressiveScanner().also { progressiveScanners += it }
                     check(!mapRemoteMedia) { "Ordinary remote Play requested a whole-file subtitle scan" }
                     val scanner = delegate.createIndexer()
                     return object : SubtitleIndexer by scanner {
@@ -870,6 +960,36 @@ class TimelinePlaybackRobolectricTest {
         override fun createSpeech(context: Context, preferences: PlayerPreferences, onAvailability: (Boolean, String) -> Unit,
             onDone: (String) -> Unit, onFailure: (String, String) -> Unit): SpeechService =
             Voice(onAvailability, onDone).also { voice = it }
+    }
+    private class ProgressiveScanner : SubtitleIndexer {
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val finished = java.util.concurrent.CountDownLatch(1)
+        private val released = java.util.concurrent.CountDownLatch(1)
+        private val items = java.util.concurrent.CopyOnWriteArrayList<CueAheadIndex.Item>()
+        @Volatile private var onPrefix: ((List<CueAheadIndex.Item>, Long) -> Unit)? = null
+        @Volatile var cancelled = false; private set
+        @Volatile var failOnCancel = false
+        @Volatile var fullScanCalls = 0; private set
+        override fun scan(media: SavedMedia, progress: (Int) -> Unit): CueAheadIndex {
+            fullScanCalls++
+            error("Adaptive network Play requested a complete scan")
+        }
+        override fun scanTrackProgressively(media: SavedMedia, track: String,
+            onPrefix: (List<CueAheadIndex.Item>, Long) -> Unit, progress: (Int) -> Unit): CueAheadIndex {
+            this.onPrefix = onPrefix
+            entered.countDown()
+            try {
+                check(released.await(15, java.util.concurrent.TimeUnit.SECONDS)) { "Controlled subtitle segments were not released" }
+                if (cancelled && failOnCancel) throw java.io.IOException("Controlled obsolete subtitle failure")
+                return CueAheadIndex.restored(items.toList(), setOf(track))
+            } finally { finished.countDown() }
+        }
+        fun publish(newItems: List<CueAheadIndex.Item>, coveredThroughUs: Long) {
+            items.addAll(newItems)
+            requireNotNull(onPrefix)(newItems, coveredThroughUs)
+        }
+        fun complete() { released.countDown() }
+        override fun cancel() { cancelled = true; released.countDown() }
     }
     private class Voice(private val available: (Boolean, String) -> Unit, private val done: (String) -> Unit) : SpeechService {
         val requests = mutableListOf<Pair<String, String>>()
