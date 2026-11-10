@@ -166,14 +166,19 @@ class OfflineSpeechLibrary(private val directory: File, private val reserveBytes
         val dir = audioDirectory(key); dir.mkdirs()
         return File.createTempFile("voice-", ".part", dir)
     }
-    fun get(key: String, segmentKey: String): SpeechDiskCache.Entry? {
+    /** Read a published WAV without changing the library's preparation state. */
+    fun readVerified(key: String, segmentKey: String): SpeechDiskCache.Entry? {
         require(safeKey.matches(segmentKey))
         val dir = audioDirectory(key); val file = File(dir, "$segmentKey.wav"); val sha = File(dir, "$segmentKey.sha256")
-        verifiedEntries.remove("$key/$segmentKey")
         if (!file.isFile || !sha.isFile || sha.length() != 64L) return null
         val info = WavInfo.read(file) ?: return null
         if (!runCatching { sha.readText() == digest(file) }.getOrDefault(false)) return null
-        return SpeechDiskCache.Entry(file, info.durationMs).also {
+        return SpeechDiskCache.Entry(file, info.durationMs)
+    }
+
+    fun get(key: String, segmentKey: String): SpeechDiskCache.Entry? {
+        verifiedEntries.remove("$key/$segmentKey")
+        return readVerified(key, segmentKey)?.also {
             verifiedEntries["$key/$segmentKey"] = it
             while (verifiedEntries.size > MAX_CUES) verifiedEntries.remove(verifiedEntries.keys.first())
         }

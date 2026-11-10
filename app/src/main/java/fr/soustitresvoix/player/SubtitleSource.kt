@@ -14,6 +14,7 @@ typealias IndexedCueListener = (String?, CuesWithTiming, List<SsaOccurrence>?) -
 @UnstableApi
 interface SubtitleIndexer {
     fun scan(media: SavedMedia, progress: (Int) -> Unit): CueAheadIndex
+    fun scanTracks(media: SavedMedia, tracks: Set<String>, progress: (Int) -> Unit): CueAheadIndex = scan(media, progress)
     fun cancel()
 }
 
@@ -53,6 +54,7 @@ class Media3SubtitleSource(private val context: Context) : SubtitleSource {
         val indexer = FullSubtitleIndexer(context, dataSources)
         return object : SubtitleIndexer {
             override fun scan(media: SavedMedia, progress: (Int) -> Unit) = indexer.scan(media, progress)
+            override fun scanTracks(media: SavedMedia, tracks: Set<String>, progress: (Int) -> Unit) = indexer.scanTracks(media, tracks, progress)
             override fun cancel() = indexer.cancel()
         }
     }

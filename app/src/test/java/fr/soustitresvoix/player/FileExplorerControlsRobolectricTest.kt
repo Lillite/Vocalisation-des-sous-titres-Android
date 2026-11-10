@@ -1,12 +1,23 @@
 package fr.soustitresvoix.player
 
 import android.Manifest
+import android.app.Activity
 import android.app.AppOpsManager
+import android.content.ContentProvider
+import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
+import android.content.pm.ProviderInfo
+import android.database.Cursor
+import android.database.MatrixCursor
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.Looper
 import android.os.Process
 import android.os.storage.StorageManager
+import android.provider.DocumentsContract
+import android.provider.DocumentsContract.Document
 import android.provider.Settings
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
@@ -26,6 +37,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
 import org.robolectric.shadows.ShadowDialog
+import org.robolectric.shadows.ShadowContentResolver
 import org.robolectric.shadows.StorageVolumeBuilder
 import java.io.File
 
@@ -51,6 +63,78 @@ class FileExplorerControlsRobolectricTest {
         if (view is ViewGroup) for (index in 0 until view.childCount) yieldAll(descendants(view.getChildAt(index)))
     }
     private fun click(root: View, label: String) = descendants(root).filterIsInstance<Button>().single { it.text.toString() == label }.performClick()
+
+    @Test fun grantedTreeListsHiddenFoldersAndOpensUnknownMediaAndAssWithoutAllFilesAccess() {
+        val owner = Robolectric.buildActivity(ComponentActivity::class.java).setup()
+        val activity = owner.get().apply { setTheme(R.style.AppTheme) }
+        val authority = "synthetic.explorer.documents"
+        val tree = DocumentsContract.buildTreeDocumentUri(authority, "root:synthetic")
+        val provider = TreeProvider().apply { attachInfo(activity, ProviderInfo().also { it.authority = authority }) }
+        ShadowContentResolver.registerProviderInternal(authority, provider)
+        val opened = mutableListOf<SavedMedia>()
+        val subtitles = mutableListOf<Pair<Uri, String>>()
+        val controls = FileExplorerControls(activity, { opened += it }, { uri, name -> subtitles += uri to name }, {}, {})
+        try {
+            assertFalse(LocalFileAccess.granted(activity))
+            val view = controls.createView()
+            click(view, "Ajouter un dossier avec Android")
+            val launched = shadowOf(activity).nextStartedActivityForResult
+            assertEquals(Intent.ACTION_OPEN_DOCUMENT_TREE, launched.intent.action)
+            assertTrue(activity.activityResultRegistry.dispatchResult(launched.requestCode, Activity.RESULT_OK,
+                Intent().setData(tree).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)))
+            awaitButton(view, "Dossier · .panneaux")
+            click(view, "Dossier · .panneaux")
+            awaitButton(view, "Fichier · .panneaux.ASS")
+            click(view, "Fichier · .panneaux.ASS")
+            assertEquals(listOf(DocumentsContract.buildDocumentUriUsingTree(tree, "ass:opaque/2") to ".panneaux.ASS"), subtitles)
+            click(view, "Dossier parent")
+            awaitButton(view, "Fichier · Film sans extension")
+            click(view, "Fichier · Film sans extension")
+            val dialog = requireNotNull(ShadowDialog.getLatestDialog())
+            assertTrue(click(dialog.window!!.decorView, "Lire comme média"))
+            // AlertDialog delivers its positive action through a Handler.
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(listOf(SavedMedia(DocumentsContract.buildDocumentUriUsingTree(tree, "film:opaque/1").toString(),
+                "Film sans extension")), opened)
+        } finally { controls.close(); owner.pause().stop().destroy() }
+    }
+
+    private fun awaitButton(root: View, label: String) {
+        val deadline = System.nanoTime() + 5_000_000_000L
+        do {
+            shadowOf(Looper.getMainLooper()).idle()
+            if (descendants(root).filterIsInstance<Button>().any { it.text.toString() == label }) return
+            Thread.sleep(5)
+        } while (System.nanoTime() < deadline)
+        fail("Bouton absent : $label")
+    }
+
+    private class TreeProvider : ContentProvider() {
+        override fun onCreate() = true
+        override fun getType(uri: Uri): String? = null
+        override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor {
+            val columns = requireNotNull(projection)
+            val rows = when {
+                uri.lastPathSegment != "children" -> listOf(Triple("root:synthetic", "Dossier synthétique", Document.MIME_TYPE_DIR))
+                DocumentsContract.getDocumentId(uri) == "root:synthetic" -> listOf(
+                    Triple("folder:opaque/0", ".panneaux", Document.MIME_TYPE_DIR),
+                    Triple("film:opaque/1", "Film sans extension", "application/octet-stream"))
+                else -> listOf(Triple("ass:opaque/2", ".panneaux.ASS", "text/x-ssa"))
+            }
+            return MatrixCursor(columns).apply {
+                rows.forEach { (id, name, mime) -> addRow(columns.map { column -> when (column) {
+                    Document.COLUMN_DOCUMENT_ID -> id
+                    Document.COLUMN_DISPLAY_NAME -> name
+                    Document.COLUMN_MIME_TYPE -> mime
+                    Document.COLUMN_FLAGS -> 0
+                    else -> null
+                } }) }
+            }
+        }
+        override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+        override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?) = 0
+        override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0
+    }
 
     @Test fun deniedSharedStorageAlwaysKeepsSystemPickerAndOffersAndroidSettings() {
         val owner = Robolectric.buildActivity(ComponentActivity::class.java).setup()

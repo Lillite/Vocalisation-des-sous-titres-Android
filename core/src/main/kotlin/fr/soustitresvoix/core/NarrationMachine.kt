@@ -10,7 +10,11 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
     enum class Mode { COMFORT, CONTINUOUS, ADAPTIVE }
     enum class ResumePolicy { REPLICA, SEGMENT, EXPLICIT }
     sealed class Effect {
-        data class Speak(val id: String, val text: String, val remainingText: String = "", val deadlineMs: Long? = null, val preview: Boolean = false) : Effect()
+        data class Speak(
+            val id: String, val text: String, val remainingText: String = "",
+            val deadlineMs: Long? = null, val preview: Boolean = false,
+            val occurrenceId: String? = null, val segmentOrdinal: Int = 0, val segmentCount: Int = 1
+        ) : Effect()
         object StopSpeech : Effect()
         data class Video(val playing: Boolean) : Effect()
         data class Duck(val enabled: Boolean) : Effect()
@@ -20,11 +24,15 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
         val wantsPlayback: Boolean, val videoRequested: Boolean,
         val speakingId: String?, val pendingCount: Int, val waitingForSpeech: Boolean,
         val enabled: Boolean, val mode: Mode, val voiceSuspended: Boolean = false,
-        val recoverableCount: Int = 0
+        val recoverableCount: Int = 0, val translationHeld: Boolean = false, val scheduleHeld: Boolean = false
+    )
+    data class RestoredOccurrence(
+        val identity: String, val text: String, val segments: List<NarrationLedger.SegmentResume>,
+        val deadlineMs: Long? = null
     )
     private data class Job(val text: String, var expired: Boolean = false,
         val group: Long = 0, val original: String = text, var deadlineMs: Long? = null,
-        val occurrenceId: String? = null)
+        val occurrenceId: String? = null, val segmentOrdinal: Int = 0, val segmentCount: Int = 1)
     private data class Running(val id: String, val job: Job, val preview: Boolean = false)
     private val queue = ArrayDeque<Job>()
     /** Overflow and player errors retain engine-safe chunks for explicit recovery.
@@ -34,6 +42,8 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
     private var recoverableChars = 0
     private var recoveryHold = false
     private var comprehensionHold = false
+    private var translationHold = false
+    private var scheduleHold = false
     private var current: Running? = null
     private var sequence = 0L
     private var groupSequence = 0L
@@ -71,58 +81,164 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
         queue.mapNotNullTo(this) { it.occurrenceId }
         recoverable.mapNotNullTo(this) { it.occurrenceId }
     }.distinct().mapNotNull(ledger::entry)
+    fun pendingSegments(): List<NarrationLedger.SegmentResume> {
+        val hashes = HashMap<Long, Pair<String, String>>()
+        return sequence {
+            current?.job?.let { yield(it) }
+            yieldAll(replayQueue)
+            yieldAll(queue)
+            yieldAll(recoverable)
+        }.mapNotNull { job ->
+            val identity = job.occurrenceId ?: return@mapNotNull null
+            val (identityHash, textHash) = hashes.getOrPut(job.group) {
+                NarrationLedger.hashIdentity(identity) to NarrationLedger.hashIdentity(job.original)
+            }
+            NarrationLedger.SegmentResume(identityHash, job.segmentOrdinal, job.segmentCount, textHash)
+        }.toList()
+    }
     fun journalSnapshot() = ledger.snapshot()
+    fun narrationEntry(identity: String) = ledger.entry(identity)
+    fun narrationGeneration() = ledger.currentGeneration
     fun exportJournalMetadata() = ledger.exportMetadata()
     fun restoreJournalMetadata(encoded: String) = ledger.restoreMetadata(encoded)
     /** The owner releases this hold only from its generation-checked callback. */
     fun setComprehensionHold(value: Boolean): List<Effect> = event {
         comprehensionHold = value && wantsPlayback && current?.preview != true
     }
-    /** Explicit recovery uses text re-resolved by the owner from the selected source track. */
-    fun replayOccurrence(identity: String, text: String): List<Effect> = event {
+    /** Technical holds affect the image only and cannot create a play request. */
+    fun setTranslationHold(value: Boolean): List<Effect> = event { translationHold = value && wantsPlayback }
+    // The owner can arm the first verified boundary immediately before Play.
+    fun setScheduleHold(value: Boolean): List<Effect> = event { scheduleHold = value }
+    private fun clearHolds() {
         comprehensionHold = false
+        translationHold = false
+        scheduleHold = false
+    }
+    private fun cancelPlaybackIntent() {
         wantsPlayback = false
-        if (!speechReady || identity.isBlank() || text.isBlank() || text.length > 24_000) {
+        clearHolds()
+    }
+
+    /** A restored session admits only validated, ordered suffixes and waits for Play. */
+    fun restorePendingSegments(items: List<RestoredOccurrence>): List<Effect> = event {
+        val valid = !wantsPlayback && current == null && queue.isEmpty() && replayQueue.isEmpty() && recoverable.isEmpty() &&
+            items.size <= 100_000 && items.all { it.identity.isNotBlank() && it.text.isNotBlank() } &&
+            items.map { it.identity }.distinct().size == items.size &&
+            items.sumOf { it.text.length.toLong() } <= MAX_RECOVERABLE_CHARS
+        if (!valid) {
+            effects += Effect.Message("La file vocale mémorisée ne peut pas être restaurée à cette étape.", true)
+            return@event
+        }
+        val split = items.map { SpeechTools.segments(it.text, languageTag) }
+        for ((index, item) in items.withIndex()) {
+            val segments = split[index]
+            val start = item.segments.firstOrNull()?.ordinal
+            val identityHash = NarrationLedger.hashIdentity(item.identity)
+            val textHash = NarrationLedger.hashIdentity(item.text)
+            val confirmedPrefix = ledger.entry(item.identity)?.takeIf {
+                it.generation == ledger.currentGeneration && it.segmentCount == segments.size
+            }?.completedSegmentCount ?: 0
+            if (start == null || start !in segments.indices || item.segments.size != segments.size - start ||
+                start > confirmedPrefix ||
+                item.segments.withIndex().any { (offset, saved) ->
+                    saved.identityHash != identityHash || saved.textHash != textHash ||
+                        saved.count != segments.size || saved.ordinal != start + offset
+                }) {
+                effects += Effect.Message("Le texte ou le découpage de la réplique mémorisée a changé.", true)
+                return@event
+            }
+        }
+        clearHolds()
+        for ((index, item) in items.withIndex()) {
+            val jobs = jobsFor(item.identity, item.text, split[index], item.deadlineMs)
+            ledger.register(NarrationLedger.Occurrence(item.identity))
+            seenOccurrenceIds.add(item.identity)
+            jobs.drop(item.segments.first().ordinal).forEach { job ->
+                recoverable.addLast(job)
+                recoverableChars += job.text.length
+            }
+        }
+        recoveryHold = recoverable.isNotEmpty()
+    }
+
+    /** Reconcile a verified crossed interval without interrupting accepted speech. */
+    fun recoverMissedOccurrences(items: List<Pair<String, String>>): List<Effect> = event {
+        if (!wantsPlayback || !enabled || mode == Mode.CONTINUOUS || items.isEmpty()) return@event
+        val pending = buildSet {
+            current?.job?.occurrenceId?.let(::add)
+            replayQueue.mapNotNullTo(this) { it.occurrenceId }
+            queue.mapNotNullTo(this) { it.occurrenceId }
+            recoverable.mapNotNullTo(this) { it.occurrenceId }
+        }
+        val missing = items.filterNot { (identity, _) ->
+            identity in pending || ledger.entry(identity)?.lastCompletedGeneration == ledger.currentGeneration
+        }
+        if (missing.isEmpty()) return@event
+        if (missing.size > 100_000 || missing.map { it.first }.distinct().size != missing.size ||
+            missing.any { (identity, text) -> identity.isBlank() || text.isBlank() } ||
+            missing.sumOf { it.second.length.toLong() } + recoverableChars > MAX_RECOVERABLE_CHARS) {
+            cancelPlaybackIntent()
             interrupt(keep = true)
-            effects += Effect.Message("La réplique ne peut pas être relue : voix indisponible ou texte hors limite.", true)
+            effects += Effect.Message("La vidéo reste en pause : les répliques à rattraper doivent être vérifiées.", true)
+            return@event
+        }
+        for ((identity, text) in missing) {
+            ledger.queued(identity)
+            seenOccurrenceIds.add(identity)
+            for (job in jobsFor(identity, text, SpeechTools.segments(text, languageTag))) {
+                recoverable.addLast(job)
+                recoverableChars += job.text.length
+            }
+        }
+        recoveryHold = true
+    }
+
+    /** Explicit recovery uses text re-resolved by the owner from the selected source track. */
+    fun replayOccurrence(identity: String, text: String): List<Effect> = replayOccurrences(listOf(identity to text))
+
+    fun replayOccurrences(items: List<Pair<String, String>>): List<Effect> = event {
+        cancelPlaybackIntent()
+        if (!speechReady || items.isEmpty() || items.size > 100_000 ||
+            items.any { (identity, text) -> identity.isBlank() || text.isBlank() } ||
+            items.map { it.first }.distinct().size != items.size ||
+            items.sumOf { it.second.length.toLong() } > MAX_RECOVERABLE_CHARS) {
+            interrupt(keep = true)
+            effects += Effect.Message("La relecture est indisponible : vérifie la voix et les répliques demandées.", true)
             return@event
         }
         interrupt(keep = true)
         voiceSuspended = false
-        // An interrupted occurrence can still own queued segments in this session.
-        queue.removeIf { it.occurrenceId == identity }
-        removeRecoverable { it.occurrenceId == identity }
-        val segments = SpeechTools.segments(text, languageTag)
-        if (segments.isEmpty()) return@event
-        val group = ++groupSequence
-        ledger.register(NarrationLedger.Occurrence(identity)); ledger.queued(identity)
-        seenOccurrenceIds.add(identity)
-        val jobs = segments.map { Job(it, group = group, original = text, occurrenceId = identity) }
-        // Recovery is paused video with explicit voice playback, like Repeat last.
-        // Keep the group as a preview queue so long occurrences remain engine-safe.
-        replayQueue.addAll(jobs.drop(1))
-        val running = Running(nextId(), jobs.first(), preview = true)
-        current = running; lastSpokenText = text; lastSpokenGroup = group; lastSpokenOccurrence = identity
-        ledger.started(identity)
-        effects += Effect.Speak(running.id, running.job.text,
-            jobs.drop(1).joinToString(" ") { it.text }, preview = true)
+        // Replace the entire requested occurrence, including an earlier preview of
+        // that occurrence. Unrelated interrupted or queued work stays in order.
+        val replacing = items.mapTo(HashSet()) { it.first }
+        queue.removeIf { it.occurrenceId in replacing }
+        removeRecoverable { it.occurrenceId in replacing }
+        for ((identity, text) in items) {
+            ledger.register(NarrationLedger.Occurrence(identity))
+            ledger.queued(identity)
+            seenOccurrenceIds.add(identity)
+            replayQueue.addAll(jobsFor(identity, text, SpeechTools.segments(text, languageTag)))
+        }
+        startNextReplay()
     }
     private val replayQueue = ArrayDeque<Job>()
 
     fun snapshot() = Snapshot(wantsPlayback, requestedVideo, current?.id,
         queue.size + replayQueue.size, wantsPlayback && mustHold(), enabled, mode, voiceSuspended,
-        recoverable.size)
+        recoverable.size, translationHold, scheduleHold)
     fun setSpeechReady(ready: Boolean): List<Effect> = event {
         speechReady = ready
         if (!ready) {
-            comprehensionHold = false
+            if (enabled) cancelPlaybackIntent() else comprehensionHold = false
             interrupt(keep = true)
-            if (enabled) wantsPlayback = false
         }
     }
     fun setMediaReady(ready: Boolean): List<Effect> = event {
         mediaReady = ready
-        if (!ready && current?.preview != true) { comprehensionHold = false; interrupt(keep = true) }
+        if (!ready && !translationHold && !scheduleHold && current?.preview != true) {
+            comprehensionHold = false
+            interrupt(keep = true)
+        }
     }
     fun setResumePolicy(policy: ResumePolicy): List<Effect> = event {
         resumePolicy = policy
@@ -137,19 +253,18 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
     }
     fun play(): List<Effect> = event {
         if (voiceSuspended && enabled) {
-            wantsPlayback = false
+            cancelPlaybackIntent()
             effects += Effect.Message("Appuie sur Reprendre la voix pour reprendre la phrase et la vidéo.")
             return@event
         }
         if (current?.preview == true) interrupt(keep = current?.job?.occurrenceId != null)
         if (enabled && !speechReady) {
-            wantsPlayback = false
+            cancelPlaybackIntent()
             effects += Effect.Message("La voix n’est pas prête. Choisis une voix installée ou désactive la vocalisation.", true)
         } else wantsPlayback = true
     }
     fun pause(): List<Effect> = event {
-        comprehensionHold = false
-        wantsPlayback = false
+        cancelPlaybackIntent()
         val running = current
         // Buffering or voice unavailability may already have put the interrupted
         // segment back at the head. Its group must have actually started: a new
@@ -160,18 +275,19 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
             else -> queue.peekFirst()?.takeIf { it.group == lastSpokenGroup }
         }
         if (interrupted != null && resumePolicy == ResumePolicy.REPLICA) {
-            interrupt(keep = false)
+            interrupt(keep = true)
             queue.removeIf { it.group == interrupted.group }
             removeRecoverable { it.group == interrupted.group }
-            SpeechTools.segments(interrupted.original, languageTag).asReversed().forEach {
-                queue.addFirst(Job(it, interrupted.expired, interrupted.group, interrupted.original, interrupted.deadlineMs, interrupted.occurrenceId))
+            val segments = SpeechTools.segments(interrupted.original, languageTag)
+            segments.indices.reversed().forEach { ordinal ->
+                queue.addFirst(interrupted.copy(text = segments[ordinal], segmentOrdinal = ordinal, segmentCount = segments.size))
             }
         } else interrupt(keep = current?.preview != true || current?.job?.occurrenceId != null)
         if (interrupted != null && resumePolicy == ResumePolicy.EXPLICIT) voiceSuspended = true
     }
     /** Call before seek, media replacement or subtitle track change. */
     fun reset(keepPlaybackIntent: Boolean = false): List<Effect> = event {
-        comprehensionHold = false
+        clearHolds()
         val oldIntent = wantsPlayback
         interrupt(keep = false); abandonQueue(); seenOccurrenceIds.clear(); ledger.nextGeneration()
         activeTexts = emptyList(); activeDeadlines = emptyList(); activeIdentities = null; voiceSuspended = false
@@ -188,7 +304,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
                 activeTexts.forEachIndexed { index, text ->
                     enqueue(text, if (mode == Mode.ADAPTIVE) activeDeadlines.getOrNull(index) else null, activeIdentities?.getOrNull(index))
                 }
-                if (!speechReady) wantsPlayback = false
+                if (!speechReady) cancelPlaybackIntent()
             }
         }
     }
@@ -225,7 +341,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
         activeDeadlines = deadlinesMs.orEmpty()
         if (!enabled) return@event
         if (hasImages && !warnedImages) {
-            warnedImages = true; wantsPlayback = false
+            warnedImages = true; cancelPlaybackIntent()
             interrupt(keep = true)
             effects += Effect.Message("Cette piste contient des sous-titres en images. Leur lecture vocale n’est pas disponible. Choisis une piste texte ou ajoute un fichier SRT, VTT ou ASS.", true)
         }
@@ -241,7 +357,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
             clean.indices.filter { !remaining.remove(clean[it]) }
         }
         if (validIdentities != null && seenOccurrenceIds.size + incomingIndices.size > 100_000) {
-            wantsPlayback = false; interrupt(keep = true)
+            cancelPlaybackIntent(); interrupt(keep = true)
             incomingIndices.forEach { ledger.error(validIdentities[it]) }
             effects += Effect.Message("Limite de suivi de 100 000 occurrences atteinte. La lecture est arrêtée pour garder le suivi explicite ; un déplacement ouvre un nouveau passage.", true)
             return@event
@@ -263,33 +379,27 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
     fun speechFinished(id: String): List<Effect> = event {
         val running = current?.takeIf { it.id == id } ?: return@event
         current = null
-        val remaining = if (running.preview) replayQueue else queue
-        if (remaining.none { it.group == running.job.group } &&
-            (running.preview || recoverable.none { it.group == running.job.group })) {
-            running.job.occurrenceId?.let(ledger::completed)
+        val job = running.job
+        job.occurrenceId?.let {
+            ledger.segmentCompleted(it, job.segmentOrdinal, job.segmentCount)
+            if (job.segmentOrdinal + 1 == job.segmentCount) ledger.completed(it)
         }
-        if (running.preview && replayQueue.isNotEmpty()) {
-            val job = replayQueue.removeFirst(); val next = Running(nextId(), job, preview = true)
-            current = next
-            effects += Effect.Speak(next.id, job.text,
-                replayQueue.joinToString(" ") { it.text }, preview = true)
-        }
+        if (running.preview) startNextReplay()
     }
     fun speechFailed(id: String, detail: String): List<Effect> = event {
         if (current?.id != id) return@event
         val occurrence = current?.job?.occurrenceId
-        comprehensionHold = false
-        wantsPlayback = false; interrupt(keep = true)
+        cancelPlaybackIntent(); interrupt(keep = true)
         occurrence?.let(ledger::error)
         effects += Effect.Message("Lecture vocale interrompue : $detail", true)
     }
     fun fail(detail: String): List<Effect> = event {
-        comprehensionHold = false
+        cancelPlaybackIntent()
         val running = current
         val retained = (if (running != null && (!running.preview || running.job.occurrenceId != null))
             listOf(running.job) + if (running.preview) replayQueue.toList() else emptyList() else emptyList()) + queue.toList()
         val affected = (retained.mapNotNull { it.occurrenceId } + recoverable.mapNotNull { it.occurrenceId }).distinct()
-        wantsPlayback = false; interrupt(keep = false); queue.clear()
+        interrupt(keep = false); queue.clear()
         // Keep the visible hot queue empty on a generic player error, but retain
         // every unfinished chunk until the user explicitly retries playback.
         retained.asReversed().forEach { recoverable.addFirst(it); recoverableChars += it.text.length }
@@ -298,9 +408,14 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
         effects += Effect.Message(detail, true)
     }
     /** Repeating a whole replica consumes its pending segments, not other replicas. */
-    fun preview(text: String = lastSpokenText): List<Effect> = event {
-        comprehensionHold = false
-        wantsPlayback = false
+    fun preview(): List<Effect> {
+        val occurrence = lastSpokenOccurrence
+        return if (occurrence == null) preview("") else replayOccurrence(occurrence, lastSpokenText)
+    }
+
+    /** An audition of a voice has no identity in the selected subtitle track. */
+    fun preview(text: String): List<Effect> = event {
+        cancelPlaybackIntent()
         val refusal = when {
             !speechReady -> Effect.Message("Aucune voix disponible. Ouvre les réglages vocaux Android.", true)
             text.isBlank() -> Effect.Message("Aucune phrase à répéter.")
@@ -311,17 +426,34 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
             // Refusing a preview must not consume the interrupted film replica.
             interrupt(keep = true); effects += refusal; return@event
         }
-        val repeatGroup = if (text == lastSpokenText) lastSpokenGroup else -1L
-        interrupt(keep = current?.job?.group != repeatGroup)
-        if (repeatGroup >= 0) {
-            queue.removeIf { it.group == repeatGroup }
-            removeRecoverable { it.group == repeatGroup }
-        }
+        interrupt(keep = true)
         voiceSuspended = false
-        val occurrence = if (repeatGroup >= 0) lastSpokenOccurrence else null
-        val running = Running(nextId(), Job(text, occurrenceId = occurrence), preview = true)
-        occurrence?.let(ledger::started)
-        current = running; effects += Effect.Speak(running.id, text, preview = true)
+        startSpeech(Job(text), preview = true, remainingText = "")
+    }
+
+    private fun jobsFor(identity: String, text: String, segments: List<String>, deadlineMs: Long? = null,
+        group: Long = ++groupSequence): List<Job> = segments.mapIndexed { ordinal, segment ->
+        Job(segment, group = group, original = text, deadlineMs = deadlineMs, occurrenceId = identity,
+            segmentOrdinal = ordinal, segmentCount = segments.size)
+    }
+
+    private fun startNextReplay() {
+        val job = replayQueue.pollFirst() ?: return
+        val rest = replayQueue.asSequence().takeWhile { it.group == job.group }.joinToString(" ") { it.text }
+        startSpeech(job, preview = true, remainingText = rest)
+    }
+
+    private fun startSpeech(job: Job, preview: Boolean, remainingText: String) {
+        val running = Running(nextId(), job, preview)
+        current = running
+        job.occurrenceId?.let {
+            lastSpokenText = job.original
+            lastSpokenGroup = job.group
+            lastSpokenOccurrence = it
+            ledger.started(it)
+        }
+        effects += Effect.Speak(running.id, job.text, remainingText, job.deadlineMs, preview,
+            job.occurrenceId, job.segmentOrdinal, job.segmentCount)
     }
     private fun enqueue(text: String, deadlineMs: Long? = null, occurrenceId: String? = null): Boolean {
         if (text.isBlank()) return false
@@ -330,18 +462,26 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
         ledger.register(NarrationLedger.Occurrence(identity))
         val total = queue.sumOf { it.text.length } + (current?.job?.text?.length ?: 0) + text.length
         if (text.length > MAX_RECOVERABLE_CHARS || recoverableChars.toLong() + text.length > MAX_RECOVERABLE_CHARS) {
-            wantsPlayback = false; interrupt(keep = true); ledger.error(identity)
+            cancelPlaybackIntent(); interrupt(keep = true); ledger.error(identity)
             effects += Effect.Message("La piste dépasse la limite de récupération de 12 millions de caractères. La lecture est arrêtée ; les phrases déjà retenues sont conservées. Cette occurrence doit être retrouvée dans la piste source.", true)
             return false
         }
-        val jobs = SpeechTools.segments(text, languageTag).map {
-            Job(it, group = group, original = text, deadlineMs = deadlineMs, occurrenceId = identity)
-        }
+        val jobs = jobsFor(identity, text, SpeechTools.segments(text, languageTag), deadlineMs, group)
         if (total > maxPendingChars || recoverable.isNotEmpty()) {
-            wantsPlayback = false; interrupt(keep = true)
+            val alreadyHolding = recoveryHold
             jobs.forEach { recoverable.addLast(it); recoverableChars += it.text.length }
-            recoveryHold = true; ledger.error(identity)
-            effects += Effect.Message("Trop de texte reçu à la fois. Les phrases sont conservées. Appuie sur Lire pour terminer leur vocalisation avec la vidéo en pause.", true)
+            recoveryHold = true
+            if (mode == Mode.CONTINUOUS) {
+                cancelPlaybackIntent()
+                interrupt(keep = true)
+                ledger.error(identity)
+                effects += Effect.Message("Trop de texte reçu à la fois. Les phrases sont conservées. Appuie sur Lire pour terminer leur vocalisation avec la vidéo en pause.", true)
+            } else {
+                ledger.queued(identity)
+                if (!alreadyHolding && wantsPlayback) {
+                    effects += Effect.Message("La vidéo attend la fin des répliques en file.")
+                }
+            }
         } else {
             ledger.queued(identity); jobs.forEach(queue::addLast)
         }
@@ -374,7 +514,7 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
         }
     }
     private fun refillRecovery() {
-        if (!enabled || !speechReady || !mediaReady || !wantsPlayback || voiceSuspended || current?.preview == true) return
+        if (!enabled || !speechReady || !voiceCanRun() || !wantsPlayback || voiceSuspended || current?.preview == true) return
         var hotChars = queue.sumOf { it.text.length } + (current?.job?.text?.length ?: 0)
         while (recoverable.isNotEmpty()) {
             val next = recoverable.peekFirst()
@@ -389,21 +529,20 @@ class NarrationMachine(private val maxPendingChars: Int = 24_000) {
             queue.addLast(next)
         }
     }
-    private fun mustHold(): Boolean = comprehensionHold || (enabled && mode != Mode.CONTINUOUS &&
+    private fun voiceCanRun(): Boolean = mediaReady || translationHold || scheduleHold
+    private fun mustHold(): Boolean = comprehensionHold || (enabled &&
         ((recoveryHold && (current != null || queue.isNotEmpty() || recoverable.isNotEmpty())) ||
-            current?.job?.expired == true || queue.any { it.expired }))
+            (mode != Mode.CONTINUOUS && (current?.job?.expired == true || queue.any { it.expired }))))
     private fun settle() {
         refillRecovery()
-        if (current == null && !comprehensionHold && !voiceSuspended && enabled && speechReady && mediaReady && wantsPlayback && queue.isNotEmpty()) {
-            val job = queue.removeFirst(); val running = Running(nextId(), job)
-            current = running; lastSpokenText = job.original; lastSpokenGroup = job.group; lastSpokenOccurrence = job.occurrenceId
-            job.occurrenceId?.let(ledger::started)
+        if (current == null && !comprehensionHold && !voiceSuspended && enabled && speechReady && voiceCanRun() && wantsPlayback && queue.isNotEmpty()) {
+            val job = queue.removeFirst()
             val rest = (queue.asSequence() + recoverable.asSequence())
-                .filter { it.group == job.group }.joinToString(" ") { it.text }
-            effects += Effect.Speak(running.id, job.text, rest, job.deadlineMs)
+                .takeWhile { it.group == job.group }.joinToString(" ") { it.text }
+            startSpeech(job, preview = false, remainingText = rest)
         }
         if (current == null && queue.isEmpty() && recoverable.isEmpty()) recoveryHold = false
-        val video = wantsPlayback && !mustHold() && current?.preview != true
+        val video = wantsPlayback && !translationHold && !scheduleHold && !mustHold() && current?.preview != true
         val duck = current != null
         if (video != requestedVideo) { requestedVideo = video; effects += Effect.Video(video) }
         if (duck != requestedDuck) { requestedDuck = duck; effects += Effect.Duck(duck) }

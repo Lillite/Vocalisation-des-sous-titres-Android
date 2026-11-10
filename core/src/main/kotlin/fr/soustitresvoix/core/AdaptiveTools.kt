@@ -6,10 +6,10 @@ import kotlin.math.ceil
 
 /** Punctuation is retained for the TTS engine. No silence is removed from audio. */
 object LinguisticSegments {
-    const val VERSION = "language-boundaries-6"
+    const val VERSION = "language-boundaries-7"
     private val abbreviations = setOf("m", "mm", "mme", "mmes", "mlle", "dr", "pr", "prof", "st", "ste", "mr", "mrs", "ms", "etc", "cf", "av", "art", "vol", "p", "pp", "fig", "n", "no")
     private val languageAbbreviations = mapOf(
-        "fr" to setOf("m", "mm", "mme", "mmes", "mlle", "pr", "ste", "av", "art", "tél", "env", "éd"),
+        "fr" to setOf("m", "mm", "mme", "mmes", "mlle", "dr", "pr", "ste", "av", "art", "tél", "env", "éd"),
         "en" to setOf("mr", "mrs", "ms", "dr", "prof", "sr", "jr", "rev", "gen", "hon", "vs", "approx"),
         "de" to setOf("hr", "fr", "dr", "prof", "bzw", "usw", "ggf", "str", "abb", "ca", "nr"),
         "es" to setOf("sr", "sra", "srta", "dr", "dra", "ud", "uds", "núm", "aprox", "pág"),
@@ -42,8 +42,12 @@ object LinguisticSegments {
                 val c = p[i]
                 if (c !in ".!?…。！？؟۔।॥") { i++; continue }
                 val decimal = c == '.' && i > 0 && i + 1 < p.length && p[i-1].isDigit() && p[i+1].isDigit()
-                val token = p.substring(start, i).takeLastWhile { it.isLetter() }.lowercase(Locale.ROOT)
-                val abbreviation = c == '.' && (token in protectedAbbreviations || (token.length == 1 && token[0].isLetter()))
+                val abbreviation = c == '.' && !decimal && run {
+                    var tokenStart = i
+                    while (tokenStart > start && p[tokenStart - 1].isLetter()) tokenStart--
+                    val token = p.substring(tokenStart, i).lowercase(Locale.ROOT)
+                    token in protectedAbbreviations || token.length == 1
+                }
                 var end = i + 1
                 while (end < p.length && p[end] in ".!?…。！？؟۔।॥\"'’»”)]」』】）》") end++
                 // French typography places a space before a closing guillemet.

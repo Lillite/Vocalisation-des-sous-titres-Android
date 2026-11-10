@@ -251,9 +251,9 @@ class PlaybackComponentsRobolectricTest {
             indexers++
             val actual = delegate.createIndexer()
             return object : SubtitleIndexer by actual {
-                override fun scan(media: SavedMedia, progress: (Int) -> Unit): CueAheadIndex {
+                override fun scanTracks(media: SavedMedia, tracks: Set<String>, progress: (Int) -> Unit): CueAheadIndex {
                     scans += media
-                    return actual.scan(media, progress)
+                    return actual.scanTracks(media, tracks, progress)
                 }
             }
         }

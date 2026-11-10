@@ -178,7 +178,7 @@ class SubtitleTranslationAndroidTest {
                     }
                     scenario.onActivity { current ->
                         assertFalse(current.session.translation.complete)
-                        assertFalse(current.session.machine.snapshot().wantsPlayback)
+                        assertTrue(current.session.machine.snapshot().translationHeld)
                         assertFalse(current.session.player.playWhenReady)
                         assertEquals(frenchTexts.take(5), observation.requests())
                     }

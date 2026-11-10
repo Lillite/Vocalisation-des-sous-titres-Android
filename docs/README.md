@@ -1,8 +1,8 @@
 # Documentation de Sous-titres en voix
 
-[Accueil](../README.md) · [Changements](../CHANGELOG.md) · [Notes 1.0.0](releases/1.0.0.md) · [Validation](../TESTING.md) · [Signaler un problème](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/issues/new/choose)
+[Accueil](../README.md) · [Changements](../CHANGELOG.md) · [Notes 1.1.0](releases/1.1.0.md) · [Validation](../TESTING.md) · [Signaler un problème](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/issues/new/choose)
 
-La documentation courante décrit les **sources 1.0.0 / code 23**. Les [notes de version](releases/1.0.0.md#validation-et-publication) distinguent critères de livraison et contrôles locaux ; le corps de la release GitHub fournit les preuves propres au binaire. Les anciens résultats sont attachés à leurs propres versions.
+La documentation courante décrit les **sources 1.1.0 / code 24**. Les [notes de version](releases/1.1.0.md#validation-et-publication) distinguent les critères de livraison et les essais sur appareil. Le corps de la release GitHub fournit les preuves propres au binaire.
 
 ## Utiliser l’application
 

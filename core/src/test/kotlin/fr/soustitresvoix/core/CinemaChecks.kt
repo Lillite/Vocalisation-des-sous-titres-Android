@@ -87,8 +87,9 @@ object CinemaChecks {
         }
         test("repeat complete replica consumes its remaining segments only") {
             val m = ready(); val a = m.cues(1, listOf("Bonjour. Au revoir.")).spoken(); m.speechFinished(a.id)
-            val repeated = m.preview().spoken(); check(repeated.text == "Bonjour. Au revoir.")
-            m.speechFinished(repeated.id)
+            val repeated = m.preview().spoken(); check(repeated.text == "Bonjour.")
+            val last = m.speechFinished(repeated.id).spoken(); check(last.text == "Au revoir.")
+            m.speechFinished(last.id)
             check(m.play().filterIsInstance<NarrationMachine.Effect.Speak>().isEmpty())
         }
         val dir = Files.createTempDirectory("speech-cache-test-").toFile()

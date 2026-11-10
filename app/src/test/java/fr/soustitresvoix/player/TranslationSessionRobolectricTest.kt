@@ -119,8 +119,10 @@ class TranslationSessionRobolectricTest {
             return preview
         }
         fun playFrames() {
+            components.backend.positionOverrideMs = 0
             session.play()
             for (frame in frames(file.readBytes())) {
+                components.backend.positionOverrideMs = (frame.presentationTimeUs / 1000).coerceAtLeast(0)
                 components.backend.deliver(frame)
                 var guard = 0
                 while (session.machine.snapshot().speakingId != null) {
@@ -289,11 +291,17 @@ class TranslationSessionRobolectricTest {
         }
     }
 
-    @Test fun unmappedDisplayedOccurrenceStopsPlaybackWithoutAnyOriginalLanguageFallback() {
+    @Test fun unmappedIndexedOccurrenceStopsPlaybackWithoutAnyOriginalLanguageFallback() {
         Fixture().use { fixture ->
             fixture.translate()
+            fixture.components.backend.positionOverrideMs = 0
+            val unexpected = CueGroup(listOf(Cue.Builder().setText("Unindexed original phrase").build()), 2_000_000)
+            fixture.session.installTranslationIndex(CueAheadIndex().apply {
+                add("external-subtitle", androidx.media3.extractor.text.CuesWithTiming(unexpected.cues, 2_000_000, 1_000_000))
+            })
             fixture.session.play()
-            fixture.components.backend.deliver(CueGroup(listOf(Cue.Builder().setText("Unindexed original phrase").build()), 2_000_000))
+            fixture.components.backend.positionOverrideMs = 2000
+            fixture.components.backend.deliver(unexpected)
             assertFalse(fixture.session.machine.snapshot().wantsPlayback)
             assertFalse(fixture.session.player.playWhenReady)
             assertTrue(fixture.components.speech.requests.isEmpty())
@@ -839,13 +847,19 @@ class TranslationSessionRobolectricTest {
         await("Validated prefix not available") { entered.count == 0L && session.translation.ready }
         assertFalse(session.translation.complete)
         assertFalse(session.machine.snapshot().wantsPlayback)
+        components.backend.positionOverrideMs = 0
         session.play()
         assertTrue(session.machine.snapshot().wantsPlayback)
+        components.backend.positionOverrideMs = 1000
+        components.backend.deliver(CueGroup(listOf(Cue.Builder().setText("Text 0").build()), 1_000_000))
+        val audible = requireNotNull(session.machine.snapshot().speakingId)
         components.backend.positionOverrideMs = 101_090
         assertFalse(session.translation.onPlaybackPosition(101_090_000))
         assertEquals("A short missing occurrence must remain replayable", 101_000L, session.player.currentPosition)
         assertTrue(session.translation.waitingForTranslation)
-        assertFalse(session.machine.snapshot().wantsPlayback)
+        assertTrue(session.machine.snapshot().translationHeld)
+        assertFalse(session.player.playWhenReady)
+        assertEquals("The audible phrase keeps its request during a translation hold", audible, session.machine.snapshot().speakingId)
     }
 
     @Test fun progressiveHoldRewindsAndRecoversOnlyItsOwnPlaybackIntentWithoutLosingAnyOccurrence() {
@@ -858,6 +872,9 @@ class TranslationSessionRobolectricTest {
                 val prefixFingerprint = fixture.session.translation.fingerprint
                 assertEquals("Traduit Text 19", fixture.session.translation.textFor(source[19]))
                 assertNull("No original-language substitution", fixture.session.translation.textFor(source[20]))
+                fixture.components.speech.complete(requireNotNull(fixture.session.machine.snapshot().speakingId))
+                assertFalse(fixture.session.player.playWhenReady)
+                assertEquals(1, fixture.session.machine.journalSnapshot().completedCount)
                 release.countDown()
                 await("Buffered playback intent did not recover") {
                     fixture.session.translation.complete && fixture.session.machine.snapshot().wantsPlayback
@@ -1103,7 +1120,7 @@ class TranslationSessionRobolectricTest {
         override fun createIndexer(): SubtitleIndexer {
             val scanner = delegate.createIndexer()
             return object : SubtitleIndexer by scanner {
-                override fun scan(media: SavedMedia, progress: (Int) -> Unit): CueAheadIndex {
+                override fun scanTracks(media: SavedMedia, tracks: Set<String>, progress: (Int) -> Unit): CueAheadIndex {
                     scans += media
                     if (truncateNextScan) {
                         truncateNextScan = false
@@ -1111,7 +1128,7 @@ class TranslationSessionRobolectricTest {
                             add("external-subtitle", CuesWithTiming(listOf(Cue.Builder().setText("incomplete").build()), 0, 0))
                         }
                     }
-                    return scanner.scan(media, progress).also { result ->
+                    return scanner.scanTracks(media, tracks, progress).also { result ->
                         if (addUntranslatedOccurrenceToNextScan) {
                             addUntranslatedOccurrenceToNextScan = false
                             result.add("external-subtitle", CuesWithTiming(

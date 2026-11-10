@@ -9,12 +9,15 @@ object SubtitleText {
     private val spaces = Regex("[\\t \\u00a0]+")
     private val descriptions = Regex("\\[[^\\]\\r\\n]*\\]")
 
-    fun clean(raw: String, skipDescriptions: Boolean = false): String {
+    /** Enable ASS escapes only on undecoded ASS dialogue, never on a rendered Cue. */
+    fun clean(raw: String, skipDescriptions: Boolean = false, assEscapes: Boolean = false): String {
         var text = raw.replace("\r\n", "\n").replace('\r', '\n')
         text = breaks.replace(text, "\n")
         text = html.replace(text, "")
-        text = assOverride.replace(text, "")
-        text = text.replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " ")
+        if (assEscapes) {
+            text = assOverride.replace(text, "")
+            text = text.replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " ")
+        }
         text = text.replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">")
             .replace("&quot;", "\"").replace("&#39;", "'").replace("&amp;", "&")
         if (skipDescriptions) text = descriptions.replace(text, "")

@@ -8,8 +8,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.DocumentsContract
 import android.provider.Settings
 import android.text.InputType
+import android.text.format.Formatter
 import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.CheckBox
@@ -19,6 +21,7 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -35,14 +38,16 @@ internal class FileExplorerControls(
     private val requestLegacyPermission: () -> Unit,
     private val onDirectUrlDeleted: (Uri) -> Unit = {},
     private val onConnectionDeleted: (String) -> Unit = {},
-    private val onConnectionUpdated: (String) -> Unit = {}
+    private val onConnectionUpdated: (String) -> Unit = {},
+    private val onDirectTitleChanged: (Uri, String) -> Unit = { _, _ -> },
+    private val store: RemoteConnectionStore = RemoteConnectionStore(activity.applicationContext)
 ) : AutoCloseable {
     private val themed = activity
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
-    private val store = RemoteConnectionStore(activity.applicationContext)
     private val remote = RemoteBrowser(store)
     private val local = LocalFileBrowser()
+    private val documents = DocumentTreeBrowser(activity.contentResolver)
     private var future: Future<*>? = null
     private var remoteCancel: RemoteCancellation? = null
     private var localCancel: LocalBrowseCancellation? = null
@@ -55,25 +60,45 @@ internal class FileExplorerControls(
     private var connections = emptyList<RemoteConnection>()
     private var root: LocalStorageRoot? = null
     private var directory: File? = null
-    private var localPage: LocalFilePage? = null
+    private var localListing: LocalFileListing? = null
+    private val sessionTrees = linkedSetOf<Uri>()
+    private var documentRoots = emptyList<DocumentTreeRoot>()
+    private var documentRoot: DocumentTreeRoot? = null
+    private var documentTrail = emptyList<DocumentTreeEntry>()
+    private var documentListing: DocumentTreeListing? = null
     private var pageIndex = 0
     private var connectionId: String? = null
     private var remotePath = "/"
     private var remoteEntries = emptyList<RemoteEntry>()
     private var remotePage = 0
+    private var remoteLoaded = false
+    private var nameFilter = ""
     private var status = "Choisis un stockage ou un serveur."
     private var column: LinearLayout? = null
+    private var viewport: ScrollView? = null
     private var dialog: androidx.appcompat.app.AlertDialog? = null
+    private val treePicker = activity.activityResultRegistry.register("explorer-document-tree", ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (!closed && uri != null && DocumentTreeBrowser.isTree(uri)) {
+            sessionTrees += uri
+            servers = false; root = null; directory = null; localListing = null
+            changeDirectory()
+            loadDocumentFolder(DocumentTreeRoot(uri, DocumentsContract.getTreeDocumentId(uri), "Dossier Android autorisé"), emptyList(), persist = true)
+        }
+    }
 
     fun createView(): View {
+        val previousScroll = viewport?.scrollY ?: 0
         val body = LinearLayout(themed).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(24))
         }
         column = body
+        val scroll = ScrollView(themed).apply { isFillViewport = true; addView(body) }
+        viewport = scroll
         render()
-        if (roots.isEmpty() && !busy && !servers) refresh()
-        return ScrollView(themed).apply { isFillViewport = true; addView(body) }
+        if (roots.isEmpty() && documentRoots.isEmpty() && documentRoot == null && !busy && !servers) refresh()
+        if (previousScroll > 0) scroll.post { if (viewport === scroll) scroll.scrollTo(0, previousScroll) }
+        return scroll
     }
 
     fun onResume() {
@@ -88,7 +113,7 @@ internal class FileExplorerControls(
         if (servers) {
             val id = connectionId
             if (id == null) loadConnections() else loadRemote(id, remotePath)
-        } else loadLocal()
+        } else documentRoot?.let { loadDocumentFolder(it, documentTrail) } ?: loadLocal()
     }
 
     private fun render() {
@@ -111,42 +136,76 @@ internal class FileExplorerControls(
     }
 
     private fun renderLocal(body: LinearLayout) {
-        body.addView(text(LocalFileAccess.permissionExplanation(Build.VERSION.SDK_INT, permission)))
-        if (!permission) body.addView(button(if (Build.VERSION.SDK_INT >= 30) "Autoriser l’accès à tous les fichiers" else "Autoriser la lecture des fichiers") { requestAccess() })
-        body.addView(button("Actualiser les stockages et le dossier") { loadLocal() })
+        documentRoot?.let { renderDocumentFolder(body, it); return }
+        body.addView(button("Actualiser les stockages et le dossier") { refresh() })
         val selectedRoot = root
         val selectedDirectory = directory
         if (selectedRoot == null || selectedDirectory == null) {
+            body.addView(text(LocalFileAccess.permissionExplanation(Build.VERSION.SDK_INT, permission)))
+            if (!permission) body.addView(button(if (Build.VERSION.SDK_INT >= 30) "Autoriser l’accès à tous les fichiers" else "Autoriser la lecture des fichiers") { requestAccess() })
             if (permission) roots.forEach { storage -> body.addView(button(storage.name) {
-                root = storage; directory = storage.file; pageIndex = 0; loadLocal()
+                root = storage; directory = storage.file; changeDirectory(); loadLocal()
+            }) }
+            body.addView(button("Ajouter un dossier avec Android") {
+                try { treePicker.launch(null) }
+                catch (_: ActivityNotFoundException) { status = "Aucun sélecteur de dossiers Android n’est disponible. Choisis un fichier directement."; render() }
+            })
+            documentRoots.forEach { folder -> body.addView(button("Dossier autorisé · ${folder.name}") {
+                changeDirectory(); loadDocumentFolder(folder, emptyList())
             }) }
             return
         }
-        body.addView(text("${selectedRoot.name} · ${selectedDirectory.absolutePath}").apply { setTextIsSelectable(true) })
+        val relative = selectedDirectory.relativeToOrNull(selectedRoot.file)?.path.orEmpty()
+        body.addView(directoryTitle(listOf(selectedRoot.name, relative).filter(String::isNotEmpty).joinToString(" / ")))
         body.addView(button("Tous les stockages") {
-            root = null; directory = null; localPage = null; pageIndex = 0; loadLocal()
+            root = null; directory = null; localListing = null; changeDirectory(); loadLocal()
         })
         if (selectedDirectory.absolutePath != selectedRoot.file.absolutePath) body.addView(button("Dossier parent") {
-            directory = selectedDirectory.parentFile ?: selectedRoot.file; pageIndex = 0; loadLocal()
+            directory = selectedDirectory.parentFile ?: selectedRoot.file; changeDirectory(); loadLocal()
         })
-        localPage?.let { page ->
-            if (page.entries.isEmpty()) body.addView(text("Ce dossier est vide ou ne contient aucun élément accessible."))
-            page.entries.forEach { entry ->
-                body.addView(button((if (entry.isDirectory) "Dossier · " else "Fichier · ") + entry.name) {
-                    if (entry.isDirectory) { directory = entry.file; pageIndex = 0; loadLocal() }
-                    else openFile(entry.uri, entry.name)
-                })
+        localListing?.let { listing ->
+            renderEntries(body, listing.entries, LocalFileEntry::name, pageIndex, { pageIndex = it }) { entry ->
+                entryButton(entry.name, entry.isDirectory, entry.sizeBytes) {
+                    if (entry.isDirectory) { directory = entry.file; changeDirectory(); loadLocal() }
+                    else openLocalFile(selectedRoot, entry)
+                }
             }
-            body.addView(text("Page ${page.page + 1} · ${page.total} éléments accessibles. Dossiers puis noms, par ordre alphabétique."))
-            if (page.excludedCount > 0) body.addView(text("${page.excludedCount} élément(s) exclu(s) : dossiers privés Android ou liens sortant du stockage choisi."))
-            if (page.page > 0) body.addView(button("Page précédente") { pageIndex--; loadLocal() })
-            if (page.hasNext) body.addView(button("Page suivante") { pageIndex++; loadLocal() })
+            if (listing.excludedCount > 0) body.addView(text("${listing.excludedCount} élément(s) exclu(s) : accès privé, lien inaccessible ou cible hors du stockage choisi."))
+        }
+    }
+
+    private fun renderDocumentFolder(body: LinearLayout, selected: DocumentTreeRoot) {
+        body.addView(directoryTitle((listOf(selected.name) + documentTrail.map { it.name }).joinToString(" / ")))
+        body.addView(button("Tous les stockages") {
+            documentRoot = null; documentTrail = emptyList(); documentListing = null
+            changeDirectory(); loadLocal()
+        })
+        body.addView(button("Actualiser le dossier") { refresh() })
+        if (documentTrail.isNotEmpty()) body.addView(button("Dossier parent") {
+            changeDirectory(); loadDocumentFolder(selected, documentTrail.dropLast(1))
+        })
+        documentListing?.let { listing ->
+            if (listing.loading) body.addView(text("Le fournisseur Android charge encore ce dossier. La liste est partielle. Actualise-la pour vérifier les autres éléments."))
+            if (listing.unavailableCount > 0) body.addView(text("${listing.unavailableCount} entrée(s) sans identifiant exploitable ou en double."))
+            renderEntries(body, listing.entries, DocumentTreeEntry::name, pageIndex, { pageIndex = it }) { entry ->
+                entryButton(entry.name, entry.isDirectory, entry.sizeBytes) {
+                    when {
+                        entry.isDirectory -> {
+                            if (entry.id == selected.id || documentTrail.any { it.id == entry.id }) {
+                                status = "Ce dossier renvoie vers un parent déjà ouvert."; render()
+                            } else { changeDirectory(); loadDocumentFolder(selected, documentTrail + entry) }
+                        }
+                        entry.virtual -> { status = "Ce document virtuel n’est pas directement lisible. Exporte une copie comme fichier depuis son fournisseur."; render() }
+                        else -> openFile(entry.uri, entry.name, entry.mime)
+                    }
+                }
+            }
         }
     }
 
     private fun renderServers(body: LinearLayout) {
         body.addView(button("Ouvrir une URL vidéo / HLS / DASH / RTSP") { directUrlDialog() })
-        body.addView(button("Gérer les liens réseau enregistrés") { manageDirectUrls() })
+        body.addView(button("Historique des liens réseau") { manageDirectUrls() })
         body.addView(button("Ajouter un serveur") { connectionDialog(null) })
         body.addView(button("Actualiser") { refresh() })
         val id = connectionId
@@ -154,7 +213,7 @@ internal class FileExplorerControls(
             if (connections.isEmpty() && !busy) body.addView(text("Aucun serveur enregistré. Protocoles : SFTP, FTP, FTPS explicite, WebDAV et SMB."))
             connections.forEach { connection ->
                 body.addView(button("${connection.label} · ${connection.protocol.name}") {
-                    connectionId = connection.id; remotePath = "/"; remotePage = 0; loadRemote(connection.id, remotePath)
+                    connectionId = connection.id; remotePath = "/"; changeDirectory(); loadRemote(connection.id, remotePath)
                 })
                 val actions = LinearLayout(themed)
                 actions.addView(button("Modifier") { connectionDialog(connection) }, LinearLayout.LayoutParams(0, -2, 1f))
@@ -164,27 +223,72 @@ internal class FileExplorerControls(
             return
         }
         val connection = connections.find { it.id == id }
-        body.addView(text("${connection?.label ?: "Serveur"} · $remotePath").apply { setTextIsSelectable(true) })
-        body.addView(button("Tous les serveurs") { connectionId = null; remoteEntries = emptyList(); loadConnections() })
+        body.addView(directoryTitle("${connection?.label ?: "Serveur"} · $remotePath"))
+        body.addView(button("Tous les serveurs") { connectionId = null; remoteEntries = emptyList(); remoteLoaded = false; changeDirectory(); loadConnections() })
         body.addView(button("Tester la connexion") { testConnection(id) })
+        body.addView(button("Aller à un dossier") { remoteFolderDialog(id) })
         if (remotePath != "/") body.addView(button("Dossier parent") {
-            remotePage = 0; loadRemote(id, RemotePaths.parent(remotePath))
+            changeDirectory(); loadRemote(id, RemotePaths.parent(remotePath))
         })
-        if (remoteEntries.isEmpty() && !busy) body.addView(text("Ce dossier ne contient aucun élément affichable."))
-        remoteEntries.drop(remotePage * PAGE_SIZE).take(PAGE_SIZE).forEach { entry ->
-            body.addView(button((if (entry.isDirectory) "Dossier · " else "Fichier · ") + entry.name) {
-                if (entry.isDirectory) { remotePage = 0; loadRemote(id, entry.path) }
+        if (remoteLoaded) renderEntries(body, remoteEntries, RemoteEntry::name, remotePage, { remotePage = it }) { entry ->
+            entryButton(entry.name, entry.isDirectory, entry.sizeBytes) {
+                if (entry.isDirectory) { changeDirectory(); loadRemote(id, entry.path) }
                 else openFile(RemoteMediaUris.create(id, entry.path), entry.name)
-            })
+            }
         }
-        if (remoteEntries.isNotEmpty()) body.addView(text("Page ${remotePage + 1} · ${remoteEntries.size} éléments. Dossiers puis noms, par ordre alphabétique."))
-        if (remotePage > 0) body.addView(button("Page précédente") { remotePage--; render() })
-        if ((remotePage + 1) * PAGE_SIZE < remoteEntries.size) body.addView(button("Page suivante") { remotePage++; render() })
+    }
+
+    private fun changeDirectory() {
+        nameFilter = ""; pageIndex = 0; remotePage = 0
+        viewport?.scrollTo(0, 0)
+    }
+
+    private fun directoryTitle(value: String) = text(value).apply { setTextIsSelectable(true) }
+
+    private fun entryButton(name: String, isDirectory: Boolean, size: Long?, open: () -> Unit): View {
+        val kind = if (isDirectory) "Dossier" else "Fichier"
+        val suffix = if (!isDirectory && size != null && size >= 0) " · ${Formatter.formatShortFileSize(activity, size)}" else ""
+        return button("$kind · $name$suffix", action = open)
+    }
+
+    private fun <T> renderEntries(body: LinearLayout, entries: List<T>, name: (T) -> String, requestedPage: Int,
+                                  setPage: (Int) -> Unit, row: (T) -> View) {
+        val matches = if (nameFilter.isBlank()) entries else entries.filter { name(it).contains(nameFilter, ignoreCase = true) }
+        val pages = (matches.size + PAGE_SIZE - 1) / PAGE_SIZE
+        val page = requestedPage.coerceIn(0, (pages - 1).coerceAtLeast(0))
+        setPage(page)
+        if (entries.isNotEmpty()) body.addView(button("Filtrer les noms du dossier") { filterDialog() })
+        if (nameFilter.isNotBlank()) body.addView(button("Effacer le filtre : $nameFilter") { changeDirectory(); render() })
+        if (matches.isEmpty()) body.addView(text(if (nameFilter.isBlank()) "Ce dossier ne contient aucun élément accessible." else "Aucun nom ne correspond au filtre."))
+        else body.addView(text("Page ${page + 1} sur $pages · ${matches.size} élément(s)${if (nameFilter.isNotBlank()) " sur ${entries.size}" else " accessibles"}."))
+        matches.drop(page * PAGE_SIZE).take(PAGE_SIZE).forEach { body.addView(row(it)) }
+        if (page > 0) body.addView(button("Page précédente") { setPage(page - 1); render(); viewport?.scrollTo(0, 0) })
+        if (page + 1 < pages) body.addView(button("Page suivante") { setPage(page + 1); render(); viewport?.scrollTo(0, 0) })
+    }
+
+    private fun filterDialog() {
+        val form = form()
+        val query = field(form, "Nom ou partie du nom", nameFilter)
+        showDialog(MaterialAlertDialogBuilder(themed).setTitle("Filtrer les noms du dossier").setView(scroll(form))
+            .setPositiveButton("Appliquer") { _, _ ->
+                changeDirectory(); nameFilter = query.text.toString().trim(); render()
+            }.setNegativeButton("Annuler", null))
+    }
+
+    private fun remoteFolderDialog(id: String) {
+        val form = form()
+        val path = field(form, "Chemin depuis la racine de cette connexion", remotePath)
+        showDialog(MaterialAlertDialogBuilder(themed).setTitle("Aller à un dossier distant").setView(scroll(form))
+            .setPositiveButton("Ouvrir") { _, _ ->
+                val requested = runCatching { RemotePaths.normalize(path.text.toString()) }.getOrNull()
+                if (requested == null) { status = "Chemin invalide. Indique un dossier de cette connexion sans segments « . » ou « .. »."; render() }
+                else { changeDirectory(); loadRemote(id, requested) }
+            }.setNegativeButton("Annuler", null))
     }
 
     private fun switchSection(showServers: Boolean) {
         if (servers == showServers) return
-        cancelWork(); servers = showServers; status = "Choisis un stockage ou un serveur."; refresh()
+        cancelWork(); servers = showServers; changeDirectory(); status = "Choisis un stockage ou un serveur."; refresh()
     }
 
     private fun requestAccess() {
@@ -197,18 +301,43 @@ internal class FileExplorerControls(
     }
 
     private fun loadLocal() {
-        localPage = null
+        localListing = null
         permission = LocalFileAccess.granted(activity)
-        if (!permission) { cancelWork(); roots = emptyList(); status = "Le sélecteur Android permet d’ouvrir un fichier sans accès général au stockage."; render(); return }
-        val selectedRoot = root; val selectedDirectory = directory; val selectedPage = pageIndex
+        if (!permission) { roots = emptyList(); root = null; directory = null }
+        val selectedRoot = root; val selectedDirectory = directory; val canBrowse = permission
+        val trees = sessionTrees.toSet()
         work("Lecture du dossier…", "Impossible de lire ce dossier. Vérifie l’autorisation et le support de stockage, ou utilise le sélecteur Android.", { _, cancellation ->
-            val available = local.roots(activity.applicationContext, cancellation)
-            val listing = if (selectedRoot != null && selectedDirectory != null) local.list(selectedRoot.file, selectedDirectory, selectedPage, cancel = cancellation) else null
-            available to listing
-        }) { (available, listing) ->
-            roots = available; localPage = listing
-            status = if (listing != null) "Dossier chargé." else if (available.isEmpty()) "Aucun stockage partagé disponible. Utilise le sélecteur Android." else "Choisis un stockage."
+            val available = if (canBrowse) local.roots(activity.applicationContext, cancellation) else emptyList()
+            val listing = if (selectedRoot != null && selectedDirectory != null) local.scan(selectedRoot.file, selectedDirectory, cancellation) else null
+            Triple(available, listing, if (selectedRoot == null) documents.roots(trees, cancellation) else null)
+        }) { (available, listing, grantedTrees) ->
+            roots = available; localListing = listing
+            if (grantedTrees != null) documentRoots = grantedTrees
+            status = when {
+                listing != null -> "Dossier chargé. Les noms masqués accessibles sont inclus."
+                available.isNotEmpty() || documentRoots.isNotEmpty() -> "Choisis un stockage ou un dossier autorisé."
+                else -> "Choisis un fichier ou autorise un dossier avec Android."
+            }
         }
+    }
+
+    private fun loadDocumentFolder(selected: DocumentTreeRoot, trail: List<DocumentTreeEntry>, persist: Boolean = false) {
+        documentRoot = selected; documentTrail = trail; documentListing = null
+        work("Lecture du dossier Android…", "Impossible de lire ce dossier Android. Réautorise-le ou choisis un fichier directement.", { _, cancellation ->
+            if (persist) documents.persist(selected.uri)
+            val folder = if (persist) documents.root(selected.uri, cancellation) else selected
+            folder to documents.list(folder, trail.lastOrNull()?.id ?: folder.id, cancellation)
+        }) { (folder, listing) ->
+            documentRoot = folder; documentListing = listing
+            status = if (listing.loading) "Liste fournie en partie par Android." else "Dossier Android chargé."
+        }
+    }
+
+    private fun openLocalFile(storage: LocalStorageRoot, entry: LocalFileEntry) {
+        work("Vérification de l’accès au fichier…", "Impossible d’accéder à ce fichier. Utilise « Choisir avec Android ».", { _, cancellation ->
+            if (!LocalFileAccess.granted(activity.applicationContext)) throw LocalBrowseException("L’accès au stockage a été retiré. Utilise « Choisir avec Android ».")
+            local.readableFile(storage.file, entry.file, cancellation)
+        }) { uri -> status = "Fichier accessible."; openFile(uri, entry.name) }
     }
 
     private fun loadConnections() {
@@ -218,11 +347,11 @@ internal class FileExplorerControls(
     }
 
     private fun loadRemote(id: String, path: String) {
-        remoteEntries = emptyList()
-        work("Lecture du dossier distant…", "Impossible de lire ce dossier distant. Vérifie le serveur, les identifiants, le partage, la connexion et l’empreinte SFTP. Un dossier de plus de 5 000 éléments doit être ouvert dans un sous-dossier.", { cancellation, _ ->
+        remotePath = path; remoteLoaded = false; remoteEntries = emptyList()
+        work("Lecture du dossier distant…", "Impossible de lire ce dossier distant. Vérifie le serveur, les identifiants, le partage, la connexion et l’empreinte SFTP.", { cancellation, _ ->
             store.list() to remote.list(id, path, cancellation).sortedWith(compareBy<RemoteEntry>({ !it.isDirectory }, { it.name.lowercase(java.util.Locale.ROOT) }, { it.name }, { it.path }))
         }) { (saved, entries) ->
-            connections = saved; remotePath = path; remoteEntries = entries; remotePage = 0; status = "Dossier distant chargé."
+            connections = saved; remoteEntries = entries; remoteLoaded = true; status = "Dossier distant chargé. La visibilité dépend des droits accordés par le serveur."
         }
     }
 
@@ -232,15 +361,17 @@ internal class FileExplorerControls(
         }
     }
 
-    private fun openFile(uri: Uri, name: String) {
+    private fun openFile(uri: Uri, name: String, mime: String? = null) {
         val extension = name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)
         when {
-            extension == "srt" -> onSubtitle(uri, name)
-            extension in VIDEO_EXTENSIONS -> onMedia(SavedMedia(uri.toString(), name))
+            extension in SUBTITLE_EXTENSIONS -> onSubtitle(uri, name)
+            extension in MEDIA_EXTENSIONS -> onMedia(SavedMedia(uri.toString(), name))
+            mime?.let { it in SUBTITLE_MIME_TYPES } == true -> onSubtitle(uri, name)
+            mime?.startsWith("video/") == true || mime?.startsWith("audio/") == true -> onMedia(SavedMedia(uri.toString(), name))
             else -> showDialog(MaterialAlertDialogBuilder(themed).setTitle(name)
                 .setMessage("Ce type de fichier n’est pas identifié. Choisis comment l’ouvrir ; le lecteur vérifiera son contenu.")
-                .setPositiveButton("Vidéo") { _, _ -> onMedia(SavedMedia(uri.toString(), name)) }
-                .setNeutralButton("Sous-titres SRT") { _, _ -> onSubtitle(uri, name) }
+                .setPositiveButton("Lire comme média") { _, _ -> onMedia(SavedMedia(uri.toString(), name)) }
+                .setNeutralButton("Importer comme sous-titres") { _, _ -> onSubtitle(uri, name) }
                 .setNegativeButton("Annuler", null))
         }
     }
@@ -248,35 +379,89 @@ internal class FileExplorerControls(
     private fun directUrlDialog() {
         val form = form()
         val url = field(form, "URL directe HTTP, HTTPS ou RTSP (HLS .m3u8 / DASH .mpd acceptés)", "", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
+        val title = field(form, "Titre de la vidéo (facultatif)", "")
         form.addView(text("Le lien complet est protégé dans le stockage chiffré de l’application. Il n’apparaît ni dans le titre du lecteur ni dans les diagnostics. Un lien de page Web n’est pas une URL vidéo directe."))
         val builder = MaterialAlertDialogBuilder(themed).setTitle("Ouvrir un lien réseau").setView(scroll(form)).setPositiveButton("Ouvrir", null).setNegativeButton("Annuler", null)
         val current = builder.create(); dialog?.dismiss(); dialog = current
         current.setOnShowListener { current.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
             val raw = url.text.toString()
             if (runCatching { RemoteConnectionStore.validatedDirectUrl(raw) }.isFailure) { url.error = "Utilise une URL directe HTTP, HTTPS ou RTSP valide, sans espace ni fragment."; return@setOnClickListener }
+            val display = title.text.toString().trim()
+            if (!validDirectTitle(title, display)) return@setOnClickListener
             url.text?.clear(); current.dismiss()
-            work("Protection du lien…", "Impossible de protéger ce lien réseau sur cet appareil.", { _, _ -> store.saveDirectUrl(raw) }) { opaque ->
-                status = "Lien réseau prêt."; onMedia(SavedMedia(opaque.toString(), directUrlLabel(opaque)))
+            work("Protection du lien…", "Impossible de protéger ce lien réseau sur cet appareil.", { _, _ ->
+                store.directLink(store.saveDirectUrl(raw, display))
+            }) { link ->
+                status = "Lien réseau prêt."; onMedia(link.media())
             }
         } }
         current.show()
         sizeDialogButtons(current)
     }
 
-    private fun manageDirectUrls() {
-        work("Lecture des liens enregistrés…", "Les liens enregistrés sont inaccessibles sur cet appareil.", { _, _ -> store.listDirectUrls() }) { links ->
+    private fun manageDirectUrls(manage: Boolean = false) {
+        work("Lecture des liens enregistrés…", "Les liens enregistrés sont inaccessibles sur cet appareil.", { _, _ -> store.listDirectLinks() }) { links ->
             if (links.isEmpty()) {
                 status = "Aucun lien réseau enregistré."
             } else {
-                val labels = links.map { uri ->
-                    val extension = uri.lastPathSegment?.substringAfterLast('.', "").orEmpty().uppercase(java.util.Locale.ROOT)
-                    directUrlLabel(uri) + if (extension.isNotEmpty()) " · $extension" else ""
+                val date = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT)
+                val labels = links.mapIndexed { index, link ->
+                    val lastOpened = link.lastOpenedMs.takeIf { it > 0 }?.let { date.format(java.util.Date(it)) }
+                    "${link.title}\n${lastOpened?.let { "Dernière ouverture : $it" } ?: "Lien ancien ${index + 1}"}"
                 }.toTypedArray()
-                showDialog(MaterialAlertDialogBuilder(themed).setTitle("Liens réseau enregistrés")
-                    .setItems(labels) { _, index -> confirmDeleteDirectUrl(links[index], labels[index]) }
+                showDialog(MaterialAlertDialogBuilder(themed).setTitle(if (manage) "Gérer les liens réseau" else "Rouvrir un lien réseau")
+                    .setItems(labels) { _, index ->
+                        val link = links[index]
+                        if (manage) manageDirectLink(link) else reopenDirectLink(link.uri)
+                    }
+                    .setNeutralButton(if (manage) "Revenir à la lecture" else "Renommer ou supprimer") { _, _ -> manageDirectUrls(!manage) }
                     .setNegativeButton("Fermer", null))
             }
         }
+    }
+
+    private fun reopenDirectLink(uri: Uri) {
+        work("Réouverture du lien…", "Ce lien enregistré est inaccessible sur cet appareil.", { _, _ ->
+            store.reopenDirectLink(uri)
+        }) { link ->
+            status = "Lien réseau prêt."
+            onMedia(link.media())
+        }
+    }
+
+    private fun manageDirectLink(link: DirectNetworkLink) {
+        showDialog(MaterialAlertDialogBuilder(themed).setTitle(link.title)
+            .setItems(arrayOf("Renommer la vidéo", "Supprimer le lien")) { _, index ->
+                if (index == 0) renameDirectLink(link) else confirmDeleteDirectUrl(link.uri, link.title)
+            }.setNegativeButton("Fermer", null))
+    }
+
+    private fun renameDirectLink(link: DirectNetworkLink) {
+        val form = form()
+        val title = field(form, "Titre (vide : utiliser le titre détecté)", link.customTitle ?: link.title)
+        val current = MaterialAlertDialogBuilder(themed).setTitle("Renommer la vidéo")
+            .setView(scroll(form)).setPositiveButton("Enregistrer", null).setNegativeButton("Annuler", null).create()
+        dialog?.dismiss(); dialog = current
+        current.setOnShowListener {
+            current.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+                val display = title.text.toString().trim()
+                if (!validDirectTitle(title, display)) return@setOnClickListener
+                current.dismiss()
+                work("Enregistrement du titre…", "Le titre n’a pas pu être enregistré.", { _, _ ->
+                    store.renameDirectLink(link.uri, display).also { renamed ->
+                        notifyMutation { onDirectTitleChanged(renamed.uri, renamed.title) }
+                    }
+                }) { status = "Titre enregistré." }
+            }
+        }
+        current.show()
+        sizeDialogButtons(current)
+    }
+
+    private fun validDirectTitle(field: EditText, title: String): Boolean {
+        if (title.isEmpty() || NetworkMediaTitles.userTitle(title) != null) return true
+        field.error = "Saisis un titre de 200 caractères au maximum, sans adresse ni identifiants."
+        return false
     }
 
     private fun confirmDeleteDirectUrl(uri: Uri, label: String) {
@@ -382,7 +567,7 @@ internal class FileExplorerControls(
                 if (closed || owner != generation) return@post
                 busy = false; remoteCancel = null; localCancel = null; future = null
                 result.fold(onSuccess = { value -> success(value) }, onFailure = {
-                    status = if (it is java.io.IOException && it.message?.startsWith("Ce dossier contient plus de ") == true) it.message!! else failure
+                    status = if (it is LocalBrowseException || it is RemoteAccessException) it.message ?: failure else failure
                 })
                 render()
             }
@@ -400,11 +585,11 @@ internal class FileExplorerControls(
 
     override fun close() {
         if (closed) return
-        closed = true; cancelWork(); dialog?.dismiss(); dialog = null; column = null; worker.shutdownNow()
+        closed = true; cancelWork(); treePicker.unregister(); dialog?.dismiss(); dialog = null
+        column = null; viewport = null; worker.shutdownNow()
     }
 
     private fun dp(value: Int) = (value * activity.resources.displayMetrics.density).toInt()
-    private fun directUrlLabel(uri: Uri) = "Lien réseau · ${uri.host.orEmpty().take(8)}"
     private fun text(value: String, size: Float = 16f) = TextView(themed).apply {
         text = value; textSize = size; setTextColor(MaterialColors.getColor(themed, com.google.android.material.R.attr.colorOnSurface, Color.WHITE)); setPadding(dp(4), dp(10), dp(4), dp(10))
     }
@@ -442,6 +627,9 @@ internal class FileExplorerControls(
 
     companion object {
         private const val PAGE_SIZE = 100
-        private val VIDEO_EXTENSIONS = setOf("mkv", "mp4", "avi", "mov", "webm", "m4v", "mpeg", "mpg", "ts", "m2ts", "mts", "wmv", "flv", "ogv", "3gp", "3g2", "m3u8", "mpd")
+        private val SUBTITLE_EXTENSIONS = setOf("srt", "vtt", "ass", "ssa")
+        private val SUBTITLE_MIME_TYPES = setOf("application/x-subrip", "text/vtt", "text/x-ssa", "text/x-ass")
+        private val MEDIA_EXTENSIONS = setOf("mkv", "mp4", "avi", "mov", "webm", "m4v", "mpeg", "mpg", "ts", "m2ts", "mts", "wmv", "flv", "ogv", "3gp", "3g2", "m3u8", "mpd",
+            "mp3", "m4a", "mka", "aac", "flac", "wav", "ogg", "oga", "opus", "ac3", "eac3")
     }
 }

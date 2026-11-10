@@ -24,6 +24,7 @@ import fr.soustitresvoix.core.OfflineSpeechWork
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 
 /** One synthesis client, priority to live speech, bounded disk I/O off the UI thread. */
 class AndroidSpeech(
@@ -35,6 +36,12 @@ class AndroidSpeech(
     data class EngineChoice(val name: String, val label: String)
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
+    private val voiceReads = Executors.newSingleThreadExecutor()
+    private var voiceLookup: Future<*>? = null
+    private var voiceLookupTimeout: Runnable? = null
+    private var voiceLookupSequence = 0L
+    private var cacheClearSequence = 0L
+    private var cacheClearing = false
     private val cache = SpeechDiskCache(File(context.cacheDir, "speech-v3")) { preferences.cacheBytes }
     private val offline = OfflineSpeechLibrary(File(context.filesDir, "offline-works-v1"))
     private data class OfflineRequest(val mediaKey: String, val title: String, val cues: List<OfflineSpeechCue>,
@@ -332,13 +339,25 @@ class AndroidSpeech(
         activePlanning = planning; fileRateAdjustmentRejected = false
         requestStarted = SystemClock.elapsedRealtime(); audioStarted = 0
         val ticket = generation; val key = SpeechTools.key(configuration, text)
-        if (!preferences.cacheEnabled) { direct(id, text); return }
-        arm(id, 15_000)
+        if (!preferences.cacheEnabled || cacheClearing) { direct(id, text); return }
+        val sequence = ++voiceLookupSequence
+        val work = offlineKey
         val lookupStarted = SystemClock.elapsedRealtime()
-        io.execute {
-            val entry = runCatching { offlineKey?.let { offline.get(it, key) } ?: cache.get(key) }.getOrNull()
+        voiceLookupTimeout = Runnable {
+            if (!closed && generation == ticket && activeId == id && voiceLookupSequence == sequence) {
+                cancelVoiceLookup()
+                cacheLatency.add(SystemClock.elapsedRealtime() - lookupStarted)
+                misses++
+                direct(id, text)
+            }
+        }.also { main.postDelayed(it, 1_000) }
+        // A library scan can hash a whole film. Reading one verified entry
+        // must not queue behind that scan or depend on its mutable progress.
+        voiceLookup = voiceReads.submit {
+            val entry = runCatching { work?.let { offline.readVerified(it, key) } ?: cache.get(key) }.getOrNull()
             main.post {
-                if (closed || generation != ticket || activeId != id) return@post
+                if (closed || generation != ticket || activeId != id || voiceLookupSequence != sequence) return@post
+                cancelVoiceLookup()
                 if (configuredSettings != voiceSettings()) {
                     finish(id, "réglages vocaux modifiés ; applique les réglages puis reprends cette réplique"); return@post
                 }
@@ -606,6 +625,7 @@ class AndroidSpeech(
     }
     private fun finishOnMain(id: String, error: String?) {
         if (closed || activeId != id) return
+        cancelVoiceLookup()
         if (error == null && live && audioStarted > 0) {
             durations.observe(activeText, ((SystemClock.elapsedRealtime() - audioStarted) * lastFactor).toLong(), activeBaseRate)
         }
@@ -619,7 +639,15 @@ class AndroidSpeech(
         watchdog = Runnable { finish(id, "délai de sécurité dépassé") }.also { main.postDelayed(it, ms.coerceIn(15_000, 180_000)) }
     }
     private fun releaseAudio() { val mp = audio; audio = null; runCatching { mp?.release() } }
+    private fun cancelVoiceLookup() {
+        voiceLookupSequence++
+        voiceLookupTimeout?.let(main::removeCallbacks)
+        voiceLookupTimeout = null
+        voiceLookup?.cancel(true)
+        voiceLookup = null
+    }
     private fun stopForeground() {
+        cancelVoiceLookup()
         activeId = null; releaseAudio()
         activeBudget = null; activePlanning = null
         watchdog?.let { main.removeCallbacks(it) }; watchdog = null
@@ -646,10 +674,19 @@ class AndroidSpeech(
         }
     }
     fun stop() { stopForeground(); cancelPreparation() }
-    fun clearCache() { stop(); generation++; io.execute { cache.clear(); cacheSize = 0 }; preparationDisabled = false }
+    fun clearCache() {
+        stop(); generation++
+        val sequence = ++cacheClearSequence
+        cacheClearing = true
+        io.execute {
+            try { cache.clear(); cacheSize = 0 }
+            finally { main.post { if (cacheClearSequence == sequence) cacheClearing = false } }
+        }
+        preparationDisabled = false
+    }
     fun close() {
         if (closed) return
         stop(); closed = true; generation++; offlineEpoch++; main.removeCallbacksAndMessages(null)
-        runCatching { engine?.shutdown() }; engine = null; io.shutdown()
+        runCatching { engine?.shutdown() }; engine = null; io.shutdown(); voiceReads.shutdownNow()
     }
 }

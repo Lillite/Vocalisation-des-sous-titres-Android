@@ -18,8 +18,8 @@ class LocalFileBrowserTest {
 
     @Test fun pagesPreserveEveryFileAndItsUriWithoutLosingDuplicateCaseNames() {
         val root = temporary.newFolder("volume")
-        File(root, "z folder").mkdir()
-        val names = listOf("a vidéo #1.mkv", "A vidéo #1.mkv", "b film.mkv", "zz.srt")
+        File(root, ".z folder").mkdir()
+        val names = listOf(".a vidéo #1.mkv", ".A vidéo #1.mkv", "b film sans extension", "zz.srt")
         names.forEach { File(root, it).writeText("synthetic") }
         val browser = LocalFileBrowser()
         val first = browser.list(root, root, pageSize = 2)
@@ -29,6 +29,7 @@ class LocalFileBrowserTest {
         assertEquals(5, first.total)
         assertEquals(5, entries.map { it.file }.toSet().size)
         assertTrue(first.entries.first().isDirectory)
+        assertEquals(".z folder", first.entries.first().name)
         assertTrue(first.hasNext)
         assertFalse(last.hasNext)
         assertEquals(names.toSet(), entries.filterNot { it.isDirectory }.map { it.name }.toSet())
@@ -53,7 +54,7 @@ class LocalFileBrowserTest {
     @Test fun pathsCannotEscapeVolumeOrExposePrivateAndroidDirectories() {
         val root = temporary.newFolder("shared")
         val other = temporary.newFolder("outside")
-        File(other, "private.mkv").writeText("synthetic")
+        val outside = File(other, "private.mkv").apply { writeText("synthetic") }
         Files.createSymbolicLink(File(root, "outside-link").toPath(), other.toPath())
         File(root, "Android/data/private.app").mkdirs()
         File(root, "Android/obb/private.app").mkdirs()
@@ -67,6 +68,11 @@ class LocalFileBrowserTest {
         assertTrue(runCatching { browser.list(root, other) }.exceptionOrNull() is IllegalArgumentException)
         assertTrue(runCatching { browser.list(root, File(root, "Android/data")) }.exceptionOrNull() is IllegalArgumentException)
         assertFalse(LocalFileBrowser.isInside(root, File(root.parentFile, root.name + "-other")))
+        val shown = File(root, "synthetic.mkv").apply { writeText("synthetic") }
+        assertEquals(shown.canonicalPath, browser.readableFile(root, shown, LocalBrowseCancellation()).path)
+        assertTrue(shown.delete())
+        Files.createSymbolicLink(shown.toPath(), outside.toPath())
+        assertTrue(runCatching { browser.readableFile(root, shown, LocalBrowseCancellation()) }.exceptionOrNull() is LocalBrowseException)
     }
 
     @Test fun oversizedDirectoryFailsExplicitlyWithoutReturningIncompletePage() {

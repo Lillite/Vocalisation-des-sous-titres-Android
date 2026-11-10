@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.CancellationSignal
 import android.os.Environment
 import android.os.storage.StorageManager
 import java.io.Closeable
@@ -12,20 +13,19 @@ import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 import java.util.Locale
-import java.util.PriorityQueue
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal object LocalFileAccess {
     fun granted(context: Context): Boolean = if (Build.VERSION.SDK_INT >= 30) {
         // The no-argument framework overload indexes its first external
-        // directory without checking that one exists. Query an actual mounted
-        // primary shared-storage volume explicitly; the resulting all-files
-        // grant still covers the other shared volumes. Keep SAF usable when
-        // the primary volume is unavailable instead of inferring permission.
+        // directory without checking that one exists. Query mounted volumes
+        // explicitly so an available card can be used even without the primary.
         try {
             val volumes = context.getSystemService(StorageManager::class.java)?.storageVolumes.orEmpty()
-            val directory = volumes.firstOrNull { it.isPrimary }?.directory
-            directory != null && Environment.isExternalStorageManager(directory)
+            volumes.any { volume ->
+                val directory = volume.directory
+                directory != null && runCatching { Environment.isExternalStorageManager(directory) }.getOrDefault(false)
+            }
         } catch (_: RuntimeException) { false }
     } else context.checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
 
@@ -39,9 +39,13 @@ internal object LocalFileAccess {
 
 internal class LocalBrowseCancellation : Closeable {
     private val cancelled = AtomicBoolean()
+    val signal = CancellationSignal()
     fun ensureActive() { if (cancelled.get() || Thread.currentThread().isInterrupted) throw IOException("Navigation annulée.") }
-    override fun close() { cancelled.set(true) }
+    override fun close() { if (cancelled.compareAndSet(false, true)) signal.cancel() }
 }
+
+/** Only deliberately written messages may be shown from the worker. */
+internal class LocalBrowseException(message: String) : IOException(message)
 
 internal data class LocalStorageRoot(val name: String, val file: File)
 internal data class LocalFileEntry(val name: String, val file: File, val isDirectory: Boolean, val sizeBytes: Long?) {
@@ -50,6 +54,7 @@ internal data class LocalFileEntry(val name: String, val file: File, val isDirec
 internal data class LocalFilePage(val entries: List<LocalFileEntry>, val total: Int, val page: Int, val pageSize: Int, val excludedCount: Int = 0) {
     val hasNext: Boolean get() = (page + 1) * pageSize < total
 }
+internal data class LocalFileListing(val entries: List<LocalFileEntry>, val excludedCount: Int)
 
 /** Lists one level only, off the UI thread. Memory and traversal are explicitly bounded. */
 internal class LocalFileBrowser {
@@ -71,41 +76,54 @@ internal class LocalFileBrowser {
         val seen = HashSet<String>()
         return candidates.filter { root ->
             cancel.ensureActive()
-            root.file.isDirectory && seen.add(root.file.canonicalPath)
+            root.file.isDirectory && runCatching { seen.add(root.file.canonicalPath) }.getOrDefault(false)
         }
     }
 
     fun list(root: File, directory: File, page: Int = 0, pageSize: Int = 100,
              cancel: LocalBrowseCancellation = LocalBrowseCancellation()): LocalFilePage {
         require(page >= 0 && pageSize in 1..200 && page.toLong() * pageSize < MAX_ENTRIES) { "Page de dossier invalide." }
+        val listing = scan(root, directory, cancel)
+        return LocalFilePage(listing.entries.drop(page * pageSize).take(pageSize), listing.entries.size, page, pageSize, listing.excludedCount)
+    }
+
+    /** A bounded snapshot is reused when paging or filtering a directory. */
+    fun scan(root: File, directory: File, cancel: LocalBrowseCancellation): LocalFileListing {
         cancel.ensureActive()
         val canonicalRoot = root.canonicalFile
         val canonicalDirectory = directory.canonicalFile
         require(isInside(canonicalRoot, canonicalDirectory)) { "Ce dossier sort du stockage choisi." }
         require(!isPrivateAndroidDirectory(canonicalRoot, canonicalDirectory)) { "Android protège ce dossier privé. Choisis un fichier avec le sélecteur Android." }
-        if (!canonicalDirectory.isDirectory || !canonicalDirectory.canRead()) throw IOException("Ce dossier est inaccessible. Vérifie l’autorisation ou utilise le sélecteur Android.")
-        val limit = (page + 1) * pageSize
-        val selected = PriorityQueue<LocalFileEntry>(limit + 1, ENTRY_ORDER.reversed())
+        if (!canonicalDirectory.isDirectory || !canonicalDirectory.canRead()) throw LocalBrowseException("Ce dossier est inaccessible. Vérifie l’autorisation ou utilise le sélecteur Android.")
+        val entries = ArrayList<LocalFileEntry>()
         var count = 0
-        var availableTotal = 0
         try {
             Files.newDirectoryStream(canonicalDirectory.toPath()).use { paths -> paths.forEach { path ->
                 cancel.ensureActive()
                 count++
-                if (count > MAX_ENTRIES) throw IOException("Ce dossier contient plus de $MAX_ENTRIES éléments. Ouvre un sous-dossier avec le sélecteur Android ; aucun résultat partiel n’est affiché.")
+                if (count > MAX_ENTRIES) throw LocalBrowseException("Ce dossier contient plus de $MAX_ENTRIES éléments. Ouvre un sous-dossier avec le sélecteur Android ; aucun résultat partiel n’est affiché.")
                 val file = path.toFile()
-                val inside = isInside(canonicalRoot, file.canonicalFile)
-                if (!inside || isPrivateAndroidDirectory(canonicalRoot, file.canonicalFile)) return@forEach
-                availableTotal++
+                val target = runCatching { file.canonicalFile }.getOrNull() ?: return@forEach
+                if (!isInside(canonicalRoot, target) || isPrivateAndroidDirectory(canonicalRoot, target)) return@forEach
                 val directoryEntry = file.isDirectory
-                val entry = LocalFileEntry(file.name, file, directoryEntry, if (directoryEntry) null else file.length())
-                selected += entry
-                if (selected.size > limit) selected.poll()
+                entries += LocalFileEntry(file.name, file, directoryEntry, if (directoryEntry) null else file.length())
             } }
-        } catch (error: SecurityException) { throw IOException("Android refuse l’accès à ce dossier. Utilise le sélecteur Android.", error) }
+        } catch (_: SecurityException) { throw LocalBrowseException("Android refuse l’accès à ce dossier. Utilise le sélecteur Android.") }
         cancel.ensureActive()
-        val sorted = selected.sortedWith(ENTRY_ORDER)
-        return LocalFilePage(sorted.drop(page * pageSize), availableTotal, page, pageSize, count - availableTotal)
+        entries.sortWith(ENTRY_ORDER)
+        return LocalFileListing(entries, count - entries.size)
+    }
+
+    /** Recheck the selected path because the directory may have changed since listing. */
+    fun readableFile(root: File, file: File, cancel: LocalBrowseCancellation): Uri {
+        cancel.ensureActive()
+        val volume = root.canonicalFile
+        val target = file.canonicalFile
+        if (!isInside(volume, target) || isPrivateAndroidDirectory(volume, target)) {
+            throw LocalBrowseException("Ce fichier sort du stockage autorisé ou appartient à un dossier privé Android.")
+        }
+        if (!target.isFile || !target.canRead()) throw LocalBrowseException("Ce fichier n’est plus accessible. Actualise le dossier ou utilise le sélecteur Android.")
+        return Uri.fromFile(target)
     }
 
     companion object {

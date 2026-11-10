@@ -138,10 +138,15 @@ object CoreChecks {
             val m = ready(); m.cues(1, emptyList(), true)
             check(m.cues(2, emptyList(), true).none { it is Effect.Message })
         }
-        checkCase("bounded queue reports overflow") {
+        checkCase("bounded hot queue keeps the video waiting for retained text") {
             val m = NarrationMachine(20); m.setSpeechReady(true); m.setMediaReady(true); m.play()
-            val e = m.cues(1, listOf("a".repeat(21))); check(!m.snapshot().videoRequested)
-            check(e.any { it is Effect.Message && it.error })
+            val text = "a".repeat(21)
+            val effects = m.cues(1, listOf(text))
+            check(!m.snapshot().videoRequested && m.snapshot().wantsPlayback)
+            check(effects.none { it is Effect.Message && it.error })
+            val spoken = effects.speech().single()
+            check(spoken.text == text)
+            check(m.speechFinished(spoken.id).contains(Effect.Video(true)))
         }
         checkCase("long text is chunked without exceeding engine-safe limit") {
             val m = ready(); val e = m.cues(1, listOf("mot ".repeat(1000)))
@@ -158,7 +163,10 @@ object CoreChecks {
             check(SubtitleText.clean("<i>Bonjour</i><br/>a < b") == "Bonjour\na < b")
         }
         checkCase("ASS tags and explicit line breaks are handled") {
-            check(SubtitleText.clean("{\\an8}Salut\\Ntoi") == "Salut\ntoi")
+            check(SubtitleText.clean("{\\an8}Salut\\Ntoi", assEscapes = true) == "Salut\ntoi")
+            val literal = """C:\new\home"""
+            check(SubtitleText.clean(literal) == literal)
+            check(SpeechTools.filter(literal, SpeechTools.Filters()) == literal)
         }
         checkCase("descriptive captions are kept by default") {
             check(SubtitleText.clean("[Musique] Bonjour") == "[Musique] Bonjour")

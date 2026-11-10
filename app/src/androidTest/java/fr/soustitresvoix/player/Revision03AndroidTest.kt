@@ -1037,9 +1037,15 @@ class Revision03AndroidTest {
     @Test fun anActualOversizedSubtitleStopsTheBenchmarkWithItsErrorReason() {
         val context = instrument.targetContext
         val external = java.io.File(context.cacheDir, "benchmark-overflow.srt")
+        val prefs = PlayerPreferences(context)
+        val originalSettings = prefs.settingsSnapshot()
         external.writeText("1\n00:00:00,100 --> 00:00:03,000\n" + "texte ".repeat(5000) + "\n")
-        PlayerPreferences(context).apply {
+        prefs.apply {
             enginePackage = instrument.context.packageName; narration = true; putBool("cache", false)
+            // The complete index rejects this source size before playback.
+            // In continuous mode, renderer overflow stops the benchmark.
+            putBool("integralReading", false)
+            setMode(fr.soustitresvoix.core.NarrationMachine.Mode.CONTINUOUS)
         }
         try {
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
@@ -1053,19 +1059,27 @@ class Revision03AndroidTest {
                     current!!.session.player.playbackState == Player.STATE_READY && current!!.session.speech.isReady &&
                         current!!.session.selectedTextId() == "external-subtitle"
                 }
-                scenario.onActivity { a -> a.session.startPlaybackBenchmark(120); assertTrue(a.session.playbackBenchmark.active) }
+                scenario.onActivity { a ->
+                    assertEquals(fr.soustitresvoix.core.NarrationMachine.Mode.CONTINUOUS, a.session.machine.snapshot().mode)
+                    a.session.startPlaybackBenchmark(120)
+                    assertTrue(a.session.playbackBenchmark.active)
+                }
                 waitFor("An internal subtitle error left the benchmark active") {
-                    val result = current!!.session.playbackBenchmark.snapshot()
-                    result != null && !result.active && result.reason.contains("Trop de texte")
+                    current!!.session.playbackBenchmark.snapshot()?.active == false
                 }
                 scenario.onActivity { a ->
-                    assertFalse(a.session.playbackBenchmark.snapshot()!!.completed)
+                    val result = requireNotNull(a.session.playbackBenchmark.snapshot())
+                    assertFalse(result.completed)
+                    assertTrue(result.reason, result.reason.contains("Trop de texte"))
                     assertFalse(a.session.machine.snapshot().wantsPlayback)
                     assertFalse(a.session.player.playWhenReady)
                     assertTrue(a.session.playbackBenchmarkReport().contains("Trop de texte"))
                 }
             }
-        } finally { external.delete(); PlayerPreferences(context).enginePackage = "" }
+        } finally {
+            external.delete()
+            prefs.restoreSettings(originalSettings)
+        }
     }
     @Test fun benchmarkFinishingAtFileEndStopsAnOngoingCachedReply() {
         val context = instrument.targetContext

@@ -1,15 +1,15 @@
-name: APK 1.0.0 — publication vérifiée
+name: APK 1.1.0 — publication vérifiée
 
 on:
   push:
-    branches: ['release-upload/v1.0.0']
+    branches: ['release-upload/v1.1.0']
     paths: ['release-upload/**']
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-apk-v1.0.0
+  group: publish-apk-v1.1.0
   cancel-in-progress: false
 
 jobs:
@@ -17,7 +17,7 @@ jobs:
     if: >-
       github.repository == 'Lillite/Vocalisation-des-sous-titres-Android' &&
       github.event_name == 'push' &&
-      github.ref == 'refs/heads/release-upload/v1.0.0' &&
+      github.ref == 'refs/heads/release-upload/v1.1.0' &&
       !github.event.deleted
     runs-on: ubuntu-24.04
     timeout-minutes: 40

@@ -121,20 +121,21 @@ object Revision03Checks {
         test("pause blocks old completion and timer-based resume") { val m=ready(); val id=m.cues(1,listOf("Bonjour."),deadlinesMs=listOf(1000)).speak().id; m.pause(); m.advance(2000); m.speechFinished(id); check(!m.snapshot().wantsPlayback && !m.snapshot().videoRequested) }
         test("seek removes old deadline state") { val m=ready(); m.cues(1,listOf("Bonjour."),deadlinesMs=listOf(100)); m.reset(true); m.setMediaReady(true); m.advance(1000); check(!m.snapshot().waitingForSpeech && m.snapshot().speakingId==null) }
         test("preview is distinguishable from movie narration") { val m=ready(); check(m.preview("Bonjour.").speak().preview); check(!m.snapshot().wantsPlayback) }
-        test("refusing an oversized repeat never consumes the film dialogue") {
+        test("repeating a long replica keeps all its text in engine-safe segments") {
             val m = ready(); val text = "Une réplique complète sans arrêt ".repeat(120).trim()
             val first = m.cues(1, listOf(text)).speak()
-            val refused = m.preview()
-            check(refused.any { it is NarrationMachine.Effect.Message && it.error })
+            val repeat = m.preview().speak()
             check(!m.snapshot().wantsPlayback)
-            var speaking: NarrationMachine.Effect.Speak? = m.play().speak()
-            check(speaking?.text == first.text)
+            check(repeat.text == first.text && repeat.preview)
+            var speaking: NarrationMachine.Effect.Speak? = repeat
             val retained = mutableListOf<String>()
             while (speaking != null) {
+                check(speaking.text.length <= 1000)
                 retained += speaking.text
                 speaking = m.speechFinished(speaking.id).filterIsInstance<NarrationMachine.Effect.Speak>().singleOrNull()
             }
             check(retained.joinToString(" ") == text)
+            check(m.play().none { it is NarrationMachine.Effect.Speak })
         }
         test("refusing a repeat without a ready voice retains the interrupted segment") {
             val m = ready(); val first = m.cues(1, listOf("Bonjour. À demain.")).speak()

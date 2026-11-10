@@ -9,6 +9,7 @@ import java.nio.ByteOrder
 import java.security.MessageDigest
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.*
@@ -33,6 +34,47 @@ class WavCacheAndroidTest {
             Thread.sleep(40)
         }
         fail(message)
+    }
+
+    @Test fun cachedNarrationFinishesWhileLibraryWorkerIsBusy() {
+        val workerStarted = CountDownLatch(1)
+        val unblockWorker = CountDownLatch(1)
+        val done = CountDownLatch(1)
+        val completion = AtomicReference<String?>(null)
+        val failure = AtomicReference<String?>(null)
+        val text = "La voix du panneau passe avant le travail de fond."
+        var speech: AndroidSpeech? = null
+        instrument.runOnMainSync {
+            val preferences = PlayerPreferences(instrument.targetContext).apply {
+                enginePackage = instrument.context.packageName
+                putBool("cache", true)
+            }
+            speech = AndroidSpeech(instrument.targetContext, preferences, { _, _ -> },
+                { completion.set(it); done.countDown() },
+                { _, message -> failure.set(message); done.countDown() })
+        }
+        try {
+            waitFor("Fixture voice not ready") { speech!!.isReady }
+            instrument.runOnMainSync { speech!!.clearCache(); speech!!.prepareBatch(listOf(text)) }
+            waitFor("Prepared audio was not published") { speech!!.preparedCount == 1 && !speech!!.bulkPreparation }
+            // Occupy the actual library executor without relying on disk speed
+            // or on thousands of recordings to reproduce the priority inversion.
+            val worker = AndroidSpeech::class.java.getDeclaredField("io").apply { isAccessible = true }
+                .get(speech) as ExecutorService
+            worker.execute { workerStarted.countDown(); unblockWorker.await(20, TimeUnit.SECONDS) }
+            assertTrue(workerStarted.await(5, TimeUnit.SECONDS))
+            instrument.runOnMainSync { speech!!.speak("urgent-cached-panel", text) }
+            assertTrue("Urgent voice waited behind library work", done.await(10, TimeUnit.SECONDS))
+            assertEquals("urgent-cached-panel", completion.get())
+            assertNull(failure.get())
+            instrument.runOnMainSync { assertEquals("The urgent path must still use the verified WAV", 1, speech!!.hits) }
+        } finally {
+            unblockWorker.countDown()
+            instrument.runOnMainSync {
+                speech?.close()
+                PlayerPreferences(instrument.targetContext).enginePackage = ""
+            }
+        }
     }
 
     @Test fun invalidLegacyPcmWithMatchingDigestIsEvictedBeforeDirectFallbackOfTheSameReply() {

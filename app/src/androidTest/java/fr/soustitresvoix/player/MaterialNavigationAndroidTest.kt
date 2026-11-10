@@ -61,11 +61,23 @@ class MaterialNavigationAndroidTest {
         val deadline = System.nanoTime() + 10_000_000_000L
         while (System.nanoTime() < deadline) {
             var ready = false
-            scenario.onActivity { ready = it.resources.configuration.orientation == expected }
-            if (ready) { instrument.waitForIdleSync(); return }
+            scenario.onActivity {
+                ready = it.resources.configuration.orientation == expected &&
+                    it.findViewById<View>(R.id.bottom_navigation).getGlobalVisibleRect(Rect())
+            }
+            if (ready) {
+                instrument.waitForIdleSync()
+                // The system may still cover the new layout with its rotation
+                // layer. InputDispatcher drops taps through that layer even
+                // after Resources and Espresso report the new layout ready.
+                val input = ParcelFileDescriptor.AutoCloseInputStream(instrument.uiAutomation.executeShellCommand("dumpsys -t 1 input"))
+                    .bufferedReader().use { it.readText() }
+                    .substringAfter("Input Dispatcher State:", "").substringBefore("RecentQueue:")
+                if ("DispatchFrozen: false" in input && "RotationLayer" !in input) return
+            }
             Thread.sleep(40)
         }
-        fail("The requested orientation did not become visible")
+        fail("The requested orientation did not become visible and ready for touch")
     }
 
     private fun assertTabTouchBounds(activity: MainActivity) {

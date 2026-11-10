@@ -44,6 +44,7 @@ import javax.net.ssl.SSLSocket
 internal interface RemoteRead : Closeable {
     val length: Long
     val resolvedUri: android.net.Uri? get() = null
+    val responseFileTitle: String? get() = null
     fun read(buffer: ByteArray, offset: Int, length: Int): Int
 }
 
@@ -257,7 +258,13 @@ internal object RemoteProtocolClients {
             if (socket != null) parser = MLSxEntryParser.getInstance() else {
                 if (client.replyCode !in setOf(500, 501, 502, 504)) throw RemoteAccessException("Le dossier distant est inaccessible.")
                 parser = DefaultFTPFileEntryParserFactory().createFileEntryParser(client.systemType)
-                socket = transport.listingSocket("LIST", full)
+                // MLSD already returns the entries exposed by the server. Older
+                // servers may hide dot names in LIST unless explicitly requested.
+                socket = transport.listingSocket("LIST", "-a $full")
+                if (socket == null && client.replyCode in setOf(500, 501, 502, 504, 550)) {
+                    cancel.ensureActive()
+                    socket = transport.listingSocket("LIST", full)
+                }
             }
             val data = socket ?: throw RemoteAccessException("Le serveur FTP refuse la liste du dossier.")
             cancel.register(data)
