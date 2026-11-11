@@ -1,8 +1,8 @@
-# Guide utilisateur — 1.1.0
+# Guide utilisateur — 1.1.1
 
-[Index](README.md) · [Installer](../README.md#installer-et-commencer-sur-android) · [Sources médias](sources-medias.md) · [Modèles](modeles-traduction.md) · [État de validation](releases/1.1.0.md)
+[Index](README.md) · [Installer](../README.md#installer-et-commencer-sur-android) · [Sources médias](sources-medias.md) · [Modèles](modeles-traduction.md) · [État de validation](releases/1.1.1.md)
 
-Ce guide décrit les commandes des sources 1.1.0. Les notes de version distinguent la validation de l’APK, la couverture des sources et les essais sur téléphone.
+Ce guide décrit les commandes des sources 1.1.1. Les notes de version distinguent la validation de l’APK, la couverture des sources et les essais sur téléphone.
 
 ## Se repérer
 
@@ -45,7 +45,11 @@ Deux répliques identiques à deux instants différents restent deux occurrences
 
 Le **Bilan de vocalisation**, dans Diagnostic, indique si l’inventaire de la piste est complet. Il distingue les occurrences attendues, les fins confirmées par la voix, le passage courant, l’historique et les plages dépassées. Dans **Répliques restantes**, choisir une réplique, les répliques dépassées ou la lecture de toutes les restantes. L’image reste en pause pendant le rattrapage.
 
-En lecture intégrale, une piste textuelle finie et indexable est vérifiée avant que l’image avance. L’image peut attendre une traduction ou la fin d’une réplique longue. Le journal contient les états et les identifiants hachés. Une fin confirmée par le moteur reste distincte d’un essai d’écoute sur ton périphérique audio.
+Pour une piste WebVTT HLS/DASH finie prise en charge, **Lire** attend le premier segment de sous-titres validé puis démarre. Les segments suivants sont préparés en arrière-plan. Chaque occurrence source garde son identité et son minutage. L’image attend à la limite de la plage vérifiée ou lorsque la voix doit finir une réplique. Le bilan reste partiel pendant la préparation et devient complet lorsque le dernier segment a été validé. Une configuration HLS/DASH hors périmètre provoque une erreur et une pause explicites.
+
+Dans un conteneur réseau progressif, les occurrences sont planifiées depuis les limites temporelles extraites. Chaque occurrence reçue garde son identité, y compris une réplique brève, répétée ou arrivée après son début prévu. Les occurrences reçues après la fin de l’image peuvent encore être vocalisées tant que l’intention Lire reste valide. RTSP et les directs conservent une couverture limitée aux événements reçus.
+
+Les fichiers locaux, la traduction, une synchronisation corrigée, l’association de deux pistes et la reprise exacte d’une réplique interrompue conservent leur indexation complète préalable. L’image peut attendre une traduction ou la fin d’une réplique longue. Le journal contient les états et les identifiants hachés. Une fin confirmée par le moteur reste distincte d’un essai d’écoute sur ton périphérique audio.
 
 ## Panneaux et OCR
 

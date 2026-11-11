@@ -2,6 +2,15 @@
 
 [Accueil](README.md) · [Documentation](docs/README.md) · [Versions et branches](docs/HISTORIQUE_BRANCHES.md) · [Validation](TESTING.md)
 
+## 1.1.1 — lecture réseau corrigée
+
+- Démarrage des pistes WebVTT HLS/DASH finies prises en charge dès le premier segment validé, préparation des segments suivants en arrière-plan et attente de l’image à la limite vérifiée ou pendant la voix. Toutes les occurrences source sont conservées et le dernier segment valide l’inventaire complet.
+- Erreur et pause explicites pour une configuration HLS/DASH hors périmètre. RTSP et les directs gardent leur couverture des événements reçus.
+- Conservation des répliques brèves, répétées et tardives reçues des conteneurs progressifs, y compris après la fin de l’image, avec Pause utilisateur prioritaire.
+- Indexation complète préalable conservée pour les fichiers locaux, la traduction, la synchronisation corrigée, l’association de deux pistes et la reprise exacte d’une réplique interrompue.
+
+[Notes 1.1.1 et critères de validation](docs/releases/1.1.1.md)
+
 ## 1.1.0 — lecture intégrale vérifiée
 
 - Inventaire de la piste, contrôle des occurrences, rattrapage horodaté et reprise par fragments.

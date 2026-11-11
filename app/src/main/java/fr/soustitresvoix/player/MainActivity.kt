@@ -671,6 +671,7 @@ class MainActivity : ComponentActivity() {
         val status = when {
             state.voiceSuspended -> "Voix en attente : utilise Reprendre explicitement la voix"
             state.waitingForSpeech -> "Pause de la vidéo pour terminer la phrase"
+            session.waitingForNetworkSubtitles -> "Chargement des prochains sous-titres"
             state.speakingId != null && !state.wantsPlayback -> "Écoute de la phrase — vidéo en pause"
             state.wantsPlayback && session.player.playbackState == Player.STATE_BUFFERING -> "Chargement de la vidéo"
             state.wantsPlayback -> if (state.enabled) "Lecture avec sous-titres vocalisés" else "Lecture sans vocalisation"

@@ -1,10 +1,10 @@
 # Validation et preuves
 
-[Accueil](README.md) · [Documentation](docs/README.md) · [Contribution](CONTRIBUTING.md) · [Notes 1.1.0](docs/releases/1.1.0.md) · [Historique détaillé antérieur](docs/archives/verification-avant-1.0.0.md)
+[Accueil](README.md) · [Documentation](docs/README.md) · [Contribution](CONTRIBUTING.md) · [Notes 1.1.1](docs/releases/1.1.1.md) · [Historique détaillé antérieur](docs/archives/verification-avant-1.0.0.md)
 
-## État de la 1.1.0
+## État de la 1.1.1
 
-Les sources déclarent **1.1.0 / code 24**, application `fr.soustitresvoix.player.translation`. La validation exige la campagne GitHub Actions sur l’APK release de test avant fusion, puis provenance, reconstruction, signature durable et contrôle public. Les résultats propres à cette distribution — commit, PR, runs, effectifs exécutés, empreintes et assets — sont à consulter dans le corps de la [release GitHub v1.1.0](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v1.1.0). Les [notes versionnées](docs/releases/1.1.0.md#validation-et-publication) distinguent les critères de livraison des contrôles locaux de préparation.
+Les sources déclarent **1.1.1 / code 25**, application `fr.soustitresvoix.player.translation`. La validation exige la campagne GitHub Actions sur l’APK release de test avant fusion, puis provenance, reconstruction, signature durable et contrôle public. Les résultats propres à cette distribution — commit, PR, runs, effectifs exécutés, empreintes et assets — sont à consulter dans le corps de la [release GitHub v1.1.1](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/releases/tag/v1.1.1). Les [notes versionnées](docs/releases/1.1.1.md#validation-et-publication) distinguent les critères de livraison des contrôles locaux de préparation.
 
 Les contrôles locaux de préparation ne remplacent pas cette campagne. Une compilation de l’APK de tests ne prouve pas son exécution. Une inférence hôte ne démontre ni le calcul d’un GPU/NPU physique, ni la vitesse sur téléphone, ni la qualité linguistique. Une capture ne valide que l’état et la portion visibles ; TalkBack demande un essai réel distinct.
 
@@ -50,7 +50,7 @@ Pour le natif, utiliser `python3 tools/run-native-translation-tests.py --help`, 
 
 ## Tests Android avant chaque fusion
 
-Le workflow [Android — APK et tests avant fusion](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml) construit les APK de test et exécute JVM, lint et instrumentation avant toute fusion. Le changement final doit être testé sur son propre commit de proposition, avec inventaire source et XML frais rapprochés. L’inventaire source 1.1.0 attend **205 méthodes noyau, 691 JVM application et 122 Android**, soit **1 018 méthodes distinctes**. Cet effectif est une attente de couverture, pas une réussite d’exécution ; seuls les XML frais du passage final établissent les méthodes exécutées. Ne pas figer le nombre d’une ancienne version comme preuve actuelle.
+Le workflow [Android — APK et tests avant fusion](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/actions/workflows/android.yml) construit les APK de test et exécute JVM, lint et instrumentation avant toute fusion. Le changement final doit être testé sur son propre commit de proposition, avec inventaire source et XML frais rapprochés. L’inventaire source 1.1.1 attend **205 méthodes noyau, 702 JVM application et 122 Android**, soit **1 029 méthodes distinctes**. Cet effectif est une attente de couverture, pas une réussite d’exécution ; seuls les XML frais du passage final établissent les méthodes exécutées. Ne pas figer le nombre d’une ancienne version comme preuve actuelle.
 
 Les tests instrumentés doivent s’exécuter sur l’APK **release de test** sous Android 17/API 37, conformément au workflow. Pour une exécution locale sur appareil/émulateur disponible :
 
@@ -72,6 +72,7 @@ Conserver les identités de chaque méthode et refuser les méthodes manquantes,
 | Mesures | Chargements et réponses sans double comptage ; tentatives distinctes ; horloge monotone ; tokens/cache/NPU/GPU/RSS/buffers séparés |
 | Explorer | SAF sans autorisation générale, accès refusé/révoqué, SD, Android 26–29/30+, dossiers privés exclus, annulation et dépassement de borne |
 | Réseau | URI opaques, secrets chiffrés, révision de connexion, certificats/pin, redirections, positions Range et interruptions ; index complet distinct des flux |
+| Démarrage réseau | WebVTT HLS/DASH fini depuis le premier segment validé, toutes les occurrences source, attente à la limite vérifiée, inventaire complet au dernier segment et pause en cas de format hors périmètre ; occurrences progressives brèves, répétées et tardives, y compris après la fin de l’image ; Pause utilisateur prioritaire ; index complet pour les parcours avancés et la reprise exacte d’une réplique interrompue |
 | Interface | Quatre onglets sans effets de lecture, grande police/défilement, bornes Minimum/Maximum et tickets de dialogues périmés |
 | Modèle/mémoire | Aucun seuil sur la seule taille GGUF ; gardes mesurées, annulation/libération acquittée, erreurs de chaque tentative conservées |
 | Audio/image | Commandes refusées sans mutation, séparation voix/film, PCM compatible, cadre/HDR et durée de vie des panneaux |
@@ -98,11 +99,11 @@ zipalign -c -P 16 -v 4 /chemin/externe/application.apk
 sha256sum /chemin/externe/application.apk
 ```
 
-Contrôler aussi manifeste compilé, `debuggable=false`, version 1.1.0/code 24/applicationId exact, absence du service vocal de fixture, bibliothèques et notices attendues. Ne jamais recréer une clé pour rendre une mise à jour artificiellement installable.
+Contrôler aussi manifeste compilé, `debuggable=false`, version 1.1.1/code 25/applicationId exact, absence du service vocal de fixture, bibliothèques et notices attendues. Ne jamais recréer une clé pour rendre une mise à jour artificiellement installable.
 
 ## Publication et contrôle indépendant
 
-Le [parcours de contribution](CONTRIBUTING.md#publier-un-apk-vérifié) précise le transport de l’APK signé déjà vérifié. Publier seulement la source validée de `main`, un tag réel `v1.1.0`, l’APK et `SHA256SUMS`. La 1.1.0 est destinée à une release stable, sans indicateur prerelease ; cela ne retire pas les limites expérimentales de certains backends.
+Le [parcours de contribution](CONTRIBUTING.md#publier-un-apk-vérifié) précise le transport de l’APK signé déjà vérifié. Publier seulement la source validée de `main`, un tag réel `v1.1.1`, l’APK et `SHA256SUMS`. La 1.1.1 est destinée à une release stable, sans indicateur prerelease ; cela ne retire pas les limites expérimentales de certains backends.
 
 Après publication, télécharger les fichiers publics et vérifier de nouveau taille, SHA-256, manifeste et certificat. Le corps de la release doit fournir PR, commits, runs, effectifs réellement exécutés, arbre/parents, empreintes et identifiants d’assets. L’existence d’un brouillon, d’un tag ou d’un lien ne suffit pas à annoncer la livraison.
 

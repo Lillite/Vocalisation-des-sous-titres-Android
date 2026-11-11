@@ -1,8 +1,8 @@
 # Documentation de Sous-titres en voix
 
-[Accueil](../README.md) · [Changements](../CHANGELOG.md) · [Notes 1.1.0](releases/1.1.0.md) · [Validation](../TESTING.md) · [Signaler un problème](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/issues/new/choose)
+[Accueil](../README.md) · [Changements](../CHANGELOG.md) · [Notes 1.1.1](releases/1.1.1.md) · [Validation](../TESTING.md) · [Signaler un problème](https://github.com/Lillite/Vocalisation-des-sous-titres-Android/issues/new/choose)
 
-La documentation courante décrit les **sources 1.1.0 / code 24**. Les [notes de version](releases/1.1.0.md#validation-et-publication) distinguent les critères de livraison et les essais sur appareil. Le corps de la release GitHub fournit les preuves propres au binaire.
+La documentation courante décrit les **sources 1.1.1 / code 25**. Les [notes de version](releases/1.1.1.md#validation-et-publication) distinguent les critères de livraison et les essais sur appareil. Le corps de la release GitHub fournit les preuves propres au binaire.
 
 ## Utiliser l’application
 
@@ -46,6 +46,8 @@ Les notes suivantes conservent le périmètre et les constats de chaque version 
 
 | Version | Périmètre des notes |
 | --- | --- |
+| [1.1.1](releases/1.1.1.md) | Démarrage dès le premier segment WebVTT fini validé, contrôle de la plage vérifiée et conservation des occurrences réseau |
+| [1.1.0](releases/1.1.0.md) | Lecture intégrale vérifiée, bilan et rattrapage, explorateur et historique réseau ; preuves de la distribution conservées |
 | [1.0.0](releases/1.0.0.md) | Version 1.0 ; navigation, Explorer/réseau, contexte Index, diagnostics et documentation ; preuves propres à la distribution dans le corps de la release GitHub |
 | [0.5.15-loading](releases/0.5.15-loading.md) | Chargement sans seuil sur le poids du GGUF et diagnostics mémoire ; publication historique issue de la PR #31 |
 | [0.5.14-hexagon](releases/0.5.14-hexagon.md) | NPU Hexagon/HTP expérimental, mémoire et causes d’interruption |

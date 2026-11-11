@@ -26,7 +26,7 @@ class CueAheadFactory(private val onCue: (String?, CuesWithTiming) -> Unit) : Ex
     private var imageTrack: String? = null
     private var onImageCue: ((CuesWithTiming) -> Unit)? = null
     private val factory = DefaultExtractorsFactory().setSubtitleParserFactory(parsers(sidecar = false))
-    var truncated = false; private set
+    @Volatile var truncated = false; private set
     private var reports = 0
     private var reportedChars = 0L
     /** Configure before the factory is handed to a media source or an indexer. */

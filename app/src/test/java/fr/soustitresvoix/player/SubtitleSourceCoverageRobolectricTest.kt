@@ -51,6 +51,82 @@ class SubtitleSourceCoverageRobolectricTest {
         assertEquals(3, index.count)
     }
 
+    @Test fun firstSubtitlePrefixIsPublishedBeforeTheNextSegmentRequestFails() {
+        val prefixes = mutableListOf<Pair<List<CueAheadIndex.Item>, Long>>()
+        val scanner = prefixScanner(hls(), beforeRead = { uri ->
+            if (uri.path == "/two.vtt") {
+                assertEquals(1, prefixes.size)
+                assertEquals(1_000_000L, prefixes.single().second)
+                throw IOException("Controlled later segment failure")
+            }
+        })
+        assertThrows(IOException::class.java) {
+            scanner.scan(Uri.parse("https://fixture.invalid/movie.m3u8"), false, setOf("subs:French"), {},
+                onPrefix = { items, through -> prefixes += items to through })
+        }
+        assertEquals(listOf("Oui.", "Oui."), prefixes.single().first.map { it.raw })
+        assertEquals(2, prefixes.single().first.map { it.identity }.distinct().size)
+    }
+
+    @Test fun subtitlePrefixesKeepCarryAndRealRepeatsAndAdvanceAcrossAnEmptySegment() {
+        val documents = hls().toMutableMap().apply {
+            for (path in listOf("/subs.m3u8", "/video.m3u8")) {
+                val third = if (path == "/subs.m3u8") "three.vtt" else "three.ts"
+                put(path, getValue(path).replace("#EXT-X-ENDLIST", "#EXTINF:1.0,\n$third\n#EXT-X-ENDLIST"))
+            }
+            put("/three.vtt", vtt())
+        }
+        val prefixes = mutableListOf<Pair<List<CueAheadIndex.Item>, Long>>()
+        val index = prefixScanner(documents).scan(Uri.parse("https://fixture.invalid/movie.m3u8"), false,
+            setOf("subs:French"), {}, onPrefix = { items, through -> prefixes += items to through })
+        assertEquals(listOf(1_000_000L, 2_000_000L, 3_000_000L), prefixes.map { it.second })
+        assertEquals(listOf(listOf("Oui.", "Oui."), listOf("Bref."), emptyList<String>()),
+            prefixes.map { it.first.map { item -> item.raw } })
+        assertEquals(index.selected("subs:French"), prefixes.flatMap { it.first })
+        assertEquals(3, prefixes.flatMap { it.first }.map { it.identity }.distinct().size)
+    }
+
+    @Test fun invalidSubtitleSegmentCannotPublishItsNewOccurrencesOrCoverage() {
+        val invalidSegments = listOf(
+            vtt("00:00:01.650 --> 00:00:01.700\nBref."),
+            hls().getValue("/two.vtt") + "\n00:00:01.800 --> 00:00:02.000001\nDépassement final.\n"
+        )
+        for (invalid in invalidSegments) {
+            val documents = hls().toMutableMap().apply { put("/two.vtt", invalid) }
+            val prefixes = mutableListOf<Pair<List<CueAheadIndex.Item>, Long>>()
+            assertThrows(IOException::class.java) {
+                prefixScanner(documents).scan(Uri.parse("https://fixture.invalid/movie.m3u8"), false,
+                    setOf("subs:French"), {}, onPrefix = { items, through -> prefixes += items to through })
+            }
+            assertEquals(listOf(1_000_000L), prefixes.map { it.second })
+            assertEquals(listOf("Oui.", "Oui."), prefixes.single().first.map { it.raw })
+        }
+        for (tracks in listOf(emptySet(), setOf("subs:French", "other-track"))) {
+            var reads = 0
+            val error = assertThrows(IOException::class.java) {
+                prefixScanner(hls(), beforeRead = { reads++ }).scan(Uri.parse("https://fixture.invalid/movie.m3u8"),
+                    false, tracks, {}, onPrefix = { _, _ -> fail("An ambiguous track selection published a prefix") })
+            }
+            assertEquals(FiniteWebSubtitleIndex.UNVERIFIED, error.message)
+            assertEquals(0, reads)
+        }
+    }
+
+    @Test fun cancelledSubtitleRequestCannotPublishAnUnreadOrIncompletePrefix() {
+        for (cancelBeforeFirstPrefix in listOf(true, false)) {
+            var cancelled = false
+            val prefixes = mutableListOf<Pair<List<CueAheadIndex.Item>, Long>>()
+            val scanner = prefixScanner(hls(), beforeRead = { uri ->
+                if (cancelBeforeFirstPrefix && uri.path == "/one.vtt") cancelled = true
+            }, checkActive = { if (cancelled) throw IOException("Controlled cancellation") })
+            assertThrows(IOException::class.java) {
+                scanner.scan(Uri.parse("https://fixture.invalid/movie.m3u8"), false, setOf("subs:French"), {},
+                    onPrefix = { items, through -> prefixes += items to through; cancelled = true })
+            }
+            assertEquals(if (cancelBeforeFirstPrefix) emptyList<Long>() else listOf(1_000_000L), prefixes.map { it.second })
+        }
+    }
+
     @Test fun hlsMissingCarryOrLivePlaylistCannotCertifyCoverage() {
         val missing = hls().toMutableMap().apply { put("/two.vtt", vtt("00:00:01.650 --> 00:00:01.700\nBref.")) }
         val absent = assertThrows(IOException::class.java) { scan(missing, "movie.m3u8", "subs:French") }
@@ -96,7 +172,13 @@ class SubtitleSourceCoverageRobolectricTest {
             </MPD>
         """.trimIndent(), "/subtitle-1.vtt" to vtt("00:00:00.400 --> 00:00:00.900\nUn."),
             "/subtitle-2.vtt" to vtt("00:00:02.100 --> 00:00:03.700\nDeux."))
-        val cues = scan(documents, "movie.mpd", "fra").selected("fra")
+        val prefixes = mutableListOf<Pair<List<CueAheadIndex.Item>, Long>>()
+        val index = prefixScanner(documents).scan(Uri.parse("https://fixture.invalid/movie.mpd"), true,
+            setOf("fra"), {}, onPrefix = { items, through -> prefixes += items to through })
+        val cues = index.selected("fra")
+        assertEquals(scan(documents, "movie.mpd", "fra").selected("fra"), cues)
+        assertEquals(listOf(2_000_000L, 4_000_000L), prefixes.map { it.second })
+        assertEquals(cues, prefixes.flatMap { it.first })
         assertEquals(listOf("Un.", "Deux."), cues.map { it.raw })
         assertEquals(listOf(400_000L, 2_100_000L), cues.map { it.startUs })
         assertEquals(listOf(900_000L, 3_700_000L), cues.map { it.endUs })
@@ -199,6 +281,14 @@ class SubtitleSourceCoverageRobolectricTest {
         }
         return FullSubtitleIndexer(context, sources).scanTracks(SavedMedia("https://fixture.invalid/$path", "Synthétique"), setOf(track)) {}
     }
+
+    private fun prefixScanner(documents: Map<String, String>, beforeRead: (Uri) -> Unit = {},
+        checkActive: () -> Unit = {}): FiniteWebSubtitleIndex = FiniteWebSubtitleIndex({ uri, _, _, _ ->
+        assertEquals("fixture.invalid", uri.host)
+        beforeRead(uri)
+        val contents = documents[uri.path] ?: throw IOException("Subtitle fixture document absent")
+        FiniteWebSubtitleIndex.Document(uri, contents.toByteArray(Charsets.UTF_8))
+    }, checkActive)
 
     private fun hls(): Map<String, String> {
         val cue = "00:00:00.500 --> 00:00:01.500\nOui."

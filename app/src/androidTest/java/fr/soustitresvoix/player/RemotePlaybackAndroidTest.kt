@@ -36,7 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /** Real Android Keystore -> authenticated loopback HTTP -> Media3 demux ->
- * complete source index -> PlaybackSession -> Android TTS IPC. Only the generated
+ * buffered source occurrences -> PlaybackSession -> Android TTS IPC. Only the generated
  * demonstration and the existing silence-producing test voice are used. These
  * tests cover HTTP and WebDAV GET; they do not certify FTP/SFTP/SMB servers. */
 @UnstableApi
@@ -90,7 +90,6 @@ class RemotePlaybackAndroidTest {
         val pauseOnce = AtomicBoolean()
         val pauseBarrier = AtomicReference<PlayerMessage>()
         val receiverFailure = AtomicReference<Throwable>()
-        val completeIndex = AtomicBoolean()
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action != FixtureSpeechService.ALL_REQUESTS_ACTION) return
@@ -146,14 +145,15 @@ class RemotePlaybackAndroidTest {
                             val session = sessionReference.get()
                             session.player.playbackState == Player.STATE_READY && session.selectedTextId() != null && session.speech.isReady
                         }
-                        scenario.onActivity { sessionReference.get().ensureCompleteIndex { completeIndex.set(true) } }
-                        waitFor("The real session did not finish a complete index of its authenticated opaque source") { completeIndex.get() }
                         scenario.onActivity {
-                            assertCompleteDemoIndex(sessionReference.get().ahead)
+                            assertFalse(sessionReference.get().hasCompleteSubtitleIndex)
                             assertEquals(uri.toString(), sessionReference.get().media?.uri)
                             assertEquals(uri.toString(), sessionReference.get().prefs.lastMedia()?.uri)
                             assertTrue("Paused demux/index preparation must not request TTS", observed().isEmpty())
                             sessionReference.get().play()
+                        }
+                        waitFor("Ordinary authenticated network Play did not advance without complete indexing") {
+                            sessionReference.get().player.currentPosition > 0 || pauseBarrier.get() != null
                         }
                         waitFor("The first real TTS request was not interrupted by an explicit user pause") {
                             pauseBarrier.get() != null || receiverFailure.get() != null
@@ -191,6 +191,8 @@ class RemotePlaybackAndroidTest {
                         }
                         scenario.onActivity {
                             assertCompleteDemoIndex(sessionReference.get().ahead)
+                            assertFalse("Ordinary network playback must not silently require a whole-file inventory", sessionReference.get().hasCompleteSubtitleIndex)
+                            assertTrue("The real network film did not advance", sessionReference.get().player.currentPosition > 0)
                             assertEquals(0, sessionReference.get().machine.snapshot().recoverableCount)
                             assertFalse(sessionReference.get().player.playWhenReady)
                             assertEquals(uri.toString(), sessionReference.get().prefs.lastMedia()?.uri)

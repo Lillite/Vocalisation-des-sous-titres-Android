@@ -22,6 +22,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.text.Cue
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import fr.soustitresvoix.core.NarrationController
@@ -119,10 +120,21 @@ class PlaybackSession(
     private var phraseEndUtterance: String? = null
     private var rearmingCheckpoint = false
     private var deferredPlay: Boolean? = null
+    private var progressivePassStartMs = 0L
+    private var progressiveReconciledCount = -1
+    private var networkSource = false
+    private var progressiveNetworkSource = false
+    private var adaptiveNetworkSource = false
+    private var networkIndexer: SubtitleIndexer? = null
+    private var networkIndexTrack: String? = null
+    private var networkIndexThroughUs = 0L
     private var indexedTrack: String? = null
     val hasCompleteSubtitleIndex: Boolean get() = indexedTrack?.let {
         !ahead.truncated && it == selectedTextId() && ahead.hasTrack(it)
     } == true
+    val waitingForNetworkSubtitles: Boolean get() = !closed && adaptiveNetworkSource &&
+        networkIndexTrack != null && networkIndexTrack == selectedTextId() && !hasCompleteSubtitleIndex &&
+        machine.snapshot().wantsPlayback && player.currentPosition >= maxOf(progressivePassStartMs, networkIndexThroughUs / 1000)
     private val indexingWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
     private var indexer: SubtitleIndexer? = null
     private var indexingForPlayback = false
@@ -131,7 +143,7 @@ class PlaybackSession(
         private set(value) { field = value; indexingStatusEpoch = mediaEpoch }
     private var manualPreparation = false
     private var thermalPreparationStopped = false
-    val isPreparing: Boolean get() = indexer != null || speech.bulkPreparation || manualPreparation || translation.busy
+    val isPreparing: Boolean get() = indexer != null || networkIndexer != null || speech.bulkPreparation || manualPreparation || translation.busy
     private data class IndexSource(val uri: String, val subtitlePath: String?, val subtitleMime: String?)
     private var indexedSource: IndexSource? = null
     private var holdStarted = 0L
@@ -144,7 +156,7 @@ class PlaybackSession(
     private val playbackTick = object : Runnable {
         override fun run() {
             if (closed) return
-            val indexed = hasCompleteSubtitleIndex
+            val indexed = usesIndexedNarration()
             val activePicture = player.playbackState != Player.STATE_ENDED
             if (indexed && activePicture) driveIndexedCues() else updateCaptionOverride()
             if (machine.snapshot().wantsPlayback) {
@@ -282,13 +294,18 @@ class PlaybackSession(
                     playPreparedMedia(resumeVoice)
                 }
                 if (state == Player.STATE_ENDED) {
+                    if (adaptiveNetworkSource && networkIndexTrack == selectedTextId() && !hasCompleteSubtitleIndex) {
+                        if (machine.snapshot().wantsPlayback) driveIndexedCues()
+                        onChanged()
+                        return
+                    }
                     if (playbackBenchmark.active && playbackBenchmark.tick(benchmarkCounters())) {
                         saveBenchmarkReport()
                         pause()
                     }
                     else finishPlaybackBenchmark("Fin du fichier avant la durée cible de l’essai")
                     if (!endCoverageReported) onMessage("Fin de l’image.", false)
-                    if (hasCompleteSubtitleIndex) {
+                    if (usesIndexedNarration()) {
                         if (endDrainCursorMs == null) endDrainCursorMs = timedCursorMs ?: player.currentPosition.coerceAtLeast(0)
                         endDrainComplete = false
                         if (machine.snapshot().wantsPlayback) drainNarrationAfterVideoEnd()
@@ -336,6 +353,7 @@ class PlaybackSession(
                 deferredPlay = null
                 cancelIndexing()
                 translation.playbackInterrupted(); completionSequence++
+                progressiveReconciledCount = -1
                 finishPlaybackBenchmark("Erreur de lecture : ${error.errorCodeName}")
                 apply(machine.fail("Lecture impossible (${error.errorCodeName}). Le fichier, son accès ou son codec n’est peut-être pas pris en charge. Aucun fichier n’a été modifié."))
                 if (error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND || error.errorCode == PlaybackException.ERROR_CODE_IO_NO_PERMISSION)
@@ -354,6 +372,8 @@ class PlaybackSession(
                     return
                 }
                 translation.playbackInterrupted(); completionSequence++
+                progressivePassStartMs = newPosition.positionMs.coerceAtLeast(0)
+                progressiveReconciledCount = -1
                 timedCursorMs = null; endDrainCursorMs = null; endDrainComplete = true; endCoverageReported = false
                 apply(machine.reset(keepPlaybackIntent = true))
                 apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
@@ -370,11 +390,21 @@ class PlaybackSession(
         savePosition()
         translation.reset()
         cancelIndexing(); indexedSource = null; indexedTrack = null; supplementaryTextId = null; visual.reset()
+        networkIndexTrack = null; networkIndexThroughUs = 0L
         imageViewport = emptyMap()
         completionSequence++; phraseEndUtterance = null; timedCursorMs = null; timingTrack = null
         endDrainCursorMs = null; endDrainComplete = true; endCoverageReported = false; deferredPlay = null
         speech.clearOfflineSelection()
         val restored = features.opening(saved, restoreSession)
+        val savedUri = Uri.parse(restored.uri)
+        val sourceUri = if (savedUri.scheme == RemoteMediaUris.DIRECT_SCHEME)
+            runCatching { Uri.parse(RemoteConnectionStore(context).directUrl(savedUri)) }.getOrNull() else savedUri
+        networkSource = savedUri.scheme in setOf("http", "https", "rtsp", "rtsps", RemoteMediaUris.SERVER_SCHEME, RemoteMediaUris.DIRECT_SCHEME)
+        progressiveNetworkSource = networkSource && sourceUri != null && Util.inferContentType(sourceUri) == C.CONTENT_TYPE_OTHER
+        adaptiveNetworkSource = networkSource && sourceUri != null &&
+            Util.inferContentType(sourceUri) in setOf(C.CONTENT_TYPE_HLS, C.CONTENT_TYPE_DASH)
+        progressivePassStartMs = restored.positionMs.coerceAtLeast(0)
+        progressiveReconciledCount = -1
         val epoch = ++mediaEpoch; trackSelectionSequence++; trackReset = false
         lastRawCaption = ""; ahead.clear(); speech.cancelPreparation()
         val diagnosticToken = diagnosticObserver.beginMedia()
@@ -396,7 +426,23 @@ class PlaybackSession(
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             .setPreferredTextLanguages("fr", "fra").setSelectUndeterminedTextLanguage(true).build()
         val source = subtitleSource.createMediaSource(item.build()) { track, cues, origins -> handler.post {
-            if (!closed && epoch == mediaEpoch && !hasCompleteSubtitleIndex) ahead.add(track, cues, origins)
+            if (!closed && epoch == mediaEpoch && !hasCompleteSubtitleIndex && !adaptiveNetworkSource) {
+                val previousCount = ahead.count
+                ahead.add(track, cues, origins)
+                if (usesProgressiveSubtitleIndex()) {
+                    if (player.playbackState != Player.STATE_ENDED) driveIndexedCues()
+                    else if (ahead.count != previousCount) {
+                        endDrainComplete = false; endCoverageReported = false
+                        if (machine.snapshot().wantsPlayback) {
+                            driveIndexedCues()
+                            drainNarrationAfterVideoEnd()
+                        } else {
+                            features.register(ahead.selected(selectedTextId()))
+                            onMessage("Des répliques supplémentaires ont été reçues en fin de vidéo. Appuie sur Lire pour les terminer.", false)
+                        }
+                    }
+                }
+            }
         } }
         playback.setMediaSource(source, restored.positionMs)
         player.prepare(); prefs.save(restored)
@@ -422,12 +468,13 @@ class PlaybackSession(
             if (!translation.allowNarrationVoice()) return
             if (!requestFocus()) return
             apply(machine.setMediaReady(true)); apply(if (resumeVoice) machine.resumeVoice() else machine.play())
+            if (usesProgressiveSubtitleIndex() && machine.snapshot().wantsPlayback) driveIndexedCues()
             if (!endDrainComplete && machine.snapshot().wantsPlayback) drainNarrationAfterVideoEnd()
             return
         }
         translation.onPlaybackPosition(features.timeline.sourceTimeMs(player.currentPosition, narration = true) * 1000)
         if (!translation.allowPlayback()) return
-        val verify = requiresVerifiedInventory()
+        val verify = requiresVerifiedInventory() && !usesNetworkSubtitlePlayback()
         if (!hasCompleteSubtitleIndex && (verify || supplementaryTextId != null || !features.timeline.identity)) {
             // The scan is owned by this Play request. Pause, seek, source or
             // track changes cancel it and invalidate its continuation.
@@ -439,16 +486,84 @@ class PlaybackSession(
         if (!requestFocus()) return
         if (player.playbackState == Player.STATE_ENDED) seek(0, userInitiated = false)
         if (player.playbackState == Player.STATE_IDLE) player.prepare()
+        if (requiresVerifiedInventory() && usesNetworkSubtitlePlayback() && adaptiveNetworkSource && !hasCompleteSubtitleIndex)
+            startNetworkSubtitleIndex()
         apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
-        if (hasCompleteSubtitleIndex && !machine.snapshot().wantsPlayback) apply(machine.setScheduleHold(true))
+        if (usesIndexedNarration() && !machine.snapshot().wantsPlayback) apply(machine.setScheduleHold(true))
         apply(if (resumeVoice) machine.resumeVoice() else machine.play())
-        if (hasCompleteSubtitleIndex && machine.snapshot().wantsPlayback) driveIndexedCues()
+        if (usesIndexedNarration() && machine.snapshot().wantsPlayback) driveIndexedCues()
     }
 
     private fun requiresVerifiedInventory(): Boolean =
         prefs.narration && prefs.bool("integralReading", true) && selectedTextId() != null &&
             player.duration > 0 && !player.isCurrentMediaItemLive && !player.isCurrentMediaItemDynamic &&
             selectedSubtitleFormat()?.let(::isBitmapSubtitle) != true
+
+    /** Network demux already supplies timed source occurrences before rendering.
+     * Use those boundaries as they arrive instead of downloading the whole movie
+     * in a second scanner before Play. Full preparation remains an explicit scan. */
+    private fun usesProgressiveSubtitleIndex(): Boolean =
+        requiresVerifiedInventory() && !hasCompleteSubtitleIndex && usesNetworkSubtitlePlayback() &&
+            (progressiveNetworkSource || adaptiveNetworkSource && networkIndexTrack == selectedTextId())
+
+    private fun usesNetworkSubtitlePlayback(): Boolean =
+        networkSource && !translation.required && supplementaryTextId == null && features.timeline.identity && !hasAttachedSubtitle
+
+    private fun usesIndexedNarration(): Boolean = hasCompleteSubtitleIndex || usesProgressiveSubtitleIndex()
+
+    private fun startNetworkSubtitleIndex() {
+        if (networkIndexer != null) return
+        val saved = media ?: return
+        val track = selectedTextId() ?: return
+        if (networkIndexTrack != track) {
+            networkIndexTrack = track
+            networkIndexThroughUs = 0L
+        }
+        val epoch = mediaEpoch
+        val task = subtitleSource.createIndexer()
+        networkIndexer = task
+        indexingStatus = "Chargement progressif des segments de sous-titres"
+        indexingWorker.execute {
+            try {
+                val index = task.scanTrackProgressively(saved.copy(subtitlePath = null, subtitleMime = null), track,
+                    onPrefix = { items, throughUs -> handler.post {
+                        if (!closed && epoch == mediaEpoch && networkIndexer === task && selectedTextId() == track) {
+                            items.forEach(ahead::addOccurrence)
+                            networkIndexThroughUs = maxOf(networkIndexThroughUs, throughUs)
+                            indexingStatus = "Sous-titres vérifiés jusqu’à ${networkIndexThroughUs / 1_000_000} s"
+                            features.register(items)
+                            if (machine.snapshot().wantsPlayback) driveIndexedCues()
+                            onChanged()
+                        }
+                    } }, progress = {})
+                handler.post {
+                    if (!closed && epoch == mediaEpoch && networkIndexer === task && selectedTextId() == track) {
+                        networkIndexer = null
+                        if (index.truncated || !index.hasTrack(track)) {
+                            apply(machine.fail("L’inventaire réseau est incomplet. La vidéo attend pour conserver toutes les répliques."))
+                            return@post
+                        }
+                        ahead = index; indexedTrack = track
+                        indexedSource = IndexSource(saved.uri, null, null)
+                        features.register(index.selected(track))
+                        indexingStatus = "Index complet : ${index.selected(track).size} occurrences"
+                        if (player.playbackState == Player.STATE_ENDED) {
+                            endDrainCursorMs = timedCursorMs ?: player.currentPosition.coerceAtLeast(0)
+                            endDrainComplete = false
+                            if (machine.snapshot().wantsPlayback) drainNarrationAfterVideoEnd()
+                        } else if (machine.snapshot().wantsPlayback) driveIndexedCues()
+                        onChanged()
+                    }
+                }
+            } catch (error: Exception) { handler.post {
+                if (!closed && epoch == mediaEpoch && networkIndexer === task) {
+                    networkIndexer = null
+                    indexingStatus = subtitleSource.safeFailureMessage(error)
+                    apply(machine.fail(indexingStatus))
+                }
+            } }
+        }
+    }
     internal fun rearmNarrationCheckpoint(positionMs: Long, restorePending: (() -> Boolean)? = null): Boolean {
         val track = selectedTextId() ?: return false
         rearmingCheckpoint = true
@@ -516,6 +631,7 @@ class PlaybackSession(
     }
     private fun pauseForIndexing() {
         deferredPlay = null
+        progressiveReconciledCount = -1
         completionSequence++
         finishPlaybackBenchmark("Pause demandée ou application quittée")
         interruptPreparation("Préparation arrêtée : lecture mise en pause. Le cache existant est conservé.")
@@ -532,6 +648,8 @@ class PlaybackSession(
         features.cancelCheckpointResume(abandon = true)
         val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 }
         val position = if (duration != null) positionMs.coerceIn(0, duration) else positionMs.coerceAtLeast(0)
+        progressivePassStartMs = position
+        progressiveReconciledCount = -1
         val restart = !rearmingCheckpoint && !machine.snapshot().translationHeld
         if (userInitiated) features.markSeek(player.currentPosition.coerceAtLeast(0), position)
         completionSequence++; phraseEndUtterance = null; timedCursorMs = null
@@ -540,9 +658,11 @@ class PlaybackSession(
         finishPlaybackBenchmark("Position de lecture modifiée : extrait non comparable")
         interruptPreparation("Préparation arrêtée : position de lecture modifiée. Le cache existant est conservé.")
         apply(machine.reset(keepPlaybackIntent = restart)); lastCue = null; onCaption("")
-        if (hasCompleteSubtitleIndex && machine.snapshot().wantsPlayback) apply(machine.setScheduleHold(true))
+        if (usesIndexedNarration() && machine.snapshot().wantsPlayback) apply(machine.setScheduleHold(true))
         player.seekTo(position); apply(machine.setMediaReady(player.playbackState == Player.STATE_READY))
-        if (hasCompleteSubtitleIndex && machine.snapshot().wantsPlayback && player.playbackState != Player.STATE_ENDED)
+        if (machine.snapshot().wantsPlayback && adaptiveNetworkSource && usesNetworkSubtitlePlayback() && !hasCompleteSubtitleIndex)
+            startNetworkSubtitleIndex()
+        if (usesIndexedNarration() && machine.snapshot().wantsPlayback && player.playbackState != Player.STATE_ENDED)
             driveIndexedCues()
     }
     fun resumeVoice() {
@@ -615,7 +735,7 @@ class PlaybackSession(
         lastPreparationTick = SystemClock.elapsedRealtime()
         // A mandatory index scan owns an explicit Play or recovery request.
         // Thermal throttling of speculative preparation must not cancel it.
-        if (indexer != null && !manualPreparation) return
+        if ((indexer != null || networkIndexer != null) && !manualPreparation) return
         if (stopPreparationForHeat()) return
         if (manualPreparation) { if (indexer == null && !speech.bulkPreparation) manualPreparation=false; return }
         if (!prefs.narration) { cancelIndexing(); speech.cancelPreparation(); return }
@@ -726,11 +846,15 @@ class PlaybackSession(
             } }
         }
     }
-    fun cancelIndexing() { indexer?.cancel(); indexer=null; manualPreparation=false; indexingForPlayback = false }
+    fun cancelIndexing() {
+        indexer?.cancel(); indexer = null
+        networkIndexer?.cancel(); networkIndexer = null
+        manualPreparation = false; indexingForPlayback = false
+    }
     fun cancelPreparation() { cancelIndexing(); speech.cancelPreparation(); indexingStatus="Préparation annulée ; lecture et cache existant conservés" }
     private fun interruptPreparation(message: String) {
         // Translation owns a separate worker and explicit cancellation control.
-        val wasPreparing = indexer != null || speech.bulkPreparation || manualPreparation
+        val wasPreparing = indexer != null || networkIndexer != null || speech.bulkPreparation || manualPreparation
         cancelIndexing(); speech.cancelPreparation()
         if (wasPreparing) {
             indexingStatus = message
@@ -910,7 +1034,7 @@ class PlaybackSession(
     }
     private fun forwardCues(group: CueGroup) {
         if (features.hasPendingNarrationRestoration) return
-        if (hasCompleteSubtitleIndex) {
+        if (usesIndexedNarration()) {
             if (player.playbackState != Player.STATE_ENDED) driveIndexedCues()
             return
         }
@@ -918,7 +1042,7 @@ class PlaybackSession(
         // been indexed. The primary renderer alone cannot represent it.
         if (supplementaryTextId != null) return
         val captions = group.cues.mapNotNull { it.text?.toString() }
-        if (!translation.required && requiresVerifiedInventory()) {
+        if (!translation.required && requiresVerifiedInventory() && !usesNetworkSubtitlePlayback()) {
             // These are visible cues, not a verified source queue. Starting
             // with an indexed clock avoids replaying provisional local IDs.
             lastRawCaption = captions.joinToString("\n")
@@ -1183,6 +1307,8 @@ class PlaybackSession(
         val task = subtitleSource.createIndexer(); indexer = task
         indexingForPlayback = forPlayback
         indexingStatus = "Indexation complète de la piste choisie en cours"
+        onMessage(if (forPlayback) "$indexingStatus. La lecture attend cette préparation." else indexingStatus, false)
+        onChanged()
         indexingWorker.execute {
             try {
                 val index = task.scanTracks(source, scanTracks) { percent -> handler.post {
@@ -1250,12 +1376,38 @@ class PlaybackSession(
     /** Dispatch every crossed start/end boundary, including cues shorter than a tick. */
     private fun driveIndexedCues() {
         if (trackReset || rearmingCheckpoint || features.hasPendingNarrationRestoration || machine.snapshot().translationHeld) return
+        if (machine.snapshot().wantsPlayback && progressiveNetworkSource && usesProgressiveSubtitleIndex() &&
+            (ahead.truncated || subtitleSource.hasIncompleteCapture())) {
+            apply(machine.fail("La capture des sous-titres est incomplète. La vidéo est arrêtée pour conserver les répliques déjà reçues et éviter une omission silencieuse."))
+            return
+        }
         val track = selectedTextId() ?: return
-        val position = player.currentPosition.coerceAtLeast(0)
+        val picture = player.currentPosition.coerceAtLeast(0)
+        val needsPrefix = adaptiveNetworkSource && networkIndexTrack == track && !hasCompleteSubtitleIndex
+        val frontier = maxOf(progressivePassStartMs, networkIndexThroughUs / 1000)
+        val position = if (needsPrefix) minOf(picture, frontier) else picture
         if (timingTrack != track) { timingTrack = track; timedCursorMs = null; timedIndex = null }
         val previous = timedCursorMs
         ensureTimedSchedule(track)
         val playing = machine.snapshot().wantsPlayback
+        val waitingForPrefix = needsPrefix && picture >= frontier
+        if (playing && waitingForPrefix) {
+            apply(machine.setScheduleHold(true))
+            if (picture > frontier) player.seekTo(frontier)
+        }
+        if (playing && usesProgressiveSubtitleIndex() && progressiveReconciledCount != ahead.count) {
+            // A sample can reach the UI after its entire interval was crossed.
+            // Recover it by source identity, including during a later Play after
+            // Pause, while excluding intervals preceding the last explicit seek.
+            val late = timedItems.filter {
+                it.narration.startMs <= (previous ?: position) && it.narration.endMs > progressivePassStartMs
+            }
+            features.register(late.map { it.item })
+            val texts = late.map { it.item.identity to SpeechTools.filter(it.item.raw, prefs.filters) }
+            machine.markFiltered(texts.filter { it.second.isBlank() }.map { it.first })
+            apply(machine.recoverMissedOccurrences(texts.filter { it.second.isNotBlank() }))
+            progressiveReconciledCount = ahead.count
+        }
         if (previous == null) {
             if (!dispatchTimedAt(position)) return
             timedCursorMs = position
@@ -1275,7 +1427,7 @@ class PlaybackSession(
             timedCursorMs = position
         }
         if (playing) timedCursorMs?.let(features::onTimelinePosition)
-        if (machine.snapshot().scheduleHeld) apply(machine.setScheduleHold(false))
+        if (machine.snapshot().scheduleHeld && !waitingForPrefix) apply(machine.setScheduleHold(false))
         updateCaptionOverride()
     }
     private fun dispatchTimedAt(position: Long): Boolean {
@@ -1341,6 +1493,7 @@ class PlaybackSession(
     }
 
     private fun narrationReadiness(): String {
+        if (usesProgressiveSubtitleIndex()) return "Lecture réseau : les occurrences sont suivies au fil du chargement. L’inventaire complet du film n’est pas encore vérifié."
         if (!hasCompleteSubtitleIndex) return "Couverture vocale : inventaire complet indisponible pour cette sélection."
         val position = player.currentPosition.coerceAtLeast(0)
         val horizon = position + prefs.lookAheadSeconds * 1000L

@@ -43,17 +43,20 @@ internal class FiniteWebSubtitleIndex(
     private var readBytes = 0L
     private var origin: Uri? = null
 
-    fun scan(uri: Uri, dash: Boolean, tracks: Set<String>, progress: (Int) -> Unit): CueAheadIndex {
+    fun scan(uri: Uri, dash: Boolean, tracks: Set<String>, progress: (Int) -> Unit,
+        onPrefix: ((newItems: List<CueAheadIndex.Item>, coveredThroughUs: Long) -> Unit)? = null): CueAheadIndex {
+        verified(onPrefix == null || tracks.size == 1)
         val document = read(uri)
         origin = document.uri
-        val result = if (dash) scanDash(document, tracks, progress) else scanHls(document, tracks, progress)
+        val result = if (dash) scanDash(document, tracks, progress, onPrefix) else scanHls(document, tracks, progress, onPrefix)
         checkActive()
         if (result.truncated) throw IOException(LIMIT)
         progress(100)
         return result
     }
 
-    private fun scanHls(document: Document, requested: Set<String>, progress: (Int) -> Unit): CueAheadIndex {
+    private fun scanHls(document: Document, requested: Set<String>, progress: (Int) -> Unit,
+        onPrefix: ((List<CueAheadIndex.Item>, Long) -> Unit)?): CueAheadIndex {
         val master = HlsPlaylistParser().parse(document.uri, document.bytes.inputStream())
         if (master is HlsMediaPlaylist && !master.hasEndTag) throw IOException(LIVE)
         verified(master is HlsMultivariantPlaylist)
@@ -82,7 +85,7 @@ internal class FiniteWebSubtitleIndex(
                 Segment(child(Uri.parse(subtitle.baseUri), segment.url), segment.relativeStartTimeUs,
                     segment.durationUs, segment.byteRangeOffset, segment.byteRangeLength)
             }
-            appendTrack(result, requireNotNull(rendition.format.id), segments, subtitle.durationUs, 0L) { count ->
+            appendTrack(result, requireNotNull(rendition.format.id), segments, subtitle.durationUs, 0L, onPrefix) { count ->
                 progress(((ordinal.toLong() * segments.size + count) * 100 /
                     (renditions.size.toLong() * segments.size)).toInt().coerceAtMost(99))
             }
@@ -105,7 +108,8 @@ internal class FiniteWebSubtitleIndex(
         return media
     }
 
-    private fun scanDash(document: Document, requested: Set<String>, progress: (Int) -> Unit): CueAheadIndex {
+    private fun scanDash(document: Document, requested: Set<String>, progress: (Int) -> Unit,
+        onPrefix: ((List<CueAheadIndex.Item>, Long) -> Unit)?): CueAheadIndex {
         // Keep untrusted DTD/entity expansion outside the Android XML parser.
         val xml = document.bytes.toString(Charsets.UTF_8)
         verified(!xml.contains("<!DOCTYPE", ignoreCase = true) && !xml.contains("<!ENTITY", ignoreCase = true) && '\u0000' !in xml)
@@ -139,7 +143,7 @@ internal class FiniteWebSubtitleIndex(
                 Segment(uri, index.getTimeUs(number), index.getDurationUs(number, duration), ranged.start, ranged.length)
             }
             appendTrack(result, requireNotNull(representation.format.id), segments, duration,
-                Math.negateExact(representation.presentationTimeOffsetUs)) { count ->
+                Math.negateExact(representation.presentationTimeOffsetUs), onPrefix) { count ->
                 progress(((ordinal * size + count) * 100 / (representations.size * size)).toInt().coerceAtMost(99))
             }
         }
@@ -147,7 +151,7 @@ internal class FiniteWebSubtitleIndex(
     }
 
     private fun appendTrack(result: CueAheadIndex, track: String, segments: List<Segment>, durationUs: Long,
-        cueOffsetUs: Long, progress: (Int) -> Unit) {
+        cueOffsetUs: Long, onPrefix: ((List<CueAheadIndex.Item>, Long) -> Unit)?, progress: (Int) -> Unit) {
         var previousEnd = 0L
         var ordinal = 0
         var carry = emptySet<Occurrence>()
@@ -159,6 +163,7 @@ internal class FiniteWebSubtitleIndex(
             val bytes = read(segment.uri, segment.offset, segment.length, SEGMENT_BYTES).bytes
             val multiplicities = HashMap<Event, Int>()
             val current = LinkedHashSet<Occurrence>()
+            val addedItems = ArrayList<CueAheadIndex.Item>()
             for (event in parseWebVtt(bytes, cueOffsetUs)) {
                 verified(event.startUs >= 0 && event.startUs < end && event.endUs > segment.startUs &&
                     event.endUs <= durationUs + 1)
@@ -170,12 +175,18 @@ internal class FiniteWebSubtitleIndex(
                 // A cue that began in a preceding segment has to be present in
                 // that segment too. A mismatch means the coverage is unknown.
                 verified(event.startUs >= segment.startUs)
-                result.addOccurrence(CueAheadIndex.Item(track, event.startUs, event.endUs, event.text, ordinal++))
-                if (result.truncated) throw IOException(LIMIT)
+                addedItems += CueAheadIndex.Item(track, event.startUs, event.endUs, event.text, ordinal++)
             }
             verified(current.containsAll(carry))
             carry = current.filterTo(HashSet()) { it.event.endUs > end }
             previousEnd = end
+            if (segmentIndex == segments.lastIndex) verified(abs(previousEnd - durationUs) <= 1L && carry.isEmpty())
+            for (item in addedItems) {
+                result.addOccurrence(item)
+                if (result.truncated) throw IOException(LIMIT)
+            }
+            checkActive()
+            onPrefix?.invoke(addedItems.toList(), end)
             progress(segmentIndex + 1)
         }
         verified(abs(previousEnd - durationUs) <= 1L && carry.isEmpty())

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish only the signed 1.1.0 candidate already validated on main.
+"""Publish only the signed 1.1.1 candidate already validated on main.
 
 The temporary branch contains only bounded release data, never a signing key. This script
 does not compile or sign an APK, delete a release/tag, replace an asset, execute a
@@ -32,15 +32,15 @@ import zipfile
 
 
 REPOSITORY = "Lillite/Vocalisation-des-sous-titres-Android"
-BRANCH = "release-upload/v1.1.0"
-TAG = "v1.1.0"
-TITLE = 'Sous-titres en voix 1.1 — Lecture intégrale vérifiée'
+BRANCH = "release-upload/v1.1.1"
+TAG = "v1.1.1"
+TITLE = 'Sous-titres en voix 1.1.1 — Lecture réseau corrigée'
 PRERELEASE = False
 APPLICATION_ID = "fr.soustitresvoix.player.translation"
-VERSION_NAME = "1.1.0"
-VERSION_CODE = "24"
+VERSION_NAME = "1.1.1"
+VERSION_CODE = "25"
 EXPECTED_SIGNER_SHA256 = "304a8f1ffe07b3e51ea6fecd5d507e33ed4785619503f03fdb7d1c7f81caad2d"
-APK_PATH = "release-upload/SousTitresVoix-1.1.0.apk"
+APK_PATH = "release-upload/SousTitresVoix-1.1.1.apk"
 NOTES_PATH = "release-upload/notes.md"
 METADATA_PATH = "release-upload/release.json"
 APK_PARTS_DIRECTORY = "release-upload/apk-parts"

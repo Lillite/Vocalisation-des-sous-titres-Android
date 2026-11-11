@@ -391,7 +391,7 @@
       "tag": "v1.0.0",
       "title": "Sous-titres en voix 1.0 — Bibliothèque, réseau et traduction contextuelle",
       "prerelease": false,
-      "latest": true,
+      "latest": false,
       "notes": "docs/releases/1.0.0.md",
       "asset": {
         "name": "SousTitresVoix-1.0.0.apk",
@@ -404,18 +404,36 @@
       },
       "id": 438063999,
       "source_commit": "959bfcbfcdcd7e2ff8d5ce34ae2637aa644cba0a"
+    },
+    {
+      "tag": "v1.1.0",
+      "title": "Sous-titres en voix 1.1 — Lecture intégrale vérifiée",
+      "prerelease": false,
+      "latest": true,
+      "notes": "docs/releases/1.1.0.md",
+      "asset": {
+        "name": "SousTitresVoix-1.1.0.apk",
+        "version_name": "1.1.0",
+        "version_code": 24,
+        "application_id": "fr.soustitresvoix.player.translation",
+        "id": 733127278,
+        "size": 102141218,
+        "sha256": "f554e9d5ec83866cdb4ef520c3f3472e5fc6bad79da805728d1e50150656e7c7"
+      },
+      "id": 440967230,
+      "source_commit": "f1c318117ea9e2e622f1f672a7a1b7ac1f423a72"
     }
   ],
   "next_release": {
-    "tag": "v1.1.0",
-    "title": "Sous-titres en voix 1.1 — Lecture intégrale vérifiée",
+    "tag": "v1.1.1",
+    "title": "Sous-titres en voix 1.1.1 — Lecture réseau corrigée",
     "prerelease": false,
     "latest": true,
-    "notes": "docs/releases/1.1.0.md",
+    "notes": "docs/releases/1.1.1.md",
     "asset": {
-      "name": "SousTitresVoix-1.1.0.apk",
-      "version_name": "1.1.0",
-      "version_code": 24,
+      "name": "SousTitresVoix-1.1.1.apk",
+      "version_name": "1.1.1",
+      "version_code": 25,
       "application_id": "fr.soustitresvoix.player.translation"
     }
   }

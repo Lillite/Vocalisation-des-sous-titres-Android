@@ -67,6 +67,10 @@ class FullSubtitleIndexer(private val context: Context, private val dataSources:
     fun scanTracks(media: SavedMedia, tracks: Set<String>, progress: (Int) -> Unit): CueAheadIndex =
         scanSource(media, tracks, null, null, progress)
 
+    fun scanTrackProgressively(media: SavedMedia, track: String,
+        onPrefix: (List<CueAheadIndex.Item>, Long) -> Unit, progress: (Int) -> Unit): CueAheadIndex =
+        scanSource(media, setOf(track), null, null, progress, onPrefix)
+
     /** Called on an OCR worker. A decoded bitmap is consumed before the next
      * sample is read, so the demuxer never holds a movie's worth of bitmaps. */
     internal fun scanImageCues(media: SavedMedia, track: String, onImage: (CuesWithTiming) -> Unit, progress: (Int) -> Unit) {
@@ -74,7 +78,8 @@ class FullSubtitleIndexer(private val context: Context, private val dataSources:
     }
 
     private fun scanSource(media: SavedMedia, tracks: Set<String>, imageTrack: String?,
-        onImage: ((CuesWithTiming) -> Unit)?, progress: (Int) -> Unit): CueAheadIndex {
+        onImage: ((CuesWithTiming) -> Unit)?, progress: (Int) -> Unit,
+        onPrefix: ((List<CueAheadIndex.Item>, Long) -> Unit)? = null): CueAheadIndex {
         ensureActive()
         val mediaUri = Uri.parse(media.uri)
         val cacheKey = if (imageTrack == null && mediaUri.scheme in setOf("file", "content", "android.resource") &&
@@ -134,8 +139,9 @@ class FullSubtitleIndexer(private val context: Context, private val dataSources:
             val scoped = (dataSources as? NetworkDataSourceFactory)?.forMediaUri(uri) ?: dataSources
             return FiniteWebSubtitleIndex({ target, offset, length, maxBytes ->
                 loadSubtitleDocument(scoped, target, offset, length, maxBytes)
-            }, ::ensureActive).scan(uri, suffix == "mpd", tracks, progress).also { ensureActive() }
+            }, ::ensureActive).scan(uri, suffix == "mpd", tracks, progress, onPrefix).also { ensureActive() }
         }
+        if (onPrefix != null) throw IOException(FiniteWebSubtitleIndex.UNVERIFIED)
         val source = dataSources.createDataSource()
         activeSource = source
         var extractor: Extractor? = null

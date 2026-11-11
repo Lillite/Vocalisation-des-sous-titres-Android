@@ -237,7 +237,13 @@ class CinemaView(
         val state = session.machine.snapshot()
         val playLabel = when { state.wantsPlayback -> "Pause"; state.speakingId != null -> "Arrêter la voix"; else -> "Lire" }
         if (play.text.toString() != playLabel) play.text = playLabel
-        val statusLabel = when { state.voiceSuspended -> "Voix en attente : Reprendre la voix"; state.waitingForSpeech -> "La voix termine la phrase"; state.wantsPlayback -> ""; else -> "En pause" }
+        val statusLabel = when {
+            state.voiceSuspended -> "Voix en attente : Reprendre la voix"
+            state.waitingForSpeech -> "La voix termine la phrase"
+            session.waitingForNetworkSubtitles -> "Chargement des prochains sous-titres"
+            state.wantsPlayback -> ""
+            else -> "En pause"
+        }
         if (status.text.toString() != statusLabel) status.text = statusLabel
         status.visibility = if (statusLabel.isBlank()) View.GONE else View.VISIBLE
         val d = session.player.duration; val pos = session.player.currentPosition
